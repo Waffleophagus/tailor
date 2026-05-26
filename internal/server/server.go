@@ -18,7 +18,7 @@ import (
 )
 
 type Options struct {
-	LocalAPISocketPath string
+	LocalAPIEndpoint string
 }
 
 type Server struct {
@@ -32,7 +32,7 @@ func New(options ...Options) http.Handler {
 	}
 
 	server := &Server{
-		localAPI: localapi.New(opts.LocalAPISocketPath),
+		localAPI: localapi.New(opts.LocalAPIEndpoint),
 	}
 
 	mux := http.NewServeMux()
@@ -58,17 +58,17 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	_, err := s.localAPI.Status(r.Context())
 	if err != nil {
 		status := api.LocalAPIStatusResponse{
-			Available:  false,
-			SocketPath: s.localAPI.SocketPath(),
-			Error:      err.Error(),
+			Available:        false,
+			LocalAPIEndpoint: s.localAPI.Endpoint(),
+			Error:            err.Error(),
 		}
 		writeJSON(w, http.StatusOK, status)
 		return
 	}
 
 	writeJSON(w, http.StatusOK, api.LocalAPIStatusResponse{
-		Available:  true,
-		SocketPath: s.localAPI.SocketPath(),
+		Available:        true,
+		LocalAPIEndpoint: s.localAPI.Endpoint(),
 	})
 }
 
@@ -80,9 +80,9 @@ func (s *Server) handleTopology(w http.ResponseWriter, r *http.Request) {
 			status = http.StatusServiceUnavailable
 		}
 		writeJSON(w, status, api.LocalAPIStatusResponse{
-			Available:  false,
-			SocketPath: s.localAPI.SocketPath(),
-			Error:      err.Error(),
+			Available:        false,
+			LocalAPIEndpoint: s.localAPI.Endpoint(),
+			Error:            err.Error(),
 		})
 		return
 	}
@@ -144,9 +144,9 @@ func (s *Server) topologySocketMessage(ctx context.Context) api.SocketMessage {
 		return api.SocketMessage{
 			Type: api.SocketMessageLocalAPIUnavailable,
 			Payload: api.LocalAPIStatusResponse{
-				Available:  false,
-				SocketPath: s.localAPI.SocketPath(),
-				Error:      err.Error(),
+				Available:        false,
+				LocalAPIEndpoint: s.localAPI.Endpoint(),
+				Error:            err.Error(),
 			},
 		}
 	}

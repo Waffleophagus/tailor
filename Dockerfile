@@ -2,7 +2,7 @@ FROM node:24-alpine AS web-build
 
 WORKDIR /src
 
-RUN corepack enable
+RUN corepack enable && corepack prepare pnpm@11.2.2 --activate
 
 COPY web/package.json web/pnpm-lock.yaml web/pnpm-workspace.yaml ./web/
 WORKDIR /src/web
@@ -29,13 +29,19 @@ COPY --from=web-build /src/internal/frontend/dist ./internal/frontend/dist
 
 RUN CGO_ENABLED=0 GOOS=linux go build -o /out/tailor ./cmd/tailor
 
-FROM scratch
+FROM tailscale/tailscale:stable AS tailscale
 
+FROM alpine:3.22
+
+RUN apk add --no-cache ca-certificates
+
+COPY --from=tailscale /usr/local/bin/tailscale /usr/local/bin/tailscale
+COPY --from=tailscale /usr/local/bin/tailscaled /usr/local/bin/tailscaled
 COPY --from=go-build /out/tailor /usr/local/bin/tailor
-COPY --from=go-build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
-USER 10001:10001
 EXPOSE 8080
 ENV TAILOR_ADDR=:8080
+ENV TAILOR_TAILSCALE_MODE=embedded
 
-ENTRYPOINT ["/usr/local/bin/tailor"]
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]

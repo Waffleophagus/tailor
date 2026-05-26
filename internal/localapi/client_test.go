@@ -2,9 +2,14 @@ package localapi
 
 import (
 	"encoding/json"
+	"net/netip"
 	"testing"
+	"time"
 
 	"github.com/Waffleophagus/tailor/internal/api"
+	"tailscale.com/ipn/ipnstate"
+	"tailscale.com/tailcfg"
+	"tailscale.com/types/views"
 )
 
 func TestDevicesFromStatusParsesSelfAndPeers(t *testing.T) {
@@ -111,6 +116,46 @@ func TestDevicesFromStatusParsesSubnetRoutes(t *testing.T) {
 	if len(got[0].RoutedSubnets) != 1 || got[0].RoutedSubnets[0] != "10.0.0.0/24" {
 		t.Fatalf("got routed subnets %#v, want [10.0.0.0/24]", got[0].RoutedSubnets)
 	}
+}
+
+func TestDevicesFromIPNStatusParsesOfficialStatusShape(t *testing.T) {
+	tags := views.SliceOf([]string{"tag:server"})
+	primaryRoutes := views.SliceOf([]netip.Prefix{netip.MustParsePrefix("10.0.0.0/24")})
+	lastSeen := time.Date(2026, 5, 25, 12, 30, 0, 0, time.UTC)
+
+	got := DevicesFromIPNStatus(&ipnstate.Status{
+		Self: &ipnstate.PeerStatus{
+			ID:            "node-self",
+			HostName:      "router",
+			DNSName:       "router.tailnet.ts.net.",
+			TailscaleIPs:  []netip.Addr{netip.MustParseAddr("100.64.0.1")},
+			OS:            "linux",
+			UserID:        1,
+			Tags:          &tags,
+			PrimaryRoutes: &primaryRoutes,
+			Online:        false,
+			LastSeen:      lastSeen,
+		},
+		User: map[tailcfg.UserID]tailcfg.UserProfile{
+			1: {ID: 1, LoginName: "alice@example.com"},
+		},
+	})
+
+	if len(got) != 1 {
+		t.Fatalf("got %d devices, want 1", len(got))
+	}
+	assertDevice(t, got[0], api.Device{
+		ID:            "node-self",
+		Name:          "router.tailnet.ts.net",
+		IP:            "100.64.0.1",
+		TailscaleIPs:  []string{"100.64.0.1"},
+		OS:            "linux",
+		Owner:         "alice@example.com",
+		Tags:          []string{"tag:server"},
+		SubnetRouter:  true,
+		RoutedSubnets: []string{"10.0.0.0/24"},
+		LastSeen:      "2026-05-25T12:30:00Z",
+	})
 }
 
 func assertDevice(t *testing.T, got, want api.Device) {

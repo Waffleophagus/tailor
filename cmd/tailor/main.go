@@ -15,11 +15,14 @@ func main() {
 	if addr == "" {
 		addr = ":8080"
 	}
-	socketPath := os.Getenv("TAILOR_LOCALAPI_SOCKET")
+	localAPIEndpoint := os.Getenv("TAILOR_LOCALAPI_ENDPOINT")
+	if localAPIEndpoint == "" {
+		localAPIEndpoint = os.Getenv("TAILOR_LOCALAPI_SOCKET")
+	}
 
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           server.New(server.Options{LocalAPISocketPath: socketPath}),
+		Handler:           server.New(server.Options{LocalAPIEndpoint: localAPIEndpoint}),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

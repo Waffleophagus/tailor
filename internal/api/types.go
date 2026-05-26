@@ -6,9 +6,9 @@ type HealthResponse struct {
 }
 
 type LocalAPIStatusResponse struct {
-	Available  bool   `json:"available"`
-	SocketPath string `json:"socketPath"`
-	Error      string `json:"error,omitempty"`
+	Available        bool   `json:"available"`
+	LocalAPIEndpoint string `json:"localApiEndpoint"`
+	Error            string `json:"error,omitempty"`
 }
 
 type Device struct {

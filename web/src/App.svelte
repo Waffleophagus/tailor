@@ -867,7 +867,7 @@
       return "";
     }
     if ("available" in error) {
-      return error.error ?? `Unable to reach ${error.socketPath}`;
+      return error.error ?? `Unable to reach ${error.localApiEndpoint}`;
     }
     return error.message;
   }

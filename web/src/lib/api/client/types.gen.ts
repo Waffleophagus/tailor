@@ -11,7 +11,7 @@ export type HealthResponse = {
 
 export type LocalApiStatusResponse = {
     available: boolean;
-    socketPath: string;
+    localApiEndpoint: string;
     error?: string;
 };
 

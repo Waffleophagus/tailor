@@ -41,7 +41,7 @@ interface HealthResponse {
 // From api/types.go
 interface LocalAPIStatusResponse {
     available: boolean;
-    socketPath: string;
+    localApiEndpoint: string;
     error?: string;
 }
 

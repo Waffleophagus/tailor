@@ -7,7 +7,7 @@ export const healthResponseSchema = z.object({
 
 export const localApiStatusResponseSchema = z.object({
   available: z.boolean(),
-  socketPath: z.string(),
+  localApiEndpoint: z.string(),
   error: z.string().optional(),
 });
 

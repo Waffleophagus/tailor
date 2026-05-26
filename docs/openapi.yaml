@@ -51,11 +51,11 @@ components:
           type: string
     LocalAPIStatusResponse:
       type: object
-      required: [available, socketPath]
+      required: [available, localApiEndpoint]
       properties:
         available:
           type: boolean
-        socketPath:
+        localApiEndpoint:
           type: string
         error:
           type: string

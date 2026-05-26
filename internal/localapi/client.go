@@ -2,72 +2,52 @@ package localapi
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
-	"net/http"
+	"net/netip"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/Waffleophagus/tailor/internal/api"
+	"tailscale.com/client/local"
+	"tailscale.com/ipn/ipnstate"
+	"tailscale.com/tailcfg"
+	"tailscale.com/types/views"
 )
 
-const DefaultSocketPath = "/var/run/tailscale/tailscaled.sock"
+const PlatformDefaultEndpoint = "platform default"
 
 var ErrUnavailable = errors.New("tailscale LocalAPI unavailable")
 
 type Client struct {
-	socketPath string
-	httpClient *http.Client
+	socketOverride string
+	localClient    *local.Client
 }
 
 func New(socketPath string) *Client {
-	if socketPath == "" {
-		socketPath = DefaultSocketPath
-	}
-
-	dialer := &net.Dialer{Timeout: 2 * time.Second}
+	localClient := &local.Client{Socket: socketPath}
 	return &Client{
-		socketPath: socketPath,
-		httpClient: &http.Client{
-			Timeout: 5 * time.Second,
-			Transport: &http.Transport{
-				DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-					return dialer.DialContext(ctx, "unix", socketPath)
-				},
-			},
-		},
+		socketOverride: socketPath,
+		localClient:    localClient,
 	}
 }
 
-func (c *Client) SocketPath() string {
-	return c.socketPath
+func (c *Client) Endpoint() string {
+	if c.socketOverride != "" {
+		return c.socketOverride
+	}
+	return defaultEndpointDescription()
 }
 
 func (c *Client) Status(ctx context.Context) ([]api.Device, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://local-tailscaled.sock/localapi/v0/status", nil)
-	if err != nil {
-		return nil, err
-	}
-
-	resp, err := c.httpClient.Do(req)
+	status, err := c.localClient.Status(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrUnavailable, err)
 	}
-	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("%w: status endpoint returned %s", ErrUnavailable, resp.Status)
-	}
-
-	var status Status
-	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
-		return nil, fmt.Errorf("decode tailscale status: %w", err)
-	}
-
-	return DevicesFromStatus(status), nil
+	return DevicesFromIPNStatus(status), nil
 }
 
 type Status struct {
@@ -116,6 +96,32 @@ func DevicesFromStatus(status Status) []api.Device {
 	return devices
 }
 
+func DevicesFromIPNStatus(status *ipnstate.Status) []api.Device {
+	if status == nil {
+		return nil
+	}
+
+	devices := make([]api.Device, 0, len(status.Peer)+1)
+	if status.Self != nil {
+		devices = append(devices, deviceFromPeerStatus(status.Self, status.User))
+	}
+
+	keys := make([]string, 0, len(status.Peer))
+	peers := make(map[string]*ipnstate.PeerStatus, len(status.Peer))
+	for key, peer := range status.Peer {
+		keyString := key.String()
+		keys = append(keys, keyString)
+		peers[keyString] = peer
+	}
+	sort.Strings(keys)
+
+	for _, key := range keys {
+		devices = append(devices, deviceFromPeerStatus(peers[key], status.User))
+	}
+
+	return devices
+}
+
 func deviceFromPeer(peer Peer, users map[string]User) api.Device {
 	id := firstNonEmpty(peer.ID, peer.PublicKey, peer.DNSName, peer.HostName)
 	name := strings.TrimSuffix(firstNonEmpty(peer.DNSName, peer.HostName, id), ".")
@@ -153,6 +159,41 @@ func deviceFromPeer(peer Peer, users map[string]User) api.Device {
 	}
 }
 
+func deviceFromPeerStatus(peer *ipnstate.PeerStatus, users map[tailcfg.UserID]tailcfg.UserProfile) api.Device {
+	if peer == nil {
+		return api.Device{Tags: []string{}, RoutedSubnets: []string{}}
+	}
+
+	tailscaleIPs := addrsToStrings(peer.TailscaleIPs)
+	id := firstNonEmpty(string(peer.ID), peer.PublicKey.String(), peer.DNSName, peer.HostName)
+	name := strings.TrimSuffix(firstNonEmpty(peer.DNSName, peer.HostName, id), ".")
+	ip := ""
+	if len(tailscaleIPs) > 0 {
+		ip = tailscaleIPs[0]
+	}
+
+	lastSeen := ""
+	if !peer.LastSeen.IsZero() {
+		lastSeen = peer.LastSeen.Format(time.RFC3339)
+	}
+
+	routedSubnets := routedSubnetsFromPeerStatus(peer, tailscaleIPs)
+
+	return api.Device{
+		ID:            id,
+		Name:          name,
+		IP:            ip,
+		TailscaleIPs:  tailscaleIPs,
+		OS:            peer.OS,
+		Online:        peer.Online,
+		Owner:         ownerNameFromUserProfiles(peer.UserID, users),
+		Tags:          viewStrings(peer.Tags),
+		SubnetRouter:  len(routedSubnets) > 0,
+		RoutedSubnets: routedSubnets,
+		LastSeen:      lastSeen,
+	}
+}
+
 func routedSubnets(peer Peer) []string {
 	routes := peer.PrimaryRoutes
 	if len(routes) == 0 {
@@ -167,6 +208,52 @@ func routedSubnets(peer Peer) []string {
 	}
 	sort.Strings(subnets)
 	return subnets
+}
+
+func routedSubnetsFromPeerStatus(peer *ipnstate.PeerStatus, tailscaleIPs []string) []string {
+	routes := prefixesToStrings(peer.PrimaryRoutes)
+	if len(routes) == 0 {
+		routes = prefixesToStrings(peer.AllowedIPs)
+	}
+
+	subnets := make([]string, 0, len(routes))
+	for _, route := range routes {
+		if !isTailscaleHostRoute(route, tailscaleIPs) {
+			subnets = append(subnets, route)
+		}
+	}
+	sort.Strings(subnets)
+	return subnets
+}
+
+func addrsToStrings(addrs []netip.Addr) []string {
+	values := make([]string, 0, len(addrs))
+	for _, addr := range addrs {
+		values = append(values, addr.String())
+	}
+	return values
+}
+
+func prefixesToStrings(prefixes *views.Slice[netip.Prefix]) []string {
+	if prefixes == nil {
+		return nil
+	}
+	values := make([]string, 0, prefixes.Len())
+	for i := 0; i < prefixes.Len(); i++ {
+		values = append(values, prefixes.At(i).String())
+	}
+	return values
+}
+
+func viewStrings(values *views.Slice[string]) []string {
+	if values == nil {
+		return []string{}
+	}
+	strings := make([]string, 0, values.Len())
+	for i := 0; i < values.Len(); i++ {
+		strings = append(strings, values.At(i))
+	}
+	return strings
 }
 
 func isTailscaleHostRoute(route string, tailscaleIPs []string) bool {
@@ -184,6 +271,27 @@ func ownerName(userID int64, users map[string]User) string {
 		return ""
 	}
 	return firstNonEmpty(user.LoginName, user.DisplayName)
+}
+
+func ownerNameFromUserProfiles(userID tailcfg.UserID, users map[tailcfg.UserID]tailcfg.UserProfile) string {
+	user, ok := users[userID]
+	if !ok {
+		return ""
+	}
+	return firstNonEmpty(user.LoginName, user.DisplayName)
+}
+
+func defaultEndpointDescription() string {
+	switch runtime.GOOS {
+	case "linux":
+		return "default Linux tailscaled socket"
+	case "darwin":
+		return "default macOS Tailscale LocalAPI endpoint"
+	case "windows":
+		return "default Windows tailscaled named pipe"
+	default:
+		return PlatformDefaultEndpoint
+	}
 }
 
 func firstNonEmpty(values ...string) string {

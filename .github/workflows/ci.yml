@@ -52,6 +52,13 @@ jobs:
       - name: Vet Go
         run: go vet ./...
 
+      - name: Cross-build native binaries
+        run: |
+          GOOS=linux GOARCH=amd64 go build -o /tmp/tailor-linux-amd64 ./cmd/tailor
+          GOOS=darwin GOARCH=amd64 go build -o /tmp/tailor-darwin-amd64 ./cmd/tailor
+          GOOS=darwin GOARCH=arm64 go build -o /tmp/tailor-darwin-arm64 ./cmd/tailor
+          GOOS=windows GOARCH=amd64 go build -o /tmp/tailor-windows-amd64.exe ./cmd/tailor
+
       - name: Compute image tags
         id: image
         shell: bash
@@ -61,10 +68,24 @@ jobs:
           echo "sha_tag=$image:$GITHUB_SHA" >> "$GITHUB_OUTPUT"
           echo "latest_tag=$image:latest" >> "$GITHUB_OUTPUT"
 
+      - name: Check Docker availability
+        id: docker
+        shell: bash
+        run: |
+          # For self-hosted git forges where Docker is not available, skip container-specific CI.
+          if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Docker is not available; skipping image build, smoke test, and publish steps."
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Build Docker image
+        if: steps.docker.outputs.available == 'true'
         run: docker build --tag "${{ steps.image.outputs.sha_tag }}" .
 
       - name: Smoke test Docker image
+        if: steps.docker.outputs.available == 'true'
         run: |
           docker run --detach --rm --name tailor-smoke --publish 127.0.0.1:8080:8080 "${{ steps.image.outputs.sha_tag }}"
           trap 'docker stop tailor-smoke >/dev/null 2>&1 || true' EXIT
@@ -79,7 +100,7 @@ jobs:
           test "$ok" = true
 
       - name: Check registry token
-        if: github.event_name == 'push'
+        if: github.event_name == 'push' && steps.docker.outputs.available == 'true'
         id: registry-token
         env:
           REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
@@ -92,7 +113,7 @@ jobs:
           fi
 
       - name: Log in to container registry
-        if: github.event_name == 'push' && steps.registry-token.outputs.publish == 'true'
+        if: github.event_name == 'push' && steps.docker.outputs.available == 'true' && steps.registry-token.outputs.publish == 'true'
         env:
           REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
           REGISTRY_USERNAME: ${{ vars.REGISTRY_USERNAME || github.actor }}
@@ -100,11 +121,35 @@ jobs:
           echo "$REGISTRY_TOKEN" | docker login "$CONTAINER_REGISTRY" -u "$REGISTRY_USERNAME" --password-stdin
 
       - name: Push SHA image
-        if: github.event_name == 'push' && steps.registry-token.outputs.publish == 'true'
+        if: github.event_name == 'push' && steps.docker.outputs.available == 'true' && steps.registry-token.outputs.publish == 'true'
         run: docker push "${{ steps.image.outputs.sha_tag }}"
 
       - name: Push latest image
-        if: github.event_name == 'push' && github.ref_name == github.event.repository.default_branch && steps.registry-token.outputs.publish == 'true'
+        if: github.event_name == 'push' && steps.docker.outputs.available == 'true' && github.ref_name == github.event.repository.default_branch && steps.registry-token.outputs.publish == 'true'
         run: |
           docker tag "${{ steps.image.outputs.sha_tag }}" "${{ steps.image.outputs.latest_tag }}"
           docker push "${{ steps.image.outputs.latest_tag }}"
+
+  optional-platform-tests:
+    if: github.server_url == 'https://github.com'
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Test Go
+        run: go test ./...
+
+      - name: Build Tailor
+        run: go build ./cmd/tailor
