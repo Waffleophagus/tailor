@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { Device } from "../api/schemas";
+  import ResizableSidebar from "./ResizableSidebar.svelte";
 
   let {
     open = $bindable(true),
@@ -21,8 +22,8 @@
   );
 </script>
 
-<div class="sidebar-right" data-open={open}>
-  <div class="sidebar-content">
+<ResizableSidebar position="right" defaultWidth={18 * 16} {open}>
+  {#snippet children()}
     <div class="sidebar-header">
       <h2>Policy Lens</h2>
     </div>
@@ -121,178 +122,33 @@
     {/if}
 
     <p class="meta">API version: {apiVersion || "unknown"}</p>
-  </div>
+  {/snippet}
 
-  <!-- Collapsed icon bar -->
-  <div class="icon-bar" aria-hidden={open}>
-    <div class="icon-bar-content">
-      <button
-        class="icon-btn"
-        title="Policy Lens panel"
-        type="button"
-        onclick={() => (open = true)}
-      >
-        <svg viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <path
-            d="M10 1L1 5V10C1 15.25 4.75 19.35 10 20C15.25 19.35 19 15.25 19 10V5L10 1Z"
-            stroke="currentColor"
-            stroke-width="1.6"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            fill="none"
-          />
-        </svg>
+  {#snippet collapsed()}
+    <button class="icon-btn" title="Policy Lens panel" type="button" onclick={() => (open = true)}>
+      <svg viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path
+          d="M10 1L1 5V10C1 15.25 4.75 19.35 10 20C15.25 19.35 19 15.25 19 10V5L10 1Z"
+          stroke="currentColor"
+          stroke-width="1.6"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          fill="none"
+        />
+      </svg>
+    </button>
+    <div class="icon-divider"></div>
+    {#if selectedDevice}
+      <button class="mini-device" title={selectedDevice.name} type="button" onclick={() => (open = true)}>
+        <span class="mini-avatar" class:online={selectedDevice.online} data-subnet-router={selectedDevice.subnetRouter}>{deviceInitials}</span>
       </button>
-      <div class="icon-divider"></div>
-      {#if selectedDevice}
-        <button
-          class="mini-device"
-          title={selectedDevice.name}
-          type="button"
-          onclick={() => (open = true)}
-        >
-          <span class="mini-avatar" class:online={selectedDevice.online} data-subnet-router={selectedDevice.subnetRouter}>{deviceInitials}</span>
-        </button>
-      {:else}
-        <span class="mini-hint" title="No device selected">—</span>
-      {/if}
-    </div>
-  </div>
-</div>
+    {:else}
+      <span class="mini-hint" title="No device selected">—</span>
+    {/if}
+  {/snippet}
+</ResizableSidebar>
 
 <style>
-  .sidebar-right {
-    position: relative;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-    background: #fbfcfb;
-    transition: width 220ms cubic-bezier(0.4, 0, 0.2, 1);
-  }
-
-  .sidebar-right[data-open="true"] {
-    width: 18rem;
-  }
-
-  .sidebar-right[data-open="false"] {
-    width: 2.75rem;
-  }
-
-  .sidebar-content {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    min-width: 0;
-    padding: 1rem;
-    overflow-y: auto;
-    opacity: 1;
-    transition: opacity 160ms ease-out 40ms;
-  }
-
-  .sidebar-right[data-open="false"] .sidebar-content {
-    opacity: 0;
-    pointer-events: none;
-    transition-delay: 0ms;
-  }
-
-  .icon-bar {
-    position: absolute;
-    inset: 0;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    padding: 0.5rem 0.25rem;
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity 140ms ease-out;
-    background: #fbfcfb;
-  }
-
-  .sidebar-right[data-open="false"] .icon-bar {
-    opacity: 1;
-    pointer-events: auto;
-  }
-
-  .icon-bar-content {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 0.4rem;
-  }
-
-  .icon-btn {
-    display: grid;
-    place-items: center;
-    width: 2rem;
-    height: 2rem;
-    padding: 0;
-    border: 1px solid #d1dbd5;
-    border-radius: 6px;
-    color: #586761;
-    background: transparent;
-    cursor: pointer;
-    transition:
-      background-color 140ms ease-out,
-      border-color 140ms ease-out,
-      color 140ms ease-out;
-  }
-
-  .icon-btn:hover {
-    border-color: #5d7f73;
-    color: #18382d;
-    background: #eef3f0;
-  }
-
-  .icon-btn svg {
-    width: 1rem;
-    height: 1rem;
-  }
-
-  .icon-divider {
-    width: 1.2rem;
-    height: 1px;
-    background: #d9e1dd;
-  }
-
-  .mini-device {
-    display: grid;
-    place-items: center;
-    width: 2rem;
-    height: 2rem;
-    padding: 0;
-    border: none;
-    border-radius: 8px;
-    background: transparent;
-    cursor: pointer;
-  }
-
-  .mini-avatar {
-    display: grid;
-    place-items: center;
-    width: 1.8rem;
-    height: 1.8rem;
-    border-radius: 999px;
-    color: #ffffff;
-    background: #9aa7a1;
-    font-size: 0.65rem;
-    font-weight: 700;
-    transition: background-color 160ms ease-out;
-  }
-
-  .mini-avatar.online {
-    background: #41a86f;
-  }
-
-  .mini-avatar[data-subnet-router="true"] {
-    border-radius: 8px;
-  }
-
-  .mini-hint {
-    color: #98a8a0;
-    font-size: 0.75rem;
-    font-weight: 700;
-  }
-
   .sidebar-header {
     flex-shrink: 0;
     margin-bottom: 0.75rem;
@@ -491,6 +347,79 @@
     border-top: 1px solid #e8eeeb;
     color: #315044;
     font-size: 0.8rem;
+    font-weight: 700;
+  }
+
+  .icon-btn {
+    display: grid;
+    place-items: center;
+    width: 2rem;
+    height: 2rem;
+    padding: 0;
+    border: 1px solid #d1dbd5;
+    border-radius: 6px;
+    color: #586761;
+    background: transparent;
+    cursor: pointer;
+    transition:
+      background-color 140ms ease-out,
+      border-color 140ms ease-out,
+      color 140ms ease-out;
+  }
+
+  .icon-btn:hover {
+    border-color: #5d7f73;
+    color: #18382d;
+    background: #eef3f0;
+  }
+
+  .icon-btn svg {
+    width: 1rem;
+    height: 1rem;
+  }
+
+  .icon-divider {
+    width: 1.2rem;
+    height: 1px;
+    background: #d9e1dd;
+  }
+
+  .mini-device {
+    display: grid;
+    place-items: center;
+    width: 2rem;
+    height: 2rem;
+    padding: 0;
+    border: none;
+    border-radius: 8px;
+    background: transparent;
+    cursor: pointer;
+  }
+
+  .mini-avatar {
+    display: grid;
+    place-items: center;
+    width: 1.8rem;
+    height: 1.8rem;
+    border-radius: 999px;
+    color: #ffffff;
+    background: #9aa7a1;
+    font-size: 0.65rem;
+    font-weight: 700;
+    transition: background-color 160ms ease-out;
+  }
+
+  .mini-avatar.online {
+    background: #41a86f;
+  }
+
+  .mini-avatar[data-subnet-router="true"] {
+    border-radius: 8px;
+  }
+
+  .mini-hint {
+    color: #98a8a0;
+    font-size: 0.75rem;
     font-weight: 700;
   }
 </style>

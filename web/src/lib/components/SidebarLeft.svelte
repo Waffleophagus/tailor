@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { Device } from "../api/schemas";
+  import ResizableSidebar from "./ResizableSidebar.svelte";
   import SearchInput from "./SearchInput.svelte";
-  import SidebarToggleButton from "./SidebarToggleButton.svelte";
 
   let {
     open = $bindable(true),
@@ -11,6 +11,7 @@
     showLabels = $bindable(true),
     showOffline = $bindable(true),
     showSubnetRouters = $bindable(true),
+    showTailnet = $bindable(false),
     selectedTag = $bindable("all"),
     selectedOwner = $bindable("all"),
     selectedOS = $bindable("all"),
@@ -28,6 +29,7 @@
     showLabels?: boolean;
     showOffline?: boolean;
     showSubnetRouters?: boolean;
+    showTailnet?: boolean;
     selectedTag?: string;
     selectedOwner?: string;
     selectedOS?: string;
@@ -49,10 +51,14 @@
   );
 
   const visibleOfflineCount = $derived(visibleDevices.filter((d) => !d.online).length);
+
+  function displayName(name: string) {
+    return showTailnet ? name : name.split(".")[0];
+  }
 </script>
 
-<div class="sidebar-left" data-open={open}>
-  <div class="sidebar-content">
+<ResizableSidebar position="left" defaultWidth={16 * 16} {open}>
+  {#snippet children()}
     <div class="sidebar-header">
       <h2>Devices</h2>
     </div>
@@ -140,6 +146,10 @@
           count={filteredDevices.length}
           total={visibleDevices.length}
         />
+        <label class="control-row show-tailnet-row">
+          <input type="checkbox" bind:checked={showTailnet} />
+          <span>Show tailnet names</span>
+        </label>
         <ul class="device-list">
           {#each filteredDevices as device (device.id)}
             <li>
@@ -149,168 +159,35 @@
                 onclick={() => chooseDevice(device)}
               >
                 <span class={["dot", device.online && "online"]}></span>
-                <span class="device-name">{device.name}</span>
+                <span class="device-name">{displayName(device.name)}</span>
               </button>
             </li>
           {/each}
         </ul>
       {/if}
     </div>
-  </div>
+  {/snippet}
 
-  <!-- Collapsed icon bar -->
-  <div class="icon-bar" aria-hidden={open}>
-    <div class="icon-bar-content">
-      <button
-        class="icon-btn"
-        title="Devices panel"
-        type="button"
-        onclick={() => (open = true)}
-      >
-        <svg viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <path
-            d="M10 2.5L2.5 7.5V17.5H8.75V12.5H11.25V17.5H17.5V7.5L10 2.5Z"
-            fill="currentColor"
-          />
-        </svg>
-      </button>
-      <div class="icon-divider"></div>
-      <div class="mini-counts">
-        <span class="mini-count" title={`${visibleOnlineCount} online`}>
-          <span class="mini-dot online"></span>
-          {visibleOnlineCount}
-        </span>
-        <span class="mini-count" title={`${devices.length} total`}>
-          {devices.length}
-        </span>
-      </div>
+  {#snippet collapsed()}
+    <button class="icon-btn" title="Devices panel" type="button" onclick={() => (open = true)}>
+      <svg viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M10 2.5L2.5 7.5V17.5H8.75V12.5H11.25V17.5H17.5V7.5L10 2.5Z" fill="currentColor" />
+      </svg>
+    </button>
+    <div class="icon-divider"></div>
+    <div class="mini-counts">
+      <span class="mini-count" title={`${visibleOnlineCount} online`}>
+        <span class="mini-dot online"></span>
+        {visibleOnlineCount}
+      </span>
+      <span class="mini-count" title={`${devices.length} total`}>
+        {devices.length}
+      </span>
     </div>
-  </div>
-</div>
+  {/snippet}
+</ResizableSidebar>
 
 <style>
-  .sidebar-left {
-    position: relative;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-    background: #fbfcfb;
-    transition: width 220ms cubic-bezier(0.4, 0, 0.2, 1);
-  }
-
-  .sidebar-left[data-open="true"] {
-    width: 16rem;
-  }
-
-  .sidebar-left[data-open="false"] {
-    width: 2.75rem;
-  }
-
-  .sidebar-content {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    min-width: 0;
-    padding: 1rem;
-    overflow-y: auto;
-    opacity: 1;
-    transition: opacity 160ms ease-out 40ms;
-  }
-
-  .sidebar-left[data-open="false"] .sidebar-content {
-    opacity: 0;
-    pointer-events: none;
-    transition-delay: 0ms;
-  }
-
-  .icon-bar {
-    position: absolute;
-    inset: 0;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    padding: 0.5rem 0.25rem;
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity 140ms ease-out;
-    background: #fbfcfb;
-  }
-
-  .sidebar-left[data-open="false"] .icon-bar {
-    opacity: 1;
-    pointer-events: auto;
-  }
-
-  .icon-bar-content {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 0.4rem;
-  }
-
-  .icon-btn {
-    display: grid;
-    place-items: center;
-    width: 2rem;
-    height: 2rem;
-    padding: 0;
-    border: 1px solid #d1dbd5;
-    border-radius: 6px;
-    color: #586761;
-    background: transparent;
-    cursor: pointer;
-    transition:
-      background-color 140ms ease-out,
-      border-color 140ms ease-out,
-      color 140ms ease-out;
-  }
-
-  .icon-btn:hover {
-    border-color: #5d7f73;
-    color: #18382d;
-    background: #eef3f0;
-  }
-
-  .icon-btn svg {
-    width: 1rem;
-    height: 1rem;
-  }
-
-  .icon-divider {
-    width: 1.2rem;
-    height: 1px;
-    background: #d9e1dd;
-  }
-
-  .mini-counts {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 0.3rem;
-    margin-top: 0.2rem;
-  }
-
-  .mini-count {
-    display: flex;
-    align-items: center;
-    gap: 0.2rem;
-    font-size: 0.7rem;
-    font-weight: 700;
-    color: #586761;
-    white-space: nowrap;
-  }
-
-  .mini-dot {
-    width: 0.45rem;
-    height: 0.45rem;
-    border-radius: 999px;
-    background: #9aa7a1;
-  }
-
-  .mini-dot.online {
-    background: #41a86f;
-  }
-
   .sidebar-header {
     flex-shrink: 0;
     margin-bottom: 0.75rem;
@@ -397,6 +274,14 @@
     margin: 0;
   }
 
+  .show-tailnet-row {
+    margin-top: 0.25rem;
+    margin-bottom: 0.35rem;
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: #3a4a44;
+  }
+
   .filter-grid {
     display: flex;
     flex-direction: column;
@@ -477,7 +362,7 @@
     flex-direction: column;
     gap: 0.25rem;
     padding: 0;
-    margin: 0.6rem 0 0 0;
+    margin: 0;
     list-style: none;
     overflow-y: auto;
   }
@@ -528,5 +413,68 @@
     margin-top: 0.5rem;
     color: #98a8a0;
     font-size: 0.85rem;
+  }
+
+  .icon-btn {
+    display: grid;
+    place-items: center;
+    width: 2rem;
+    height: 2rem;
+    padding: 0;
+    border: 1px solid #d1dbd5;
+    border-radius: 6px;
+    color: #586761;
+    background: transparent;
+    cursor: pointer;
+    transition:
+      background-color 140ms ease-out,
+      border-color 140ms ease-out,
+      color 140ms ease-out;
+  }
+
+  .icon-btn:hover {
+    border-color: #5d7f73;
+    color: #18382d;
+    background: #eef3f0;
+  }
+
+  .icon-btn svg {
+    width: 1rem;
+    height: 1rem;
+  }
+
+  .icon-divider {
+    width: 1.2rem;
+    height: 1px;
+    background: #d9e1dd;
+  }
+
+  .mini-counts {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.3rem;
+    margin-top: 0.2rem;
+  }
+
+  .mini-count {
+    display: flex;
+    align-items: center;
+    gap: 0.2rem;
+    font-size: 0.7rem;
+    font-weight: 700;
+    color: #586761;
+    white-space: nowrap;
+  }
+
+  .mini-dot {
+    width: 0.45rem;
+    height: 0.45rem;
+    border-radius: 999px;
+    background: #9aa7a1;
+  }
+
+  .mini-dot.online {
+    background: #41a86f;
   }
 </style>

@@ -23,6 +23,7 @@
   let localApiError = $state<LocalAPIStatusResponse | Error | undefined>();
   let showOffline = $state(true);
   let showSubnetRouters = $state(true);
+  let showTailnet = $state(false);
   let showLabels = $state(false);
   let selectedTag = $state("all");
   let selectedOwner = $state("all");
@@ -610,6 +611,7 @@
         bind:showLabels
         bind:showOffline
         bind:showSubnetRouters
+        bind:showTailnet
         bind:selectedTag
         bind:selectedOwner
         bind:selectedOS
