@@ -13,7 +13,7 @@ import (
 func main() {
 	addr := os.Getenv("TAILOR_ADDR")
 	if addr == "" {
-		addr = "127.0.0.1:8080"
+		addr = ":8080"
 	}
 	socketPath := os.Getenv("TAILOR_LOCALAPI_SOCKET")
 

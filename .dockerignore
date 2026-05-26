@@ -1,0 +1,9 @@
+.git
+.github
+.scratch
+.agents
+tailor
+web/node_modules
+web/dist
+internal/frontend/dist
+refrences

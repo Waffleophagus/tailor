@@ -1,0 +1,10 @@
+services:
+  tailor:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      TAILOR_ADDR: ":8080"
+      TAILOR_LOCALAPI_SOCKET: "/var/run/tailscale/tailscaled.sock"
+    volumes:
+      - /var/run/tailscale/tailscaled.sock:/var/run/tailscale/tailscaled.sock:ro

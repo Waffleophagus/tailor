@@ -1,0 +1,109 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  CONTAINER_REGISTRY: ${{ vars.CONTAINER_REGISTRY || 'ghcr.io' }}
+
+jobs:
+  test-build-publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+
+      - name: Install frontend dependencies
+        run: pnpm --dir web install --frozen-lockfile
+
+      - name: Check frontend
+        run: pnpm --dir web check
+
+      - name: Build frontend
+        run: pnpm --dir web build
+
+      - name: Test Go
+        run: go test ./...
+
+      - name: Vet Go
+        run: go vet ./...
+
+      - name: Compute image tags
+        id: image
+        shell: bash
+        run: |
+          image="$CONTAINER_REGISTRY/$(echo "$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]')"
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+          echo "sha_tag=$image:$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+          echo "latest_tag=$image:latest" >> "$GITHUB_OUTPUT"
+
+      - name: Build Docker image
+        run: docker build --tag "${{ steps.image.outputs.sha_tag }}" .
+
+      - name: Smoke test Docker image
+        run: |
+          docker run --detach --rm --name tailor-smoke --publish 127.0.0.1:8080:8080 "${{ steps.image.outputs.sha_tag }}"
+          trap 'docker stop tailor-smoke >/dev/null 2>&1 || true' EXIT
+          ok=false
+          for i in 1 2 3 4 5 6 7 8 9 10; do
+            if curl --fail http://127.0.0.1:8080/api/health; then
+              ok=true
+              break
+            fi
+            sleep 1
+          done
+          test "$ok" = true
+
+      - name: Check registry token
+        if: github.event_name == 'push'
+        id: registry-token
+        env:
+          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+        run: |
+          if [ -z "$REGISTRY_TOKEN" ]; then
+            echo "REGISTRY_TOKEN is not set; skipping image publish."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Log in to container registry
+        if: github.event_name == 'push' && steps.registry-token.outputs.publish == 'true'
+        env:
+          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+          REGISTRY_USERNAME: ${{ vars.REGISTRY_USERNAME || github.actor }}
+        run: |
+          echo "$REGISTRY_TOKEN" | docker login "$CONTAINER_REGISTRY" -u "$REGISTRY_USERNAME" --password-stdin
+
+      - name: Push SHA image
+        if: github.event_name == 'push' && steps.registry-token.outputs.publish == 'true'
+        run: docker push "${{ steps.image.outputs.sha_tag }}"
+
+      - name: Push latest image
+        if: github.event_name == 'push' && github.ref_name == github.event.repository.default_branch && steps.registry-token.outputs.publish == 'true'
+        run: |
+          docker tag "${{ steps.image.outputs.sha_tag }}" "${{ steps.image.outputs.latest_tag }}"
+          docker push "${{ steps.image.outputs.latest_tag }}"
