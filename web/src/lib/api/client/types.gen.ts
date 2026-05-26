@@ -9,6 +9,12 @@ export type HealthResponse = {
     version: string;
 };
 
+export type LocalApiStatusResponse = {
+    available: boolean;
+    socketPath: string;
+    error?: string;
+};
+
 export type Device = {
     id: string;
     name: string;
@@ -66,3 +72,44 @@ export type GetTopologyResponses = {
 };
 
 export type GetTopologyResponse = GetTopologyResponses[keyof GetTopologyResponses];
+
+export type GetStatusData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/status';
+};
+
+export type GetStatusResponses = {
+    /**
+     * LocalAPI connectivity status.
+     */
+    200: LocalApiStatusResponse;
+};
+
+export type GetStatusResponse = GetStatusResponses[keyof GetStatusResponses];
+
+export type GetTailnetData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/tailnet';
+};
+
+export type GetTailnetErrors = {
+    /**
+     * Tailscale LocalAPI is unavailable.
+     */
+    503: LocalApiStatusResponse;
+};
+
+export type GetTailnetError = GetTailnetErrors[keyof GetTailnetErrors];
+
+export type GetTailnetResponses = {
+    /**
+     * Tailnet topology graph.
+     */
+    200: TopologyResponse;
+};
+
+export type GetTailnetResponse = GetTailnetResponses[keyof GetTailnetResponses];

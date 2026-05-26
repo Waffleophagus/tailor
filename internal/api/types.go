@@ -5,6 +5,12 @@ type HealthResponse struct {
 	Version string `json:"version"`
 }
 
+type LocalAPIStatusResponse struct {
+	Available  bool   `json:"available"`
+	SocketPath string `json:"socketPath"`
+	Error      string `json:"error,omitempty"`
+}
+
 type Device struct {
 	ID       string   `json:"id"`
 	Name     string   `json:"name"`

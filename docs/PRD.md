@@ -52,14 +52,15 @@ A self-hosted Go binary with an embedded Svelte+Cytoscape.js frontend that visua
 5. Backend resolves effective access rules into device-to-device edges.
 6. Graph updates: edges now reflect actual reachability, colored by port/protocol.
 7. User clicks "Perspective Filter" → dropdown of users/groups.
-8. Selecting a perspective hides nodes that user cannot see and highlights reachable edges.
+8. Selecting a perspective recalculates the graph around that subject's effective access. Exact visual treatment of inaccessible edges and nodes is deferred to interactive UI prototyping.
 9. User clicks a device node → modal:
   - Current tags
-  - Current group membership
+  - Matching policy subjects (owner user, owner groups, tags, autogroups, hosts/IPs)
   - "What can reach this?" list (resolved from ACL file)
-  - "Who can this reach?" list
-  - "Edit Tags" button
-10. User clicks "Edit Tags" → opens tag/group selection interface.
+  - "What can this reach?" list
+  - Responsible ACL rules/grants for each effective access path
+  - "Edit Policy" button
+10. User clicks "Edit Policy" → opens a policy editing interface scoped to the matching groups, tags, ACL rules, and grants.
 11. Changes are accumulated into a draft state.
 12. User clicks "Review & Save" → diff viewer shows old HuJSON vs. new HuJSON.
 13. User clicks "Validate" → backend sends to `POST /api/v2/tailnet/{tailnet}/acl/validate`.
@@ -98,9 +99,9 @@ A self-hosted Go binary with an embedded Svelte+Cytoscape.js frontend that visua
 | FE-03 | Sidebar filter panel: tags, owners, OS, online status | P0 |
 | FE-04 | Click node → detail panel with metadata | P0 |
 | FE-05 | "Enable ACL Editing" button with OAuth credential modal | P0 |
-| FE-06 | Perspective filter: select user/group to resolve effective access | P0 |
+| FE-06 | Perspective filter: select user/group to recalculate the graph around that subject's effective access | P0 |
 | FE-07 | Color-coded edges: SSH (green), HTTP/S (blue), custom (purple), blocked/no-access (gray/faded) | P1 |
-| FE-08 | Node edit modal: tag selection, group membership | P1 |
+| FE-08 | Node policy lens modal: matching policy subjects, responsible rules/grants, scoped policy editing | P1 |
 | FE-09 | Diff viewer: side-by-side old/new HuJSON with syntax highlighting | P1 |
 | FE-10 | Raw HuJSON tab (read-only in Phase 1, editable in Phase 2) | P1 |
 | FE-11 | Toast notifications for save/validate events | P2 |

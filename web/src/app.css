@@ -17,6 +17,10 @@ input {
   font: inherit;
 }
 
+button {
+  cursor: pointer;
+}
+
 #app,
 main {
   min-height: 100vh;
@@ -109,39 +113,101 @@ aside:last-child {
   background-size: 2rem 2rem;
 }
 
-.node {
+.graph-canvas {
   position: absolute;
-  display: grid;
-  width: 7rem;
-  height: 3rem;
-  place-items: center;
-  border: 1px solid #557568;
+  inset: 0;
+}
+
+.empty-state {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: min(28rem, calc(100% - 2rem));
+  padding: 1rem;
+  border: 1px solid #d9e1dd;
   border-radius: 8px;
-  color: #14342a;
   background: #ffffff;
+  box-shadow: 0 10px 30px rgb(23 33 38 / 8%);
+  transform: translate(-50%, -50%);
+}
+
+.empty-state h2 {
+  margin-bottom: 0.4rem;
+  font-size: 1rem;
+}
+
+.empty-state p {
+  margin-bottom: 0;
+  overflow-wrap: anywhere;
+}
+
+.device-list {
+  display: grid;
+  gap: 0.35rem;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.device-list button {
+  display: grid;
+  grid-template-columns: 0.75rem minmax(0, 1fr);
+  align-items: center;
+  width: 100%;
+  gap: 0.5rem;
+  padding: 0.55rem 0.6rem;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: #172126;
+  background: transparent;
+  text-align: left;
+}
+
+.device-list button:hover,
+.device-list button.active {
+  border-color: #c7d3ce;
+  background: #eef3f0;
+}
+
+.device-list span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dot {
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 999px;
+  background: #9aa7a1;
+}
+
+.dot.online {
+  background: #41a86f;
+}
+
+.details {
+  display: grid;
+  gap: 0.75rem;
+  margin: 0;
+}
+
+.details div {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.details dt {
+  color: #596963;
+  font-size: 0.78rem;
   font-weight: 700;
-  box-shadow: 0 8px 24px rgb(23 33 38 / 8%);
+  text-transform: uppercase;
 }
 
-.node-a {
-  top: 35%;
-  left: 24%;
-}
-
-.node-b {
-  top: 52%;
-  left: 58%;
-}
-
-.edge {
-  position: absolute;
-  top: calc(35% + 1.5rem);
-  left: calc(24% + 7rem);
-  width: 34%;
-  height: 2px;
-  transform: rotate(22deg);
-  transform-origin: left center;
-  background: #557568;
+.details dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: #172126;
 }
 
 .meta {

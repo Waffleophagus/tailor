@@ -15,10 +15,11 @@ func main() {
 	if addr == "" {
 		addr = "127.0.0.1:8080"
 	}
+	socketPath := os.Getenv("TAILOR_LOCALAPI_SOCKET")
 
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           server.New(),
+		Handler:           server.New(server.Options{LocalAPISocketPath: socketPath}),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

@@ -35,6 +35,13 @@ interface HealthResponse {
 }
 
 // From api/types.go
+interface LocalAPIStatusResponse {
+    available: boolean;
+    socketPath: string;
+    error?: string;
+}
+
+// From api/types.go
 interface TopologyResponse {
     devices: Device[];
     edges: Edge[];
