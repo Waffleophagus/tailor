@@ -109,15 +109,82 @@ aside:last-child {
   min-height: 32rem;
   overflow: hidden;
   background:
-    linear-gradient(#dce5e0 1px, transparent 1px),
-    linear-gradient(90deg, #dce5e0 1px, transparent 1px),
-    #eef3f0;
-  background-size: 2rem 2rem;
+    radial-gradient(circle at 18% 24%, oklch(0.83 0.065 158 / 0.45), transparent 18rem),
+    radial-gradient(circle at 82% 78%, oklch(0.8 0.05 293 / 0.22), transparent 20rem),
+    linear-gradient(oklch(0.86 0.012 158 / 0.82) 1px, transparent 1px),
+    linear-gradient(90deg, oklch(0.86 0.012 158 / 0.82) 1px, transparent 1px),
+    oklch(0.94 0.012 158);
+  background-size: auto, auto, 2rem 2rem, 2rem 2rem, auto;
+}
+
+.graph::before {
+  position: absolute;
+  inset: -12%;
+  z-index: 0;
+  pointer-events: none;
+  content: "";
+  background:
+    radial-gradient(circle, oklch(0.7 0.08 158 / 0.2) 0 1px, transparent 1.5px),
+    radial-gradient(circle, oklch(0.62 0.07 254 / 0.14) 0 1px, transparent 1.5px);
+  background-position:
+    0 0,
+    1.25rem 1.65rem;
+  background-size:
+    3.8rem 3.8rem,
+    5.2rem 5.2rem;
+  opacity: 0.72;
+  transform: translate3d(0, 0, 0);
+  animation: graph-field-drift 18s linear infinite;
+}
+
+.graph::after {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  content: "";
+  background: radial-gradient(circle at center, transparent 48%, oklch(0.36 0.025 158 / 0.12));
 }
 
 .graph-canvas {
   position: absolute;
   inset: 0;
+  z-index: 1;
+}
+
+.graph-hud {
+  position: absolute;
+  z-index: 2;
+  top: 0.75rem;
+  left: 0.75rem;
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+  padding: 0.35rem;
+  border: 1px solid oklch(0.82 0.018 158);
+  border-radius: 8px;
+  background: oklch(0.985 0.006 158 / 0.92);
+  box-shadow: 0 10px 26px rgb(23 33 38 / 8%);
+}
+
+.graph-hud span {
+  display: inline-flex;
+  gap: 0.3rem;
+  align-items: baseline;
+  min-height: 2rem;
+  padding: 0.35rem 0.55rem;
+  border-radius: 6px;
+  color: #586761;
+  background: oklch(0.95 0.012 158 / 0.74);
+  font-size: 0.78rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.graph-hud strong {
+  color: #18382d;
+  font-size: 0.98rem;
+  line-height: 1;
 }
 
 .graph-controls {
@@ -128,24 +195,34 @@ aside:last-child {
   display: flex;
   gap: 0.35rem;
   padding: 0.35rem;
-  border: 1px solid #c7d3ce;
+  border: 1px solid oklch(0.82 0.018 158);
   border-radius: 8px;
-  background: #ffffff;
+  background: oklch(0.985 0.006 158 / 0.92);
   box-shadow: 0 8px 22px rgb(23 33 38 / 8%);
 }
 
 .graph-controls button {
+  display: grid;
+  place-items: center;
+  width: 2.1rem;
   min-width: 2.1rem;
-  height: 2rem;
-  border: 1px solid #b9c5bf;
+  height: 2.1rem;
+  border: 1px solid oklch(0.78 0.022 158);
   border-radius: 6px;
   color: #172126;
-  background: #f7faf8;
+  background: oklch(0.975 0.008 158);
   font-weight: 800;
+  line-height: 1;
+  transition:
+    background-color 160ms ease-out,
+    border-color 160ms ease-out,
+    transform 160ms ease-out;
 }
 
 .graph-controls button:hover {
-  background: #edf3f0;
+  border-color: oklch(0.63 0.07 158);
+  background: oklch(0.93 0.02 158);
+  transform: translateY(-1px);
 }
 
 .empty-state {
@@ -316,5 +393,36 @@ aside:last-child {
 
   .graph {
     min-height: 24rem;
+  }
+
+  .graph-hud {
+    right: 0.75rem;
+    flex-wrap: wrap;
+    width: max-content;
+    max-width: calc(100% - 1.5rem);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .graph::before {
+    animation: none;
+  }
+
+  .graph-controls button {
+    transition: none;
+  }
+
+  .graph-controls button:hover {
+    transform: none;
+  }
+}
+
+@keyframes graph-field-drift {
+  from {
+    transform: translate3d(0, 0, 0);
+  }
+
+  to {
+    transform: translate3d(3.8rem, 3.8rem, 0);
   }
 }

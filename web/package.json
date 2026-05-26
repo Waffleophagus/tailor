@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:proxy": "vite --host 127.0.0.1",
     "build": "vite build",
     "generate:api": "openapi-ts",
     "generate:guts": "cd .. && go run ./tools/generate-types",
@@ -16,6 +17,7 @@
     "@hey-api/openapi-ts": "^0.97.3",
     "@sveltejs/vite-plugin-svelte": "^7.1.2",
     "@tsconfig/svelte": "^5.0.8",
+    "@types/d3-force": "^3.0.10",
     "@types/node": "^24.12.3",
     "svelte": "^5.55.5",
     "svelte-check": "^4.4.8",
@@ -26,6 +28,7 @@
     "@hey-api/client-fetch": "^0.13.1",
     "better-result": "^2.9.2",
     "cytoscape": "^3.33.4",
+    "d3-force": "^3.0.0",
     "zod": "^4.4.3"
   }
 }

@@ -1,0 +1,4 @@
+minimumReleaseAgeExclude:
+  - '@hey-api/codegen-core@0.8.2'
+  - '@hey-api/openapi-ts@0.97.3'
+  - '@hey-api/shared@0.4.5'
