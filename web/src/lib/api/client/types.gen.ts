@@ -67,9 +67,18 @@ export type GetTopologyData = {
     url: '/api/topology';
 };
 
+export type GetTopologyErrors = {
+    /**
+     * Tailscale LocalAPI is unavailable.
+     */
+    503: LocalApiStatusResponse;
+};
+
+export type GetTopologyError = GetTopologyErrors[keyof GetTopologyErrors];
+
 export type GetTopologyResponses = {
     /**
-     * Tailnet topology graph.
+     * Current tailnet topology snapshot. The topology socket sends the same shape as a topology.snapshot payload.
      */
     200: TopologyResponse;
 };
@@ -91,28 +100,3 @@ export type GetStatusResponses = {
 };
 
 export type GetStatusResponse = GetStatusResponses[keyof GetStatusResponses];
-
-export type GetTailnetData = {
-    body?: never;
-    path?: never;
-    query?: never;
-    url: '/api/tailnet';
-};
-
-export type GetTailnetErrors = {
-    /**
-     * Tailscale LocalAPI is unavailable.
-     */
-    503: LocalApiStatusResponse;
-};
-
-export type GetTailnetError = GetTailnetErrors[keyof GetTailnetErrors];
-
-export type GetTailnetResponses = {
-    /**
-     * Tailnet topology graph.
-     */
-    200: TopologyResponse;
-};
-
-export type GetTailnetResponse = GetTailnetResponses[keyof GetTailnetResponses];

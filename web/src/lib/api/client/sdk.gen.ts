@@ -2,7 +2,7 @@
 
 import type { Client, Options as Options2, TDataShape } from './client';
 import { client } from './client.gen';
-import type { GetHealthData, GetHealthResponses, GetStatusData, GetStatusResponses, GetTailnetData, GetTailnetErrors, GetTailnetResponses, GetTopologyData, GetTopologyResponses } from './types.gen';
+import type { GetHealthData, GetHealthResponses, GetStatusData, GetStatusResponses, GetTopologyData, GetTopologyErrors, GetTopologyResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -20,8 +20,6 @@ export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends 
 
 export const getHealth = <ThrowOnError extends boolean = false>(options?: Options<GetHealthData, ThrowOnError>) => (options?.client ?? client).get<GetHealthResponses, unknown, ThrowOnError>({ url: '/api/health', ...options });
 
-export const getTopology = <ThrowOnError extends boolean = false>(options?: Options<GetTopologyData, ThrowOnError>) => (options?.client ?? client).get<GetTopologyResponses, unknown, ThrowOnError>({ url: '/api/topology', ...options });
+export const getTopology = <ThrowOnError extends boolean = false>(options?: Options<GetTopologyData, ThrowOnError>) => (options?.client ?? client).get<GetTopologyResponses, GetTopologyErrors, ThrowOnError>({ url: '/api/topology', ...options });
 
 export const getStatus = <ThrowOnError extends boolean = false>(options?: Options<GetStatusData, ThrowOnError>) => (options?.client ?? client).get<GetStatusResponses, unknown, ThrowOnError>({ url: '/api/status', ...options });
-
-export const getTailnet = <ThrowOnError extends boolean = false>(options?: Options<GetTailnetData, ThrowOnError>) => (options?.client ?? client).get<GetTailnetResponses, GetTailnetErrors, ThrowOnError>({ url: '/api/tailnet', ...options });

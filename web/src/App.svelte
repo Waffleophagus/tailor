@@ -2,6 +2,7 @@
   import cytoscape, {
     type Core,
     type ElementDefinition,
+    type EdgeSingular,
     type NodeSingular,
     type StylesheetJson,
   } from "cytoscape";
@@ -10,8 +11,8 @@
   import { onDestroy, onMount } from "svelte";
 
   import { fetchHealth } from "./lib/api/health";
-  import { fetchTailnet } from "./lib/api/tailnet";
-  import type { Device, LocalAPIStatusResponse } from "./lib/api/schemas";
+  import type { Device, Edge, LocalAPIStatusResponse } from "./lib/api/schemas";
+  import { connectTopologySocket } from "./lib/api/topologySocket";
   import SidebarLeft from "./lib/components/SidebarLeft.svelte";
   import SidebarRight from "./lib/components/SidebarRight.svelte";
   import SidebarToggleButton from "./lib/components/SidebarToggleButton.svelte";
@@ -19,6 +20,7 @@
   let apiStatus = $state("checking");
   let apiVersion = $state("");
   let devices = $state<Device[]>([]);
+  let edges = $state<Edge[]>([]);
   let selectedDevice = $state<Device | undefined>();
   let localApiError = $state<LocalAPIStatusResponse | Error | undefined>();
   let showOffline = $state(true);
@@ -31,8 +33,18 @@
   let colorBy = $state<"status" | "tag" | "owner" | "os">("status");
   let graphEl: HTMLDivElement;
   let graph: Core | undefined;
+  let disconnectTopologySocket: (() => void) | undefined;
   let leftOpen = $state(true);
   let rightOpen = $state(true);
+  const deviceAngles = new Map<string, number>();
+  const lastOnlineState = new Map<string, boolean>();
+
+  interface RenderEdge {
+    id: string;
+    from: string;
+    to: string;
+    kind: string;
+  }
 
   const visibleDevices = $derived(
     devices.filter((device) => {
@@ -58,28 +70,21 @@
   const ownerOptions = $derived(unique(devices.map((device) => device.owner).filter(Boolean)));
   const osOptions = $derived(unique(devices.map((device) => device.os).filter(Boolean)));
   const rootDevice = $derived(devices[0]);
-  const visibleRootDevice = $derived(
-    rootDevice && visibleDevices.some((device) => device.id === rootDevice.id) ? rootDevice : undefined,
-  );
-  const visibleSpokes = $derived(
-    visibleRootDevice
-      ? visibleDevices
-          .filter((device) => device.id !== visibleRootDevice.id && device.online)
-          .map((device) => ({
-            id: `local:${visibleRootDevice.id}:${device.id}`,
-            from: visibleRootDevice.id,
-            to: device.id,
-            kind: "local" as const,
-          }))
-      : [],
-  );
+  const visibleDeviceIDs = $derived(new Set(visibleDevices.map((device) => device.id)));
+  const visibleEdges = $derived(spokeEdges());
   const visibleOnlineCount = $derived(visibleDevices.filter((device) => device.online).length);
 
   $effect(() => {
-    if (!graphEl || devices.length === 0) {
+    if (!graphEl) {
+      return;
+    }
+    if (devices.length === 0) {
+      graph?.destroy();
+      graph = undefined;
       return;
     }
     void showLabels;
+    void edges;
     renderGraph();
   });
 
@@ -95,22 +100,41 @@
       },
     });
 
-    const tailnet = await fetchTailnet();
-    tailnet.match({
-      ok: (value) => {
+    disconnectTopologySocket = connectTopologySocket({
+      onSnapshot: (value) => {
         apiStatus = "connected";
         localApiError = undefined;
         devices = value.devices;
-        selectedDevice = value.devices[0];
+        edges = value.edges;
+        selectedDevice = selectedDevice
+          ? (value.devices.find((device) => device.id === selectedDevice?.id) ?? value.devices[0])
+          : value.devices[0];
       },
-      err: (error) => {
+      onUnavailable: (status) => {
         apiStatus = "LocalAPI unavailable";
-        localApiError = error;
+        localApiError = status;
+        devices = [];
+        edges = [];
+        selectedDevice = undefined;
+      },
+      onConnectionState: (state) => {
+        if (state === "connected" && devices.length > 0) {
+          apiStatus = "connected";
+          return;
+        }
+        apiStatus = state;
+      },
+      onError: (error) => {
+        if (devices.length === 0) {
+          apiStatus = "socket error";
+          localApiError = error;
+        }
       },
     });
   });
 
   onDestroy(() => {
+    disconnectTopologySocket?.();
     graph?.destroy();
   });
 
@@ -119,36 +143,12 @@
       return;
     }
 
-    const positions = graphPositions();
-    const elements: ElementDefinition[] = [
-      ...visibleDevices.map((device) => ({
-        classes: [
-          device.online ? "online" : "offline",
-          rootDevice?.id === device.id ? "root" : "",
-          device.subnetRouter ? "subnet-router" : "",
-            showLabels ? "with-labels" : "hide-labels",
-        ]
-          .filter(Boolean)
-          .join(" "),
-        data: {
-          id: device.id,
-          label: device.name || device.ip || device.id,
-          color: deviceColor(device),
-          ringColor: rootDevice?.id === device.id ? "#163f31" : device.online ? "#1f7a52" : "#74857e",
-        },
-        position: positions.get(device.id),
-      })),
-      ...visibleSpokes.map((edge) => ({
-        classes: edge.kind,
-        data: {
-          id: edge.id,
-          source: edge.from,
-          target: edge.to,
-        },
-      })),
-    ];
+    if (graph) {
+      syncGraph();
+      return;
+    }
 
-    graph?.destroy();
+    const elements = graphElements(graphPositions());
     const style: StylesheetJson = [
       {
         selector: "node",
@@ -177,6 +177,14 @@
           "underlay-padding": 8,
           "underlay-shape": "ellipse",
           width: 42,
+        },
+      },
+      {
+        selector: "node.entering",
+        style: {
+          opacity: 0,
+          "underlay-opacity": 0.26,
+          "underlay-padding": 18,
         },
       },
       {
@@ -262,9 +270,10 @@
       {
         selector: "edge.local",
         style: {
-          "line-color": "#5d7f73",
-          opacity: 0.5,
-          width: 1.8,
+          "curve-style": "straight",
+          "line-color": "#2f9f68",
+          opacity: 0.66,
+          width: 2.2,
         },
       },
       {
@@ -335,6 +344,8 @@
         clearGraphFocus();
       }
     });
+    rememberOnlineState();
+    window.requestAnimationFrame(() => fitGraph());
   }
 
   function fitGraph() {
@@ -346,7 +357,7 @@
   }
 
   function reflowGraph() {
-    graph?.layout(graphLayoutOptions()).run();
+    animateGraphToPositions(graphPositions(), 420);
   }
 
   function zoomGraph(delta: number) {
@@ -422,13 +433,249 @@
     };
   }
 
+  function graphElements(positions: Map<string, { x: number; y: number }>) {
+    const elements: ElementDefinition[] = [
+      ...visibleDevices.map((device) => ({
+        classes: deviceClasses(device),
+        data: deviceData(device),
+        position: positions.get(device.id),
+      })),
+      ...visibleEdges.map((edge) => ({
+        classes: edge.kind,
+        data: {
+          id: edge.id,
+          source: edge.from,
+          target: edge.to,
+        },
+      })),
+    ];
+    return elements;
+  }
+
+  function syncGraph() {
+    if (!graph) {
+      return;
+    }
+
+    const desiredNodeIDs = new Set(visibleDevices.map((device) => device.id));
+    const desiredEdgeIDs = new Set(visibleEdges.map((edge) => edge.id));
+    const positions = graphPositions();
+    const existingSelectedID = graph.$("node:selected")[0]?.id();
+
+    graph.edges().forEach((edge) => {
+      if (!desiredEdgeIDs.has(edge.id())) {
+        removeEdge(edge);
+      }
+    });
+    graph.nodes().forEach((node) => {
+      if (!desiredNodeIDs.has(node.id())) {
+        removeNode(node);
+      }
+    });
+
+    for (const device of visibleDevices) {
+      const targetPosition = positions.get(device.id);
+      if (!targetPosition) {
+        continue;
+      }
+      const node = graph.getElementById(device.id);
+      const wasOnline = lastOnlineState.get(device.id);
+      if (!node.length) {
+        addNode(device, targetPosition);
+        continue;
+      }
+      node.data(deviceData(device));
+      node.classes(deviceClasses(device));
+      animateNodeTo(node, targetPosition, wasOnline === false && device.online);
+    }
+
+    for (const edge of visibleEdges) {
+      const existing = graph.getElementById(edge.id);
+      if (existing.length) {
+        existing.classes(edge.kind);
+        continue;
+      }
+      addEdge(edge);
+    }
+
+    if (existingSelectedID && desiredNodeIDs.has(existingSelectedID)) {
+      graph.getElementById(existingSelectedID).select();
+    }
+    rememberOnlineState();
+  }
+
+  function addNode(device: Device, targetPosition: { x: number; y: number }) {
+    if (!graph) {
+      return;
+    }
+    const rootPosition = rootDevice ? graph.getElementById(rootDevice.id).position() : undefined;
+    const startPosition =
+      device.online && rootDevice?.id !== device.id && rootPosition?.x !== undefined
+        ? rootPosition
+        : targetPosition;
+    const node = graph.add({
+      group: "nodes",
+      classes: `${deviceClasses(device)} entering`,
+      data: deviceData(device),
+      position: startPosition,
+    });
+    if (prefersReducedMotion()) {
+      node.removeClass("entering");
+      node.position(targetPosition);
+      return;
+    }
+    node.animate(
+      {
+        position: targetPosition,
+        style: { opacity: device.online ? 1 : 0.68, "underlay-padding": 8 },
+      },
+      {
+        duration: 360,
+        easing: "ease-out-cubic",
+        complete: () => {
+          node.removeClass("entering");
+          node.removeStyle("opacity underlay-padding");
+        },
+      },
+    );
+  }
+
+  function addEdge(edge: RenderEdge) {
+    if (!graph) {
+      return;
+    }
+    const added = graph.add({
+      group: "edges",
+      classes: edge.kind,
+      data: {
+        id: edge.id,
+        source: edge.from,
+        target: edge.to,
+      },
+    });
+    if (prefersReducedMotion()) {
+      return;
+    }
+    added.style({ opacity: 0, width: 0.2 });
+    added.animate(
+      { style: { opacity: 0.66, width: 2.2 } },
+      {
+        duration: 260,
+        easing: "ease-out-cubic",
+        complete: () => added.removeStyle("opacity width"),
+      },
+    );
+  }
+
+  function removeNode(node: NodeSingular) {
+    if (prefersReducedMotion()) {
+      node.remove();
+      return;
+    }
+    node.animate(
+      { style: { opacity: 0, "underlay-opacity": 0 } },
+      {
+        duration: 180,
+        easing: "ease-out-cubic",
+        complete: () => node.remove(),
+      },
+    );
+  }
+
+  function removeEdge(edge: EdgeSingular) {
+    if (prefersReducedMotion()) {
+      edge.remove();
+      return;
+    }
+    edge.animate(
+      { style: { opacity: 0, width: 0.2 } },
+      {
+        duration: 160,
+        easing: "ease-out-cubic",
+        complete: () => edge.remove(),
+      },
+    );
+  }
+
+  function animateNodeTo(
+    node: NodeSingular,
+    targetPosition: { x: number; y: number },
+    becameOnline: boolean,
+  ) {
+    const currentPosition = node.position();
+    const moved =
+      Math.abs(currentPosition.x - targetPosition.x) > 1 ||
+      Math.abs(currentPosition.y - targetPosition.y) > 1;
+    if (moved && !prefersReducedMotion()) {
+      node.animate(
+        { position: targetPosition },
+        { duration: becameOnline ? 420 : 280, easing: "ease-out-cubic" },
+      );
+    } else {
+      node.position(targetPosition);
+    }
+    if (becameOnline) {
+      pulseNode(node);
+    }
+  }
+
+  function animateGraphToPositions(positions: Map<string, { x: number; y: number }>, duration: number) {
+    graph?.nodes().forEach((node) => {
+      const position = positions.get(node.id());
+      if (!position) {
+        return;
+      }
+      if (prefersReducedMotion()) {
+        node.position(position);
+        return;
+      }
+      node.animate({ position }, { duration, easing: "ease-out-cubic" });
+    });
+  }
+
+  function deviceClasses(device: Device) {
+    return [
+      device.online ? "online" : "offline",
+      rootDevice?.id === device.id ? "root" : "",
+      device.subnetRouter ? "subnet-router" : "",
+      showLabels ? "with-labels" : "hide-labels",
+    ]
+      .filter(Boolean)
+      .join(" ");
+  }
+
+  function deviceData(device: Device) {
+    return {
+      id: device.id,
+      label: device.name || device.ip || device.id,
+      color: deviceColor(device),
+      ringColor: rootDevice?.id === device.id ? "#163f31" : device.online ? "#1f7a52" : "#74857e",
+    };
+  }
+
+  function spokeEdges(): RenderEdge[] {
+    const root = rootDevice;
+    if (!root || !visibleDeviceIDs.has(root.id) || !root.online) {
+      return [];
+    }
+
+    return visibleDevices
+      .filter((device) => device.id !== root.id && device.online)
+      .map((device) => ({
+        id: `local:${root.id}:${device.id}`,
+        from: root.id,
+        to: device.id,
+        kind: "local",
+      }));
+  }
+
   function graphPositions() {
     const width = graphEl?.clientWidth || 900;
     const height = graphEl?.clientHeight || 620;
     const center = { x: width / 2, y: height / 2 };
     const positions = new Map<string, { x: number; y: number }>();
 
-    const rootID = visibleRootDevice?.id;
+    const rootID = rootDevice && visibleDevices.some((device) => device.id === rootDevice.id) ? rootDevice.id : undefined;
     const onlinePeers = visibleDevices.filter((device) => device.id !== rootID && device.online);
     const offlinePeers = visibleDevices.filter((device) => device.id !== rootID && !device.online);
     const minDimension = Math.min(width, height);
@@ -438,8 +685,8 @@
     if (rootID) {
       positions.set(rootID, center);
     }
-    placeOnRing(positions, onlinePeers, center, onlineRadius, -Math.PI / 2);
-    placeOnRing(positions, offlinePeers, center, offlineRadius, -Math.PI / 2 + ringOffset(offlinePeers.length));
+    placeOnRing(positions, onlinePeers, center, onlineRadius);
+    placeOnRing(positions, offlinePeers, center, offlineRadius);
 
     return positions;
   }
@@ -529,10 +776,9 @@
     ringDevices: Device[],
     center: { x: number; y: number },
     radius: number,
-    startAngle: number,
   ) {
-    ringDevices.forEach((device, index) => {
-      const angle = startAngle + (index / ringDevices.length) * Math.PI * 2;
+    ringDevices.forEach((device) => {
+      const angle = wheelAngle(device.id);
       positions.set(device.id, {
         x: center.x + Math.cos(angle) * radius,
         y: center.y + Math.sin(angle) * radius,
@@ -540,8 +786,43 @@
     });
   }
 
-  function ringOffset(count: number) {
-    return count > 0 ? Math.PI / count : 0;
+  function wheelAngle(id: string) {
+    const existing = deviceAngles.get(id);
+    if (existing !== undefined) {
+      return existing;
+    }
+
+    const angles = Array.from(deviceAngles.values())
+      .map(normalizeAngle)
+      .sort((a, b) => a - b);
+    let angle = -Math.PI / 2;
+    if (angles.length === 1) {
+      angle = angles[0] + Math.PI;
+    } else if (angles.length > 1) {
+      let bestStart = angles[angles.length - 1];
+      let bestGap = angles[0] + Math.PI * 2 - bestStart;
+      for (let i = 0; i < angles.length - 1; i += 1) {
+        const gap = angles[i + 1] - angles[i];
+        if (gap > bestGap) {
+          bestGap = gap;
+          bestStart = angles[i];
+        }
+      }
+      angle = bestStart + bestGap / 2;
+    }
+    deviceAngles.set(id, angle);
+    return angle;
+  }
+
+  function normalizeAngle(angle: number) {
+    const fullCircle = Math.PI * 2;
+    return ((angle % fullCircle) + fullCircle) % fullCircle;
+  }
+
+  function rememberOnlineState() {
+    for (const device of devices) {
+      lastOnlineState.set(device.id, device.online);
+    }
   }
 
   function clamp(value: number, min: number, max: number) {
@@ -637,7 +918,7 @@
 
         <div class="graph-hud" aria-label="Graph summary">
           <span><strong>{visibleOnlineCount}</strong> online</span>
-          <span><strong>{visibleSpokes.length}</strong> links</span>
+          <span><strong>{visibleEdges.length}</strong> links</span>
         </div>
         <div class="graph-controls" aria-label="Graph controls">
           <button type="button" title="Zoom in" onclick={() => zoomGraph(1.2)}>+</button>

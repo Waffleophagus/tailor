@@ -46,3 +46,14 @@ type TopologyResponse struct {
 	Devices []Device `json:"devices"`
 	Edges   []Edge   `json:"edges"`
 }
+
+type SocketMessage struct {
+	Type      string `json:"type"`
+	RequestID string `json:"requestId,omitempty"`
+	Payload   any    `json:"payload,omitempty"`
+}
+
+const (
+	SocketMessageTopologySnapshot    = "topology.snapshot"
+	SocketMessageLocalAPIUnavailable = "localapi.unavailable"
+)

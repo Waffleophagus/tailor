@@ -46,6 +46,20 @@ interface LocalAPIStatusResponse {
 }
 
 // From api/types.go
+interface SocketMessage {
+    type: string;
+    requestId?: string;
+    // empty interface{} type, falling back to unknown
+    payload?: unknown;
+}
+
+// From api/types.go
+const SocketMessageLocalAPIUnavailable = "localapi.unavailable";
+
+// From api/types.go
+const SocketMessageTopologySnapshot = "topology.snapshot";
+
+// From api/types.go
 interface TopologyResponse {
     devices: Device[];
     edges: Edge[];

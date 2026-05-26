@@ -5,6 +5,7 @@ go 1.26.3
 require github.com/coder/guts v1.7.0
 
 require (
+	github.com/coder/websocket v1.8.14 // indirect
 	github.com/dlclark/regexp2 v1.11.5 // indirect
 	github.com/dop251/goja v0.0.0-20241024094426-79f3a7efcdbd // indirect
 	github.com/fatih/structtag v1.2.0 // indirect

@@ -18,33 +18,23 @@ paths:
       operationId: getTopology
       responses:
         "200":
-          description: Tailnet topology graph.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/TopologyResponse"
-  /api/status:
-    get:
-      operationId: getStatus
-      responses:
-        "200":
-          description: LocalAPI connectivity status.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/LocalAPIStatusResponse"
-  /api/tailnet:
-    get:
-      operationId: getTailnet
-      responses:
-        "200":
-          description: Tailnet topology graph.
+          description: Current tailnet topology snapshot. The topology socket sends the same shape as a topology.snapshot payload.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/TopologyResponse"
         "503":
           description: Tailscale LocalAPI is unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LocalAPIStatusResponse"
+  /api/status:
+    get:
+      operationId: getStatus
+      responses:
+        "200":
+          description: LocalAPI connectivity status.
           content:
             application/json:
               schema:
