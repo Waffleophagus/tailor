@@ -1,0 +1,31 @@
+{
+  "name": "web",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "generate:api": "openapi-ts",
+    "generate:guts": "cd .. && go run ./tools/generate-types",
+    "generate": "pnpm generate:guts && pnpm generate:api",
+    "preview": "vite preview",
+    "check": "svelte-check --tsconfig ./tsconfig.app.json && tsc -p tsconfig.node.json"
+  },
+  "devDependencies": {
+    "@hey-api/openapi-ts": "^0.97.3",
+    "@sveltejs/vite-plugin-svelte": "^7.1.2",
+    "@tsconfig/svelte": "^5.0.8",
+    "@types/node": "^24.12.3",
+    "svelte": "^5.55.5",
+    "svelte-check": "^4.4.8",
+    "typescript": "~6.0.2",
+    "vite": "^8.0.12"
+  },
+  "dependencies": {
+    "@hey-api/client-fetch": "^0.13.1",
+    "better-result": "^2.9.2",
+    "cytoscape": "^3.33.4",
+    "zod": "^4.4.3"
+  }
+}

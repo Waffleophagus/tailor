@@ -1,0 +1,88 @@
+openapi: 3.1.0
+info:
+  title: Tailor API
+  version: 0.1.0
+paths:
+  /api/health:
+    get:
+      operationId: getHealth
+      responses:
+        "200":
+          description: Server health.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+  /api/topology:
+    get:
+      operationId: getTopology
+      responses:
+        "200":
+          description: Tailnet topology graph.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TopologyResponse"
+components:
+  schemas:
+    HealthResponse:
+      type: object
+      required: [status, version]
+      properties:
+        status:
+          type: string
+        version:
+          type: string
+    Device:
+      type: object
+      required: [id, name, ip, os, online, owner, tags]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        ip:
+          type: string
+        os:
+          type: string
+        online:
+          type: boolean
+        owner:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+        lastSeen:
+          type: string
+    EdgeKind:
+      type: string
+      enum: [owner, tag, acl]
+    Edge:
+      type: object
+      required: [id, from, to, kind]
+      properties:
+        id:
+          type: string
+        from:
+          type: string
+        to:
+          type: string
+        kind:
+          $ref: "#/components/schemas/EdgeKind"
+        labels:
+          type: array
+          items:
+            type: string
+    TopologyResponse:
+      type: object
+      required: [devices, edges]
+      properties:
+        devices:
+          type: array
+          items:
+            $ref: "#/components/schemas/Device"
+        edges:
+          type: array
+          items:
+            $ref: "#/components/schemas/Edge"
