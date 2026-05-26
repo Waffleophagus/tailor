@@ -68,30 +68,16 @@ jobs:
           echo "sha_tag=$image:$GITHUB_SHA" >> "$GITHUB_OUTPUT"
           echo "latest_tag=$image:latest" >> "$GITHUB_OUTPUT"
 
-      - name: Check Docker availability
-        id: docker
-        shell: bash
-        run: |
-          # For self-hosted git forges where Docker is not available, skip container-specific CI.
-          if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
-            echo "available=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "Docker is not available; skipping image build, smoke test, and publish steps."
-            echo "available=false" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Build Docker image
-        if: steps.docker.outputs.available == 'true'
         run: docker build --tag "${{ steps.image.outputs.sha_tag }}" .
 
       - name: Smoke test Docker image
-        if: steps.docker.outputs.available == 'true'
         run: |
-          docker run --detach --rm --name tailor-smoke --publish 127.0.0.1:8080:8080 "${{ steps.image.outputs.sha_tag }}"
+          docker run --detach --rm --name tailor-smoke "${{ steps.image.outputs.sha_tag }}"
           trap 'docker stop tailor-smoke >/dev/null 2>&1 || true' EXIT
           ok=false
           for i in 1 2 3 4 5 6 7 8 9 10; do
-            if curl --fail http://127.0.0.1:8080/api/health; then
+            if docker exec tailor-smoke sh -lc 'wget -qO- http://127.0.0.1:8080/api/health >/dev/null'; then
               ok=true
               break
             fi
@@ -100,7 +86,7 @@ jobs:
           test "$ok" = true
 
       - name: Check registry token
-        if: github.event_name == 'push' && steps.docker.outputs.available == 'true'
+        if: github.event_name == 'push'
         id: registry-token
         env:
           REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
@@ -113,7 +99,7 @@ jobs:
           fi
 
       - name: Log in to container registry
-        if: github.event_name == 'push' && steps.docker.outputs.available == 'true' && steps.registry-token.outputs.publish == 'true'
+        if: github.event_name == 'push' && steps.registry-token.outputs.publish == 'true'
         env:
           REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
           REGISTRY_USERNAME: ${{ vars.REGISTRY_USERNAME || github.actor }}
@@ -121,11 +107,11 @@ jobs:
           echo "$REGISTRY_TOKEN" | docker login "$CONTAINER_REGISTRY" -u "$REGISTRY_USERNAME" --password-stdin
 
       - name: Push SHA image
-        if: github.event_name == 'push' && steps.docker.outputs.available == 'true' && steps.registry-token.outputs.publish == 'true'
+        if: github.event_name == 'push' && steps.registry-token.outputs.publish == 'true'
         run: docker push "${{ steps.image.outputs.sha_tag }}"
 
       - name: Push latest image
-        if: github.event_name == 'push' && steps.docker.outputs.available == 'true' && github.ref_name == github.event.repository.default_branch && steps.registry-token.outputs.publish == 'true'
+        if: github.event_name == 'push' && github.ref_name == github.event.repository.default_branch && steps.registry-token.outputs.publish == 'true'
         run: |
           docker tag "${{ steps.image.outputs.sha_tag }}" "${{ steps.image.outputs.latest_tag }}"
           docker push "${{ steps.image.outputs.latest_tag }}"
