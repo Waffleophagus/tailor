@@ -5,13 +5,16 @@
     type NodeSingular,
     type StylesheetJson,
   } from "cytoscape";
-  import { forceSimulation, forceLink, forceManyBody, forceCenter } from "d3-force";
+  import { forceSimulation, forceLink, forceManyBody } from "d3-force";
   import type { SimulationNodeDatum, SimulationLinkDatum } from "d3-force";
   import { onDestroy, onMount } from "svelte";
 
   import { fetchHealth } from "./lib/api/health";
   import { fetchTailnet } from "./lib/api/tailnet";
   import type { Device, LocalAPIStatusResponse } from "./lib/api/schemas";
+  import SidebarLeft from "./lib/components/SidebarLeft.svelte";
+  import SidebarRight from "./lib/components/SidebarRight.svelte";
+  import SidebarToggleButton from "./lib/components/SidebarToggleButton.svelte";
 
   let apiStatus = $state("checking");
   let apiVersion = $state("");
@@ -27,6 +30,8 @@
   let colorBy = $state<"status" | "tag" | "owner" | "os">("status");
   let graphEl: HTMLDivElement;
   let graph: Core | undefined;
+  let leftOpen = $state(true);
+  let rightOpen = $state(true);
 
   const visibleDevices = $derived(
     devices.filter((device) => {
@@ -120,7 +125,7 @@
           device.online ? "online" : "offline",
           rootDevice?.id === device.id ? "root" : "",
           device.subnetRouter ? "subnet-router" : "",
-          showLabels ? "with-labels" : "",
+            showLabels ? "with-labels" : "hide-labels",
         ]
           .filter(Boolean)
           .join(" "),
@@ -174,7 +179,7 @@
         },
       },
       {
-        selector: "node:not(.with-labels)",
+        selector: "node.hide-labels",
         style: {
           content: "",
         },
@@ -593,84 +598,41 @@
         <p class="eyebrow">Tailnet topology</p>
         <h1>Tailor</h1>
       </div>
-      <div class="status" data-state={apiStatus}>{apiStatus}</div>
+      <div class="status" data-state={apiStatus}><span class="status-pip"></span>{apiStatus}</div>
     </div>
 
     <div class="content">
-      <aside>
-        <h2>Devices</h2>
-        <div class="control-stack">
-          <label>
-            <input bind:checked={showLabels} type="checkbox" />
-            Show labels
-          </label>
-          <label>
-            <input bind:checked={showOffline} type="checkbox" />
-            Show offline
-          </label>
-          <label>
-            <input bind:checked={showSubnetRouters} type="checkbox" />
-            Show subnet routers
-          </label>
-          <label>
-            <span>Tag</span>
-            <select bind:value={selectedTag}>
-              <option value="all">All tags</option>
-              {#each tagOptions as tag}
-                <option value={tag}>{tag}</option>
-              {/each}
-            </select>
-          </label>
-          <label>
-            <span>Owner</span>
-            <select bind:value={selectedOwner}>
-              <option value="all">All owners</option>
-              {#each ownerOptions as owner}
-                <option value={owner}>{owner}</option>
-              {/each}
-            </select>
-          </label>
-          <label>
-            <span>OS</span>
-            <select bind:value={selectedOS}>
-              <option value="all">All OSes</option>
-              {#each osOptions as os}
-                <option value={os}>{os}</option>
-              {/each}
-            </select>
-          </label>
-          <label>
-            <span>Color</span>
-            <select bind:value={colorBy}>
-              <option value="status">Status</option>
-              <option value="tag">Tag</option>
-              <option value="owner">Owner</option>
-              <option value="os">OS</option>
-            </select>
-          </label>
-        </div>
-        {#if devices.length === 0}
-          <p>No devices loaded.</p>
-        {:else}
-          <p class="count">{visibleDevices.length} of {devices.length} devices visible</p>
-          <ul class="device-list">
-            {#each visibleDevices as device}
-              <li>
-                <button
-                  class:active={selectedDevice?.id === device.id}
-                  type="button"
-                  onclick={() => chooseDevice(device)}
-                >
-                  <span class:online={device.online} class="dot"></span>
-                  <span>{device.name}</span>
-                </button>
-              </li>
-            {/each}
-          </ul>
-        {/if}
-      </aside>
+      <SidebarLeft
+        bind:open={leftOpen}
+        {devices}
+        {visibleDevices}
+        bind:selectedDevice
+        bind:showLabels
+        bind:showOffline
+        bind:showSubnetRouters
+        bind:selectedTag
+        bind:selectedOwner
+        bind:selectedOS
+        bind:colorBy
+        {tagOptions}
+        {ownerOptions}
+        {osOptions}
+        {visibleOnlineCount}
+        {chooseDevice}
+      />
 
       <section class="graph" aria-label="Topology graph">
+        <SidebarToggleButton
+          position="left"
+          open={leftOpen}
+          ontoggle={() => (leftOpen = !leftOpen)}
+        />
+        <SidebarToggleButton
+          position="right"
+          open={rightOpen}
+          ontoggle={() => (rightOpen = !rightOpen)}
+        />
+
         <div class="graph-hud" aria-label="Graph summary">
           <span><strong>{visibleOnlineCount}</strong> online</span>
           <span><strong>{visibleSpokes.length}</strong> links</span>
@@ -690,49 +652,11 @@
         {/if}
       </section>
 
-      <aside>
-        <h2>Policy lens</h2>
-        <div class="auth-banner">ACL editing requires Phase 2 authentication.</div>
-        {#if selectedDevice}
-          <dl class="details">
-            <div>
-              <dt>Name</dt>
-              <dd>{selectedDevice.name}</dd>
-            </div>
-            <div>
-              <dt>IP</dt>
-              <dd>{selectedDevice.ip || "unknown"}</dd>
-            </div>
-            <div>
-              <dt>Tailscale IPs</dt>
-              <dd>{selectedDevice.tailscaleIps.length ? selectedDevice.tailscaleIps.join(", ") : "unknown"}</dd>
-            </div>
-            <div>
-              <dt>Owner</dt>
-              <dd>{selectedDevice.owner || "unknown"}</dd>
-            </div>
-            <div>
-              <dt>Tags</dt>
-              <dd>{selectedDevice.tags.length ? selectedDevice.tags.join(", ") : "none"}</dd>
-            </div>
-            <div>
-              <dt>Status</dt>
-              <dd>{selectedDevice.online ? "online" : "offline"}</dd>
-            </div>
-            <div>
-              <dt>OS</dt>
-              <dd>{selectedDevice.os || "unknown"}</dd>
-            </div>
-            <div>
-              <dt>Subnet routes</dt>
-              <dd>{selectedDevice.routedSubnets.length ? selectedDevice.routedSubnets.join(", ") : "none"}</dd>
-            </div>
-          </dl>
-        {:else}
-          <p>Select a device to inspect tags, owner, and status.</p>
-        {/if}
-        <p class="meta">API version: {apiVersion || "unknown"}</p>
-      </aside>
+      <SidebarRight
+        bind:open={rightOpen}
+        bind:selectedDevice
+        {apiVersion}
+      />
     </div>
   </section>
 </main>
