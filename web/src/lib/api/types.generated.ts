@@ -5,10 +5,13 @@ interface Device {
     id: string;
     name: string;
     ip: string;
+    tailscaleIps: string[];
     os: string;
     online: boolean;
     owner: string;
     tags: string[];
+    subnetRouter: boolean;
+    routedSubnets: string[];
     lastSeen?: string;
 }
 
@@ -25,6 +28,7 @@ interface Edge {
 enum EdgeKind {
     EdgeKindACL = "acl",
     EdgeKindOwner = "owner",
+    EdgeKindSubnet = "subnet",
     EdgeKindTag = "tag"
 }
 

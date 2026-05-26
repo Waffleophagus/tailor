@@ -13,7 +13,8 @@ body {
 }
 
 button,
-input {
+input,
+select {
   font: inherit;
 }
 
@@ -92,6 +93,7 @@ p {
 }
 
 aside {
+  min-width: 0;
   padding: 1rem;
   border-right: 1px solid #d9e1dd;
   background: #fbfcfb;
@@ -116,6 +118,34 @@ aside:last-child {
 .graph-canvas {
   position: absolute;
   inset: 0;
+}
+
+.graph-controls {
+  position: absolute;
+  z-index: 2;
+  top: 0.75rem;
+  right: 0.75rem;
+  display: flex;
+  gap: 0.35rem;
+  padding: 0.35rem;
+  border: 1px solid #c7d3ce;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 8px 22px rgb(23 33 38 / 8%);
+}
+
+.graph-controls button {
+  min-width: 2.1rem;
+  height: 2rem;
+  border: 1px solid #b9c5bf;
+  border-radius: 6px;
+  color: #172126;
+  background: #f7faf8;
+  font-weight: 800;
+}
+
+.graph-controls button:hover {
+  background: #edf3f0;
 }
 
 .empty-state {
@@ -147,6 +177,49 @@ aside:last-child {
   padding: 0;
   margin: 0;
   list-style: none;
+}
+
+.control-stack {
+  display: grid;
+  gap: 0.65rem;
+  padding-bottom: 1rem;
+  margin-bottom: 1rem;
+  border-bottom: 1px solid #d9e1dd;
+}
+
+.control-stack label {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 0.45rem;
+  color: #2f3c37;
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.control-stack label:has(select) {
+  grid-template-columns: 4rem minmax(0, 1fr);
+}
+
+.control-stack input {
+  width: 1rem;
+  height: 1rem;
+}
+
+.control-stack select {
+  width: 100%;
+  min-width: 0;
+  padding: 0.35rem 0.45rem;
+  border: 1px solid #b9c5bf;
+  border-radius: 6px;
+  color: #172126;
+  background: #ffffff;
+}
+
+.count {
+  margin-bottom: 0.7rem;
+  font-size: 0.85rem;
+  font-weight: 700;
 }
 
 .device-list button {
@@ -190,6 +263,18 @@ aside:last-child {
   display: grid;
   gap: 0.75rem;
   margin: 0;
+}
+
+.auth-banner {
+  padding: 0.65rem 0.7rem;
+  margin-bottom: 1rem;
+  border: 1px solid #d8c397;
+  border-radius: 8px;
+  color: #59411c;
+  background: #fff8e6;
+  font-size: 0.85rem;
+  font-weight: 700;
+  line-height: 1.35;
 }
 
 .details div {

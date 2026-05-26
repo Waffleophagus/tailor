@@ -77,16 +77,18 @@ type Status struct {
 }
 
 type Peer struct {
-	ID           string    `json:"ID"`
-	PublicKey    string    `json:"PublicKey"`
-	HostName     string    `json:"HostName"`
-	DNSName      string    `json:"DNSName"`
-	TailscaleIPs []string  `json:"TailscaleIPs"`
-	OS           string    `json:"OS"`
-	UserID       int64     `json:"UserID"`
-	Tags         []string  `json:"Tags"`
-	Online       bool      `json:"Online"`
-	LastSeen     time.Time `json:"LastSeen"`
+	ID            string    `json:"ID"`
+	PublicKey     string    `json:"PublicKey"`
+	HostName      string    `json:"HostName"`
+	DNSName       string    `json:"DNSName"`
+	TailscaleIPs  []string  `json:"TailscaleIPs"`
+	AllowedIPs    []string  `json:"AllowedIPs"`
+	PrimaryRoutes []string  `json:"PrimaryRoutes"`
+	OS            string    `json:"OS"`
+	UserID        int64     `json:"UserID"`
+	Tags          []string  `json:"Tags"`
+	Online        bool      `json:"Online"`
+	LastSeen      time.Time `json:"LastSeen"`
 }
 
 type User struct {
@@ -133,17 +135,47 @@ func deviceFromPeer(peer Peer, users map[string]User) api.Device {
 	} else {
 		tags = append([]string(nil), tags...)
 	}
+	tailscaleIPs := append([]string(nil), peer.TailscaleIPs...)
+	routedSubnets := routedSubnets(peer)
 
 	return api.Device{
-		ID:       id,
-		Name:     name,
-		IP:       ip,
-		OS:       peer.OS,
-		Online:   peer.Online,
-		Owner:    ownerName(peer.UserID, users),
-		Tags:     tags,
-		LastSeen: lastSeen,
+		ID:            id,
+		Name:          name,
+		IP:            ip,
+		TailscaleIPs:  tailscaleIPs,
+		OS:            peer.OS,
+		Online:        peer.Online,
+		Owner:         ownerName(peer.UserID, users),
+		Tags:          tags,
+		SubnetRouter:  len(routedSubnets) > 0,
+		RoutedSubnets: routedSubnets,
+		LastSeen:      lastSeen,
 	}
+}
+
+func routedSubnets(peer Peer) []string {
+	routes := peer.PrimaryRoutes
+	if len(routes) == 0 {
+		routes = peer.AllowedIPs
+	}
+
+	subnets := make([]string, 0, len(routes))
+	for _, route := range routes {
+		if !isTailscaleHostRoute(route, peer.TailscaleIPs) {
+			subnets = append(subnets, route)
+		}
+	}
+	sort.Strings(subnets)
+	return subnets
+}
+
+func isTailscaleHostRoute(route string, tailscaleIPs []string) bool {
+	for _, ip := range tailscaleIPs {
+		if route == ip || route == ip+"/32" || route == ip+"/128" {
+			return true
+		}
+	}
+	return false
 }
 
 func ownerName(userID int64, users map[string]User) string {

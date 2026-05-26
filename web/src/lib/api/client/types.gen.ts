@@ -19,14 +19,17 @@ export type Device = {
     id: string;
     name: string;
     ip: string;
+    tailscaleIps: Array<string>;
     os: string;
     online: boolean;
     owner: string;
     tags: Array<string>;
+    subnetRouter: boolean;
+    routedSubnets: Array<string>;
     lastSeen?: string;
 };
 
-export type EdgeKind = 'owner' | 'tag' | 'acl';
+export type EdgeKind = 'owner' | 'tag' | 'subnet' | 'acl';
 
 export type Edge = {
     id: string;

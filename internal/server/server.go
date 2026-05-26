@@ -9,6 +9,7 @@ import (
 	"github.com/Waffleophagus/tailor/internal/api"
 	"github.com/Waffleophagus/tailor/internal/frontend"
 	"github.com/Waffleophagus/tailor/internal/localapi"
+	"github.com/Waffleophagus/tailor/internal/topology"
 )
 
 type Options struct {
@@ -83,7 +84,7 @@ func (s *Server) handleTailnet(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, api.TopologyResponse{
 		Devices: devices,
-		Edges:   []api.Edge{},
+		Edges:   topology.Phase1Edges(devices),
 	})
 }
 

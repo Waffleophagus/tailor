@@ -15,10 +15,13 @@ export const deviceSchema = z.object({
   id: z.string(),
   name: z.string(),
   ip: z.string(),
+  tailscaleIps: z.array(z.string()),
   os: z.string(),
   online: z.boolean(),
   owner: z.string(),
   tags: z.array(z.string()),
+  subnetRouter: z.boolean(),
+  routedSubnets: z.array(z.string()),
   lastSeen: z.string().optional(),
 });
 
@@ -26,7 +29,7 @@ export const edgeSchema = z.object({
   id: z.string(),
   from: z.string(),
   to: z.string(),
-  kind: z.enum(["owner", "tag", "acl"]),
+  kind: z.enum(["owner", "tag", "subnet", "acl"]),
   labels: z.array(z.string()).optional(),
 });
 

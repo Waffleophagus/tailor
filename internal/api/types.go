@@ -12,22 +12,26 @@ type LocalAPIStatusResponse struct {
 }
 
 type Device struct {
-	ID       string   `json:"id"`
-	Name     string   `json:"name"`
-	IP       string   `json:"ip"`
-	OS       string   `json:"os"`
-	Online   bool     `json:"online"`
-	Owner    string   `json:"owner"`
-	Tags     []string `json:"tags"`
-	LastSeen string   `json:"lastSeen,omitempty"`
+	ID            string   `json:"id"`
+	Name          string   `json:"name"`
+	IP            string   `json:"ip"`
+	TailscaleIPs  []string `json:"tailscaleIps"`
+	OS            string   `json:"os"`
+	Online        bool     `json:"online"`
+	Owner         string   `json:"owner"`
+	Tags          []string `json:"tags"`
+	SubnetRouter  bool     `json:"subnetRouter"`
+	RoutedSubnets []string `json:"routedSubnets"`
+	LastSeen      string   `json:"lastSeen,omitempty"`
 }
 
 type EdgeKind string
 
 const (
-	EdgeKindOwner EdgeKind = "owner"
-	EdgeKindTag   EdgeKind = "tag"
-	EdgeKindACL   EdgeKind = "acl"
+	EdgeKindOwner  EdgeKind = "owner"
+	EdgeKindTag    EdgeKind = "tag"
+	EdgeKindSubnet EdgeKind = "subnet"
+	EdgeKindACL    EdgeKind = "acl"
 )
 
 type Edge struct {
