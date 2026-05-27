@@ -42,6 +42,6 @@ COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
 EXPOSE 8080
 ENV TAILOR_ADDR=:8080
-ENV TAILOR_TAILSCALE_MODE=embedded
+ENV TAILOR_TAILSCALE_MODE=auto
 
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
