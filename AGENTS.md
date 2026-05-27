@@ -1,13 +1,16 @@
-## Agent skills
+## Project
 
-### Issue tracker
+This is tailor, it has a simple goal: to map out a tailscale tailnet and allow you to visualize changes to your ACL policies. The goal is to have as simple an interface as possible to simplify the ability for the user to, at a glance, see how their tailnet is structured and what devices/users can talk to.
 
-Issues are tracked as local markdown files under `.scratch/<feature>/`. See `docs/agents/issue-tracker.md`.
+
+## Skill
+
+The `impeccable` skill (from `skills-lock.json`) is available for UI work. Use it, abuse it, the skills are invaluable.
+
+## Issue tracker
+
+Issues are local markdown files under `.scratch/<feature>/`. See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 
-Default label vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
-
-### Domain docs
-
-Single-context layout: `CONTEXT.md` and `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
