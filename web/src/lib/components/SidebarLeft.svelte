@@ -124,7 +124,7 @@
             data-active={colorBy === mode}
             onclick={() => (colorBy = mode)}
           >
-            {mode[0].toUpperCase() + mode.slice(1)}
+            {mode === "os" ? "OS" : mode[0].toUpperCase() + mode.slice(1)}
           </button>
         {/each}
       </div>
