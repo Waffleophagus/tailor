@@ -20,6 +20,7 @@
   } from "./lib/api/cloud";
   import { fetchHealth } from "./lib/api/health";
   import type { CloudAuthStatusResponse, Device, Edge, LocalAPIStatusResponse, PolicyResponse } from "./lib/api/schemas";
+  import { fetchTopology } from "./lib/api/topology";
   import { connectTopologySocket } from "./lib/api/topologySocket";
   import SidebarLeft from "./lib/components/SidebarLeft.svelte";
   import SidebarRight from "./lib/components/SidebarRight.svelte";
@@ -503,6 +504,16 @@
     });
     await result.match({
       ok: async (value) => {
+        const topology = await fetchTopology();
+        if (topology.isErr()) {
+          cloudError = topology.error.message;
+          return;
+        }
+        devices = topology.value.devices;
+        edges = topology.value.edges;
+        selectedDevice = selectedDevice
+          ? (topology.value.devices.find((device) => device.id === selectedDevice?.id) ?? topology.value.devices[0])
+          : topology.value.devices[0];
         cloudStatus = value;
         authAPIKey = "";
         phase2Open = false;
