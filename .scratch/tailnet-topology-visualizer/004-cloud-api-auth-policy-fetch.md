@@ -1,6 +1,6 @@
 # Cloud API auth and policy fetch
 
-Labels: ready-for-agent
+Labels: ready-for-human
 Type: AFK
 
 ## Status

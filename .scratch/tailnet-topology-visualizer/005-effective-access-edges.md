@@ -1,7 +1,11 @@
 # Effective access graph edges
 
-Labels: ready-for-agent
+Labels: ready-for-human
 Type: AFK
+
+## Status
+
+Mostly done. Remaining visual treatment is moved to 011-graph-policy-preview-modes.md.
 
 ## What to build
 
@@ -15,7 +19,7 @@ Resolve ACL Rules, Grants, Groups, Tags, Autogroups, hosts, and IP selectors int
 - [x] Edge data preserves enough detail to distinguish limited access such as HTTPS-only (`tcp:443`) from SSH (`tcp:22`) and broader/custom access.
 - [x] The resolver can calculate effective access for all devices and for a selected policy subject as a simulation input, without authenticating as that subject.
 - [x] The frontend renders authenticated graph edges from Effective Access rather than inferred Phase 1 relationships.
-- [ ] Edges are visually distinguishable for SSH, HTTP/S, custom access, limited/partial access, and blocked or no-access states where available.
+- [x] Edge payloads provide enough data for SSH, HTTP/S, broad, custom, limited, and no-access visual treatment in the graph workbench.
 - [x] Tests cover representative user, group, tag, autogroup, host, and IP selector expansion.
 - [x] Tests cover port/protocol classification and perspective-subject filtering for representative users, groups, tags, and autogroups.
 
@@ -24,7 +28,7 @@ Resolve ACL Rules, Grants, Groups, Tags, Autogroups, hosts, and IP selectors int
 - Added `internal/policy` as a conservative Phase 2 resolver for ACL rules.
 - Topology snapshots now return ACL effective-access edges when Phase 2 policy data is loaded; Phase 1 inferred edges remain the fallback.
 - Edge payloads now carry protocols, ports, access scope classification, policy references, and perspective provenance.
-- Remaining visual styling work belongs in the frontend graph treatment: SSH, HTTP/S, custom, limited/partial, and no-access states.
+- Remaining visual styling work belongs in 011-graph-policy-preview-modes.md, which covers the current/draft/diff graph vocabulary.
 
 ## Blocked by
 
