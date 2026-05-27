@@ -99,6 +99,28 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/policy/map:
+    get:
+      operationId: getPolicyMap
+      responses:
+        "200":
+          description: Read-only structured view of the current tailnet policy file.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PolicyMapResponse"
+        "401":
+          description: Cloud API authentication has not been enabled.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: Tailscale Cloud API request failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/policy/draft:
     post:
       operationId: draftPolicyAclRule
@@ -313,6 +335,54 @@ components:
           type: string
         hujson:
           type: string
+    PolicyMapResponse:
+      type: object
+      required: [tailnet, hujson, sections]
+      properties:
+        tailnet:
+          type: string
+        hujson:
+          type: string
+        sections:
+          type: array
+          items:
+            $ref: "#/components/schemas/PolicySection"
+        parseError:
+          type: string
+    PolicySection:
+      type: object
+      required: [name, type, supported, count]
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+        supported:
+          type: boolean
+        count:
+          type: integer
+        entries:
+          type: array
+          items:
+            $ref: "#/components/schemas/PolicySectionEntry"
+        raw:
+          description: Original decoded section value.
+        description:
+          type: string
+    PolicySectionEntry:
+      type: object
+      required: [label]
+      properties:
+        label:
+          type: string
+        summary:
+          type: string
+        selectors:
+          type: array
+          items:
+            type: string
+        value:
+          description: Original decoded entry value.
     PolicyDraftRequest:
       type: object
       required: [sources, destinations, ports]

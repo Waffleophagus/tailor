@@ -15,11 +15,12 @@
     draftPolicyRule,
     fetchCloudStatus,
     fetchPolicy,
+    fetchPolicyMap,
     saveValidatedPolicyDraft,
     validatePolicyDraft,
   } from "./lib/api/cloud";
   import { fetchHealth } from "./lib/api/health";
-  import type { CloudAuthStatusResponse, Device, Edge, LocalAPIStatusResponse, PolicyResponse } from "./lib/api/schemas";
+  import type { CloudAuthStatusResponse, Device, Edge, LocalAPIStatusResponse, PolicyMapResponse, PolicyResponse } from "./lib/api/schemas";
   import { fetchTopology } from "./lib/api/topology";
   import { connectTopologySocket } from "./lib/api/topologySocket";
   import SidebarLeft from "./lib/components/SidebarLeft.svelte";
@@ -35,6 +36,8 @@
   let localApiError = $state<LocalAPIStatusResponse | Error | undefined>();
   let cloudStatus = $state<CloudAuthStatusResponse>({ authenticated: false, hasPolicy: false });
   let policy = $state<PolicyResponse | undefined>();
+  let policyMap = $state<PolicyMapResponse | undefined>();
+  let policySearch = $state("");
   let draftHuJSON = $state("");
   let draftRuleText = $state("");
   let editSource = $state("");
@@ -113,6 +116,7 @@
   const graphDevices = $derived(devicesForGraph());
   const visibleOnlineCount = $derived(visibleDevices.filter((device) => device.online).length);
   const graphOnlineCount = $derived(graphDevices.filter((device) => device.online).length);
+  const filteredPolicySections = $derived(policySectionsForSearch());
 
   $effect(() => {
     if (!graphEl) {
@@ -527,8 +531,8 @@
   }
 
   async function loadPolicy() {
-    const result = await fetchPolicy();
-    result.match({
+    const [rawResult, mapResult] = await Promise.all([fetchPolicy(), fetchPolicyMap()]);
+    rawResult.match({
       ok: (value) => {
         policy = value;
         draftHuJSON = "";
@@ -536,6 +540,14 @@
         draftValid = false;
         policyOpen = true;
         cloudError = "";
+      },
+      err: (error) => {
+        cloudError = error.message;
+      },
+    });
+    mapResult.match({
+      ok: (value) => {
+        policyMap = value;
       },
       err: (error) => {
         cloudError = error.message;
@@ -600,6 +612,7 @@
     result.match({
       ok: (value) => {
         policy = { tailnet: value.tailnet, hujson: value.hujson };
+        void refreshPolicyMap();
         draftHuJSON = "";
         draftRuleText = "";
         draftValid = false;
@@ -610,6 +623,18 @@
       },
     });
     editBusy = false;
+  }
+
+  async function refreshPolicyMap() {
+    const result = await fetchPolicyMap();
+    result.match({
+      ok: (value) => {
+        policyMap = value;
+      },
+      err: (error) => {
+        cloudError = error.message;
+      },
+    });
   }
 
   function closePhase2Dialog() {
@@ -1048,6 +1073,36 @@
     return splitSelectors(editPortPreset);
   }
 
+  function policySectionsForSearch() {
+    const sections = policyMap?.sections ?? [];
+    const query = policySearch.trim().toLowerCase();
+    if (!query) {
+      return sections;
+    }
+    return sections.filter((section) => {
+      const haystack = [
+        section.name,
+        section.description ?? "",
+        ...(section.entries ?? []).flatMap((entry) => [
+          entry.label,
+          entry.summary ?? "",
+          ...(entry.selectors ?? []),
+        ]),
+      ].join(" ").toLowerCase();
+      return haystack.includes(query);
+    });
+  }
+
+  function formatPolicyValue(value: unknown) {
+    if (value === undefined || value === null) {
+      return "";
+    }
+    if (typeof value === "string") {
+      return value;
+    }
+    return JSON.stringify(value);
+  }
+
   function graphPositions() {
     const width = graphEl?.clientWidth || 900;
     const height = graphEl?.clientHeight || 620;
@@ -1386,7 +1441,19 @@
     return palette(value || "unknown");
   }
 
+  const osColors: Record<string, string> = {
+    windows: "#01A6F0",
+    android: "#32DE84",
+    linux: "#F4BC00",
+    bsd: "#B5010F",
+    macOS: "#A2AAAD",
+    ios: "#FFFFFF",
+    tvos: "#FA6C1B",
+  };
+
   function palette(value: string) {
+    const osColor = osColors[value];
+    if (osColor) return osColor;
     const colors = ["#438aa1", "#a5663f", "#7c6fb0", "#b0892f", "#5d7f73", "#b45f74", "#5973b0"];
     let hash = 0;
     for (let i = 0; i < value.length; i += 1) {
@@ -1517,6 +1584,60 @@
               <button type="button" title="Close policy panel" onclick={() => (policyOpen = false)}>×</button>
             </div>
             <div class="policy-editor">
+              <div class="policy-workbench">
+                <div class="policy-workbench-header">
+                  <div>
+                    <p class="eyebrow">Policy workbench</p>
+                    <h3>{policyMap ? `${policyMap.sections.length} sections` : "Loading sections"}</h3>
+                  </div>
+                  <input bind:value={policySearch} placeholder="Search selectors or sections" />
+                </div>
+                {#if policyMap?.parseError}
+                  <div class="policy-parse-error" role="alert">{policyMap.parseError}</div>
+                {:else if filteredPolicySections.length === 0}
+                  <div class="policy-empty">No policy sections match the current search.</div>
+                {:else}
+                  <div class="policy-section-list">
+                    {#each filteredPolicySections as section}
+                      <details class="policy-section" open={section.name === "acls"}>
+                        <summary>
+                          <span>{section.description || section.name}</span>
+                          <span>{section.count}</span>
+                          {#if !section.supported}
+                            <span>unsupported</span>
+                          {/if}
+                        </summary>
+                        {#if section.entries?.length}
+                          <div class="policy-entry-list">
+                            {#each section.entries as entry}
+                              <article class="policy-entry">
+                                <div>
+                                  <strong>{entry.label}</strong>
+                                  {#if entry.summary}
+                                    <p>{entry.summary}</p>
+                                  {/if}
+                                </div>
+                                {#if entry.selectors?.length}
+                                  <div class="selector-list">
+                                    {#each entry.selectors as selector}
+                                      <span>{selector}</span>
+                                    {/each}
+                                  </div>
+                                {/if}
+                                {#if !entry.summary && entry.value !== undefined}
+                                  <code>{formatPolicyValue(entry.value)}</code>
+                                {/if}
+                              </article>
+                            {/each}
+                          </div>
+                        {:else}
+                          <div class="policy-empty">This section is empty.</div>
+                        {/if}
+                      </details>
+                    {/each}
+                  </div>
+                {/if}
+              </div>
               <form class="acl-edit-form" onsubmit={(event) => { event.preventDefault(); void createPolicyDraft(); }}>
                 <label>
                   <span>Sources</span>

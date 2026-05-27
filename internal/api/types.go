@@ -87,6 +87,30 @@ type PolicyResponse struct {
 	HuJSON  string `json:"hujson"`
 }
 
+type PolicyMapResponse struct {
+	Tailnet    string          `json:"tailnet"`
+	HuJSON     string          `json:"hujson"`
+	Sections   []PolicySection `json:"sections"`
+	ParseError string          `json:"parseError,omitempty"`
+}
+
+type PolicySection struct {
+	Name        string               `json:"name"`
+	Type        string               `json:"type"`
+	Supported   bool                 `json:"supported"`
+	Count       int                  `json:"count"`
+	Entries     []PolicySectionEntry `json:"entries,omitempty"`
+	Raw         any                  `json:"raw,omitempty"`
+	Description string               `json:"description,omitempty"`
+}
+
+type PolicySectionEntry struct {
+	Label     string   `json:"label"`
+	Summary   string   `json:"summary,omitempty"`
+	Selectors []string `json:"selectors,omitempty"`
+	Value     any      `json:"value,omitempty"`
+}
+
 type PolicyDraftRequest struct {
 	Sources      []string `json:"sources"`
 	Destinations []string `json:"destinations"`

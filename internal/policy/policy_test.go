@@ -94,6 +94,73 @@ func TestAppendACLRulePreservesExistingHuJSONAndAppendsRule(t *testing.T) {
 	}
 }
 
+func TestStructuredMapSurfacesRecognizedAndUnknownSections(t *testing.T) {
+	raw := `{
+		"groups": {
+			"group:eng": ["alice@example.com"],
+		},
+		"tagOwners": {
+			"tag:web": ["group:eng"],
+		},
+		"hosts": {
+			"db": "100.64.0.10",
+		},
+		"acls": [
+			{"action": "accept", "src": ["group:eng"], "dst": ["tag:web:443"]},
+		],
+		"customThing": {
+			"kept": true,
+		},
+	}`
+
+	policyMap, err := StructuredMap(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if policyMap.ParseError != "" {
+		t.Fatalf("unexpected parse error: %s", policyMap.ParseError)
+	}
+
+	acls := findSection(policyMap.Sections, "acls")
+	if acls == nil || !acls.Supported || acls.Count != 1 {
+		t.Fatalf("bad acls section: %#v", acls)
+	}
+	if len(acls.Entries) != 1 || acls.Entries[0].Summary != "group:eng -> tag:web:443" {
+		t.Fatalf("bad acl entries: %#v", acls.Entries)
+	}
+
+	unknown := findSection(policyMap.Sections, "customThing")
+	if unknown == nil || unknown.Supported || unknown.Count != 1 || unknown.Raw == nil {
+		t.Fatalf("unknown section not preserved: %#v", unknown)
+	}
+}
+
+func TestStructuredMapReturnsParseErrorWithRawPolicy(t *testing.T) {
+	raw := `{"acls": [`
+	policyMap, err := StructuredMap(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if policyMap.HuJSON != raw {
+		t.Fatalf("raw policy not preserved: %q", policyMap.HuJSON)
+	}
+	if policyMap.ParseError == "" {
+		t.Fatal("expected parse error")
+	}
+	if len(policyMap.Sections) != 0 {
+		t.Fatalf("sections = %#v, want none", policyMap.Sections)
+	}
+}
+
+func findSection(sections []api.PolicySection, name string) *api.PolicySection {
+	for i := range sections {
+		if sections[i].Name == name {
+			return &sections[i]
+		}
+	}
+	return nil
+}
+
 func assertEdge(t *testing.T, edges []api.Edge, from, to string, scope api.AccessScope, ports []string) {
 	t.Helper()
 	for _, edge := range edges {

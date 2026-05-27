@@ -32,6 +32,20 @@ type Grant struct {
 	IP  []string `json:"ip"`
 }
 
+var supportedPolicySections = map[string]string{
+	"acls":          "ACL rules",
+	"grants":        "Grants",
+	"ssh":           "SSH rules",
+	"groups":        "Groups",
+	"tagOwners":     "Tag owners",
+	"hosts":         "Hosts",
+	"ipsets":        "IP sets",
+	"postures":      "Posture conditions",
+	"nodeAttrs":     "Node attributes",
+	"autoApprovers": "Auto approvers",
+	"tests":         "Tests",
+}
+
 type EdgeOptions struct {
 	Perspective string
 }
@@ -74,6 +88,51 @@ func EffectiveAccessEdges(raw string, devices []api.Device, options EdgeOptions)
 		return nil, err
 	}
 	return ResolveEffectiveAccess(p, devices, options), nil
+}
+
+func StructuredMap(raw string) (api.PolicyMapResponse, error) {
+	response := api.PolicyMapResponse{HuJSON: raw}
+	standard, err := hujson.Standardize([]byte(raw))
+	if err != nil {
+		response.ParseError = fmt.Sprintf("parse policy HuJSON: %v", err)
+		return response, nil
+	}
+
+	var root map[string]json.RawMessage
+	if err := json.Unmarshal(standard, &root); err != nil {
+		response.ParseError = fmt.Sprintf("decode policy JSON: %v", err)
+		return response, nil
+	}
+
+	names := make([]string, 0, len(root))
+	for name := range root {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	response.Sections = make([]api.PolicySection, 0, len(names))
+	for _, name := range names {
+		rawValue := root[name]
+		var value any
+		if err := json.Unmarshal(rawValue, &value); err != nil {
+			value = string(rawValue)
+		}
+		description, supported := supportedPolicySections[name]
+		section := api.PolicySection{
+			Name:        name,
+			Type:        sectionType(value),
+			Supported:   supported,
+			Count:       valueCount(value),
+			Entries:     policySectionEntries(name, value),
+			Raw:         value,
+			Description: description,
+		}
+		if !supported {
+			section.Description = "Unsupported section preserved from the policy file."
+		}
+		response.Sections = append(response.Sections, section)
+	}
+	return response, nil
 }
 
 func AppendACLRule(raw string, rule api.ACLDraft) (string, error) {
@@ -250,6 +309,230 @@ func marshalRule(rule api.ACLDraft) []byte {
 	}
 	b, _ := json.Marshal(payload)
 	return b
+}
+
+func sectionType(value any) string {
+	switch value.(type) {
+	case []any:
+		return "array"
+	case map[string]any:
+		return "object"
+	case nil:
+		return "null"
+	default:
+		return "value"
+	}
+}
+
+func valueCount(value any) int {
+	switch typed := value.(type) {
+	case []any:
+		return len(typed)
+	case map[string]any:
+		return len(typed)
+	case nil:
+		return 0
+	default:
+		return 1
+	}
+}
+
+func policySectionEntries(name string, value any) []api.PolicySectionEntry {
+	switch name {
+	case "acls":
+		return aclEntries(value)
+	case "grants":
+		return grantEntries(value)
+	case "groups", "tagOwners", "hosts", "ipsets", "postures":
+		return objectEntries(value)
+	case "ssh", "nodeAttrs", "tests":
+		return ruleArrayEntries(name, value)
+	case "autoApprovers":
+		return nestedObjectEntries(value)
+	default:
+		return genericEntries(value)
+	}
+}
+
+func aclEntries(value any) []api.PolicySectionEntry {
+	rules, ok := value.([]any)
+	if !ok {
+		return genericEntries(value)
+	}
+	entries := make([]api.PolicySectionEntry, 0, len(rules))
+	for i, raw := range rules {
+		rule, _ := raw.(map[string]any)
+		action := stringValue(rule["action"])
+		if action == "" {
+			action = "accept"
+		}
+		src := stringList(rule["src"])
+		dst := stringList(rule["dst"])
+		proto := stringValue(rule["proto"])
+		summary := strings.Join(src, ", ") + " -> " + strings.Join(dst, ", ")
+		if proto != "" {
+			summary += " (" + proto + ")"
+		}
+		entries = append(entries, api.PolicySectionEntry{
+			Label:     fmt.Sprintf("#%d %s", i+1, action),
+			Summary:   summary,
+			Selectors: append(append([]string{}, src...), dst...),
+			Value:     raw,
+		})
+	}
+	return entries
+}
+
+func grantEntries(value any) []api.PolicySectionEntry {
+	rules, ok := value.([]any)
+	if !ok {
+		return genericEntries(value)
+	}
+	entries := make([]api.PolicySectionEntry, 0, len(rules))
+	for i, raw := range rules {
+		rule, _ := raw.(map[string]any)
+		src := stringList(rule["src"])
+		dst := stringList(rule["dst"])
+		ip := stringList(rule["ip"])
+		summary := strings.Join(src, ", ") + " -> " + strings.Join(dst, ", ")
+		if len(ip) > 0 {
+			summary += " ip " + strings.Join(ip, ", ")
+		}
+		entries = append(entries, api.PolicySectionEntry{
+			Label:     fmt.Sprintf("#%d grant", i+1),
+			Summary:   summary,
+			Selectors: append(append(append([]string{}, src...), dst...), ip...),
+			Value:     raw,
+		})
+	}
+	return entries
+}
+
+func ruleArrayEntries(name string, value any) []api.PolicySectionEntry {
+	rules, ok := value.([]any)
+	if !ok {
+		return genericEntries(value)
+	}
+	entries := make([]api.PolicySectionEntry, 0, len(rules))
+	for i, raw := range rules {
+		entries = append(entries, api.PolicySectionEntry{
+			Label:   fmt.Sprintf("#%d %s", i+1, name),
+			Summary: compactJSON(raw),
+			Value:   raw,
+		})
+	}
+	return entries
+}
+
+func objectEntries(value any) []api.PolicySectionEntry {
+	obj, ok := value.(map[string]any)
+	if !ok {
+		return genericEntries(value)
+	}
+	keys := sortedMapKeys(obj)
+	entries := make([]api.PolicySectionEntry, 0, len(keys))
+	for _, key := range keys {
+		entries = append(entries, api.PolicySectionEntry{
+			Label:     key,
+			Summary:   valueSummary(obj[key]),
+			Selectors: append([]string{key}, stringList(obj[key])...),
+			Value:     obj[key],
+		})
+	}
+	return entries
+}
+
+func nestedObjectEntries(value any) []api.PolicySectionEntry {
+	obj, ok := value.(map[string]any)
+	if !ok {
+		return genericEntries(value)
+	}
+	var entries []api.PolicySectionEntry
+	for _, outer := range sortedMapKeys(obj) {
+		inner, ok := obj[outer].(map[string]any)
+		if !ok {
+			entries = append(entries, api.PolicySectionEntry{Label: outer, Summary: valueSummary(obj[outer]), Value: obj[outer]})
+			continue
+		}
+		for _, key := range sortedMapKeys(inner) {
+			entries = append(entries, api.PolicySectionEntry{
+				Label:   outer + "." + key,
+				Summary: valueSummary(inner[key]),
+				Value:   inner[key],
+			})
+		}
+	}
+	return entries
+}
+
+func genericEntries(value any) []api.PolicySectionEntry {
+	switch typed := value.(type) {
+	case []any:
+		entries := make([]api.PolicySectionEntry, 0, len(typed))
+		for i, item := range typed {
+			entries = append(entries, api.PolicySectionEntry{
+				Label:   fmt.Sprintf("#%d", i+1),
+				Summary: valueSummary(item),
+				Value:   item,
+			})
+		}
+		return entries
+	case map[string]any:
+		return objectEntries(typed)
+	default:
+		if value == nil {
+			return nil
+		}
+		return []api.PolicySectionEntry{{Label: "value", Summary: valueSummary(value), Value: value}}
+	}
+}
+
+func stringValue(value any) string {
+	if text, ok := value.(string); ok {
+		return text
+	}
+	return ""
+}
+
+func stringList(value any) []string {
+	switch typed := value.(type) {
+	case []any:
+		out := make([]string, 0, len(typed))
+		for _, item := range typed {
+			if text, ok := item.(string); ok {
+				out = append(out, text)
+			}
+		}
+		return out
+	case string:
+		return []string{typed}
+	default:
+		return nil
+	}
+}
+
+func valueSummary(value any) string {
+	if values := stringList(value); len(values) > 0 {
+		return strings.Join(values, ", ")
+	}
+	return compactJSON(value)
+}
+
+func compactJSON(value any) string {
+	b, err := json.Marshal(value)
+	if err != nil {
+		return fmt.Sprint(value)
+	}
+	return string(b)
+}
+
+func sortedMapKeys(values map[string]any) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func compactStrings(values []string) []string {

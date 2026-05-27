@@ -68,6 +68,30 @@ export const policyResponseSchema = z.object({
   hujson: z.string(),
 });
 
+export const policySectionEntrySchema = z.object({
+  label: z.string(),
+  summary: z.string().optional(),
+  selectors: z.array(z.string()).optional(),
+  value: z.unknown().optional(),
+});
+
+export const policySectionSchema = z.object({
+  name: z.string(),
+  type: z.string(),
+  supported: z.boolean(),
+  count: z.number(),
+  entries: z.array(policySectionEntrySchema).optional(),
+  raw: z.unknown().optional(),
+  description: z.string().optional(),
+});
+
+export const policyMapResponseSchema = z.object({
+  tailnet: z.string(),
+  hujson: z.string(),
+  sections: z.array(policySectionSchema),
+  parseError: z.string().optional(),
+});
+
 export const policyDraftRequestSchema = z.object({
   sources: z.array(z.string()),
   destinations: z.array(z.string()),
@@ -129,6 +153,8 @@ export type TopologyResponse = z.infer<typeof topologyResponseSchema>;
 export type CloudAuthStatusResponse = z.infer<typeof cloudAuthStatusResponseSchema>;
 export type CloudAuthRequest = z.infer<typeof cloudAuthRequestSchema>;
 export type PolicyResponse = z.infer<typeof policyResponseSchema>;
+export type PolicyMapResponse = z.infer<typeof policyMapResponseSchema>;
+export type PolicySection = z.infer<typeof policySectionSchema>;
 export type PolicyDraftRequest = z.infer<typeof policyDraftRequestSchema>;
 export type PolicyDraftResponse = z.infer<typeof policyDraftResponseSchema>;
 export type PolicyValidateResponse = z.infer<typeof policyValidateResponseSchema>;

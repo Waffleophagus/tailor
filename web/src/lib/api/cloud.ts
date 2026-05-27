@@ -3,6 +3,7 @@ import { Result } from "better-result";
 import {
   cloudAuthStatusResponseSchema,
   errorResponseSchema,
+  policyMapResponseSchema,
   policyResponseSchema,
   policyDraftResponseSchema,
   policySaveResponseSchema,
@@ -11,6 +12,7 @@ import {
   type CloudAuthStatusResponse,
   type PolicyDraftRequest,
   type PolicyDraftResponse,
+  type PolicyMapResponse,
   type PolicyResponse,
   type PolicySaveResponse,
   type PolicyValidateResponse,
@@ -32,6 +34,10 @@ export async function authenticateCloud(
 
 export async function fetchPolicy(): Promise<Result<PolicyResponse, Error>> {
   return fetchJSON("/api/policy", policyResponseSchema);
+}
+
+export async function fetchPolicyMap(): Promise<Result<PolicyMapResponse, Error>> {
+  return fetchJSON("/api/policy/map", policyMapResponseSchema);
 }
 
 export async function draftPolicyRule(

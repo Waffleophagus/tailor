@@ -47,6 +47,7 @@ func New(options ...Options) http.Handler {
 	mux.HandleFunc("GET /api/cloud/status", server.handleCloudStatus)
 	mux.HandleFunc("POST /api/cloud/auth", server.handleCloudAuth)
 	mux.HandleFunc("GET /api/policy", server.handlePolicy)
+	mux.HandleFunc("GET /api/policy/map", server.handlePolicyMap)
 	mux.HandleFunc("POST /api/policy/draft", server.handlePolicyDraft)
 	mux.HandleFunc("POST /api/policy/validate", server.handlePolicyValidate)
 	mux.HandleFunc("POST /api/policy/save", server.handlePolicySave)
@@ -99,6 +100,25 @@ func (s *Server) handlePolicy(w http.ResponseWriter, r *http.Request) {
 		Tailnet: status.Tailnet,
 		HuJSON:  policy,
 	})
+}
+
+func (s *Server) handlePolicyMap(w http.ResponseWriter, r *http.Request) {
+	rawPolicy, err := s.cloudAPI.Policy(r.Context())
+	if err != nil {
+		if errors.Is(err, cloudapi.ErrNotAuthenticated) {
+			writeError(w, http.StatusUnauthorized, "Enable ACL editing before fetching the policy map.")
+			return
+		}
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	policyMap, err := policy.StructuredMap(rawPolicy)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	policyMap.Tailnet = s.cloudAPI.Status().Tailnet
+	writeJSON(w, http.StatusOK, policyMap)
 }
 
 func (s *Server) handlePolicyDraft(w http.ResponseWriter, r *http.Request) {
