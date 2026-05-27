@@ -1,6 +1,6 @@
 # ADR 005: OAuth Client Credentials for Cloud API Auth
 
-**Status**: Accepted
+**Status**: Superseded by ADR 006
 
 **Date**: 2026-05-25
 

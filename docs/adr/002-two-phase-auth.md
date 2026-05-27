@@ -13,7 +13,7 @@ Tailscale has two entirely separate API surfaces: the LocalAPI (Unix socket, no 
 Implement a **two-phase application model**:
 
 - **Phase 1**: Unauthenticated. Uses LocalAPI only. Renders all devices with inferred topology edges (shared owner, shared tag, subnet relationships). No ACL resolution.
-- **Phase 2**: Authenticated. Uses Cloud API with an OAuth Client token. Unlocks effective access edges, perspective filtering, and ACL editing.
+- **Phase 2**: Authenticated. Uses Cloud API with a Tailscale API key. Unlocks effective access edges, perspective filtering, and ACL editing.
 
 ## Alternatives Considered
 
@@ -33,4 +33,4 @@ Use Tailscale as an OIDC provider to authenticate the user, then infer API acces
 
 - The app must clearly communicate what Phase 1 can and cannot show.
 - A prominent "Enable ACL Editing" CTA bridges the phases.
-- Phase 2 requires explicit admin action: creating an OAuth Client in the Tailscale admin console.
+- Phase 2 requires explicit admin action: generating and pasting a Tailscale API key from the admin console.

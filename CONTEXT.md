@@ -18,10 +18,11 @@
 | **Cloud API** | The HTTPS REST API at `api.tailscale.com`. Requires an OAuth Client or API Access Token. Provides ACL policy files, device management, DNS settings, etc. |
 | **Tailscale Status** | The output of `tailscale status --json`: a list of all devices in the tailnet with names, IPs, tags, online status, and owner information. |
 | **Policy File** | The HuJSON file containing `acls`, `grants`, `groups`, `tagOwners`, `ssh`, and other tailnet configuration. Lives in the Tailscale admin console and is accessible via Cloud API. |
-| **Effective Access** | The resolved, concrete reachability between two devices after evaluating all ACL rules, groups, tags, and autogroups. Not the same as visibility (all devices are visible to all members). |
+| **Effective Access** | The resolved, concrete reachability between two devices after evaluating all ACL rules, groups, tags, autogroups, destination ports, and protocols. Not the same as visibility (all devices are visible to all members). |
+| **Access Scope** | The port/protocol subset allowed by an effective access path, such as HTTPS-only (`tcp:443`) versus SSH (`tcp:22`) or broader/custom access. Used by graph styling to distinguish full, partial, and protocol-specific reachability. |
 | **Phase 1** | Read-only topology discovery mode. Uses LocalAPI only. Renders all devices with inferred relationships (owner clusters, shared tags). No ACL resolution. |
-| **Phase 2** | Authenticated ACL editing mode. Uses Cloud API with OAuth token. Resolves effective access edges and allows policy editing with staged commit. |
-| **Perspective** | A filtered view of effective access from a selected policy subject, such as a user or group. In Phase 2, the graph is recalculated around what that subject can reach; the exact visual treatment is a UI design concern. |
+| **Phase 2** | Authenticated ACL editing mode. Uses Cloud API with a `tskey-api-...` API key. Resolves effective access edges and allows policy editing with staged commit. |
+| **Perspective** | A simulated policy-subject view of effective access from a selected user, group, tag, or autogroup. In Phase 2, the graph is recalculated around what that subject can reach without authenticating as that subject or extracting any user credentials; the exact visual treatment is a UI design concern. |
 | **Node (graph)** | A rendered element in the Cytoscape.js graph. Currently always represents a Device. |
 | **Edge (graph)** | A rendered connection in the Cytoscape.js graph. In Phase 1: inferred relationship (shared owner or shared tag). In Phase 2: effective access path (allowed by ACL rules). |
 | **Policy Lens** | The node-detail editing model where selecting a device reveals the policy subjects and rules that affect it. Edits are made to the policy file sections that create the access, not to the graph node itself. |
