@@ -24,6 +24,7 @@
   import SidebarLeft from "./lib/components/SidebarLeft.svelte";
   import SidebarRight from "./lib/components/SidebarRight.svelte";
   import SidebarToggleButton from "./lib/components/SidebarToggleButton.svelte";
+  import GraphLegend from "./lib/components/GraphLegend.svelte";
 
   let apiStatus = $state("checking");
   let apiVersion = $state("");
@@ -1488,6 +1489,7 @@
           <button type="button" title="Reflow layout" onclick={reflowGraph}>↻</button>
         </div>
         <div bind:this={graphEl} class="graph-canvas"></div>
+        <GraphLegend {colorBy} authenticated={cloudStatus.authenticated} {graphMode} {tagOptions} {ownerOptions} {osOptions} />
         {#if localApiError}
           <div class="empty-state">
             <h2>Connect to Tailscale</h2>
