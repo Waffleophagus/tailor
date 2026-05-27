@@ -59,6 +59,14 @@
   let colorBy = $state<"status" | "tag" | "owner" | "os">("status");
   let graphEl: HTMLDivElement;
   let graph: Core | undefined;
+  let cleanupPhysics: (() => void) | undefined;
+  let physicsSignature = "";
+  let layoutSignature = "";
+  let graphDragActive = false;
+  let graphDragMoved = false;
+  let lastGraphDragEndAt = 0;
+  let pendingLayoutSync = false;
+  let hoveredNodeID: string | undefined;
   let disconnectTopologySocket: (() => void) | undefined;
   let leftOpen = $state(true);
   let rightOpen = $state(true);
@@ -109,6 +117,15 @@
       return;
     }
     if (devices.length === 0) {
+      cleanupPhysics?.();
+      cleanupPhysics = undefined;
+      physicsSignature = "";
+      layoutSignature = "";
+      graphDragActive = false;
+      graphDragMoved = false;
+      lastGraphDragEndAt = 0;
+      pendingLayoutSync = false;
+      hoveredNodeID = undefined;
       graph?.destroy();
       graph = undefined;
       return;
@@ -177,6 +194,7 @@
 
   onDestroy(() => {
     disconnectTopologySocket?.();
+    cleanupPhysics?.();
     graph?.destroy();
   });
 
@@ -373,7 +391,7 @@
         },
       },
       {
-        selector: "node:selected",
+        selector: "node.selected",
         style: {
           "border-color": "#163f31",
           "border-width": 4,
@@ -389,36 +407,41 @@
       container: graphEl,
       elements,
       layout: graphLayoutOptions(),
+      boxSelectionEnabled: false,
+      selectionType: "single",
       style,
     });
+    layoutSignature = graphLayoutSignature();
 
     graph.autoungrabify(false);
+    graph.autounselectify(true);
     graph.userPanningEnabled(true);
     graph.userZoomingEnabled(true);
-    setupPhysics(graph);
-    graph.on("select", "node", (event) => {
-      const id = event.target.id();
-      selectedDevice = devices.find((device) => device.id === id);
-      applyGraphFocus(event.target);
-      pulseNode(event.target);
-    });
-    graph.on("mouseover", "node", (event) => {
-      applyGraphFocus(event.target);
-    });
-    graph.on("mouseout", "node", () => {
-      const selected = graph?.$("node:selected");
-      if (selected?.length) {
-        applyGraphFocus(selected[0] as NodeSingular);
+    refreshPhysics(graph);
+    graph.on("tap", "node", (event) => {
+      if (graphDragMoved || Date.now() - lastGraphDragEndAt < 120) {
         return;
       }
-      clearGraphFocus();
+      selectGraphNode(event.target as NodeSingular, { pulse: true });
+    });
+    graph.on("mouseover", "node", (event) => {
+      hoveredNodeID = event.target.id();
+      applyGraphFocus(event.target as NodeSingular);
+    });
+    graph.on("mouseout", "node", (event) => {
+      if (hoveredNodeID === event.target.id()) {
+        hoveredNodeID = undefined;
+      }
+      applyCurrentGraphFocus();
     });
     graph.on("tap", (event) => {
       if (event.target === graph) {
-        graph?.nodes().unselect();
+        hoveredNodeID = undefined;
         clearGraphFocus();
       }
     });
+    updateGraphSelection();
+    applyCurrentGraphFocus();
     rememberOnlineState();
     window.requestAnimationFrame(() => fitGraph());
   }
@@ -433,6 +456,7 @@
 
   function reflowGraph() {
     animateGraphToPositions(graphPositions(), 420);
+    layoutSignature = graphLayoutSignature();
   }
 
   function zoomGraph(delta: number) {
@@ -450,17 +474,19 @@
 
   function chooseDevice(device: Device) {
     selectedDevice = device;
-    const node = graph?.getElementById(device.id);
-    if (!node?.length) {
-      return;
-    }
-    graph?.nodes().unselect();
-    node.select();
-    applyGraphFocus(node);
-    graph?.animate({
-      center: { eles: node },
-      duration: 320,
-      easing: "ease-out-cubic",
+    updateGraphSelection();
+    window.requestAnimationFrame(() => {
+      const node = graph?.getElementById(device.id);
+      if (!node?.length) {
+        return;
+      }
+      updateGraphSelection();
+      applyGraphFocus(node);
+      graph?.animate({
+        center: { eles: node },
+        duration: 320,
+        easing: "ease-out-cubic",
+      });
     });
   }
 
@@ -581,6 +607,46 @@
     phase2Open = false;
   }
 
+  function selectGraphNode(node: NodeSingular, options: { pulse?: boolean } = {}) {
+    const device = devices.find((candidate) => candidate.id === node.id());
+    if (!device) {
+      return;
+    }
+    selectedDevice = device;
+    updateGraphSelection();
+    applyGraphFocus(node);
+    if (options.pulse) {
+      pulseNode(node);
+    }
+  }
+
+  function updateGraphSelection() {
+    if (!graph) {
+      return;
+    }
+    const selectedID = selectedDevice?.id;
+    graph.nodes().forEach((node) => {
+      node.toggleClass("selected", selectedID === node.id());
+    });
+  }
+
+  function applyCurrentGraphFocus() {
+    if (!graph) {
+      return;
+    }
+    const focusID = hoveredNodeID ?? selectedDevice?.id;
+    if (!focusID) {
+      clearGraphFocus();
+      return;
+    }
+    const node = graph.getElementById(focusID);
+    if (!node.length) {
+      clearGraphFocus();
+      return;
+    }
+    applyGraphFocus(node);
+  }
+
   function applyGraphFocus(node: NodeSingular) {
     if (!graph) {
       return;
@@ -652,7 +718,11 @@
     const desiredNodeIDs = new Set(graphDevices.map((device) => device.id));
     const desiredEdgeIDs = new Set(visibleEdges.map((edge) => edge.id));
     const positions = graphPositions();
-    const existingSelectedID = graph.$("node:selected")[0]?.id();
+    const nextLayoutSignature = graphLayoutSignature();
+    const layoutChanged = nextLayoutSignature !== layoutSignature;
+    if (layoutChanged && graphDragActive) {
+      pendingLayoutSync = true;
+    }
 
     graph.edges().forEach((edge) => {
       if (!desiredEdgeIDs.has(edge.id())) {
@@ -678,7 +748,9 @@
       }
       node.data(deviceData(device));
       node.classes(deviceClasses(device));
-      animateNodeTo(node, targetPosition, wasOnline === false && device.online);
+      if (layoutChanged && !graphDragActive && !node.grabbed()) {
+        animateNodeTo(node, targetPosition, wasOnline === false && device.online);
+      }
     }
 
     for (const edge of visibleEdges) {
@@ -690,10 +762,13 @@
       addEdge(edge);
     }
 
-    if (existingSelectedID && desiredNodeIDs.has(existingSelectedID)) {
-      graph.getElementById(existingSelectedID).select();
+    if (!graphDragActive) {
+      layoutSignature = nextLayoutSignature;
     }
     rememberOnlineState();
+    refreshPhysics(graph);
+    updateGraphSelection();
+    applyCurrentGraphFocus();
   }
 
   function addNode(device: Device, targetPosition: { x: number; y: number }) {
@@ -711,7 +786,7 @@
       data: deviceData(device),
       position: startPosition,
     });
-    if (prefersReducedMotion()) {
+    if (prefersReducedMotion() || graphDragActive) {
       node.removeClass("entering");
       node.position(targetPosition);
       return;
@@ -798,6 +873,7 @@
     const moved =
       Math.abs(currentPosition.x - targetPosition.x) > 1 ||
       Math.abs(currentPosition.y - targetPosition.y) > 1;
+    node.stop(true, false);
     if (moved && !prefersReducedMotion()) {
       node.animate(
         { position: targetPosition },
@@ -817,6 +893,7 @@
       if (!position) {
         return;
       }
+      node.stop(true, false);
       if (prefersReducedMotion()) {
         node.position(position);
         return;
@@ -825,10 +902,56 @@
     });
   }
 
+  function spreadGraphAfterDrag(draggedID: string, onComplete?: () => void) {
+    if (!graph) {
+      onComplete?.();
+      return;
+    }
+
+    const positions = graphSpreadPositionsAfterDrag(draggedID);
+    let pendingAnimations = 0;
+    const finishAnimation = () => {
+      pendingAnimations -= 1;
+      if (pendingAnimations === 0) {
+        onComplete?.();
+      }
+    };
+
+    graph.nodes().forEach((node) => {
+      if (node.id() === draggedID) {
+        return;
+      }
+      const position = positions.get(node.id());
+      if (!position) {
+        return;
+      }
+      node.stop(true, false);
+      if (prefersReducedMotion()) {
+        node.position(position);
+        return;
+      }
+      pendingAnimations += 1;
+      node.animate(
+        { position },
+        {
+          duration: 380,
+          easing: "ease-out-cubic",
+          complete: finishAnimation,
+        },
+      );
+    });
+
+    layoutSignature = graphLayoutSignature();
+    if (pendingAnimations === 0) {
+      onComplete?.();
+    }
+  }
+
   function deviceClasses(device: Device) {
     return [
       device.online ? "online" : "offline",
       graphRootDevice?.id === device.id ? "root" : "",
+      selectedDevice?.id === device.id ? "selected" : "",
       device.subnetRouter ? "subnet-router" : "",
       showLabels ? "with-labels" : "hide-labels",
     ]
@@ -935,8 +1058,98 @@
     return positions;
   }
 
+  function graphSpreadPositionsAfterDrag(draggedID: string) {
+    const positions = graphPositions();
+    const rootID = graphRootDevice && graphDevices.some((device) => device.id === graphRootDevice.id) ? graphRootDevice.id : undefined;
+    if (draggedID === rootID && rootID) {
+      const droppedRootPosition = graph?.getElementById(rootID).position();
+      const plannedRootPosition = positions.get(rootID);
+      if (droppedRootPosition && plannedRootPosition) {
+        const offset = {
+          x: droppedRootPosition.x - plannedRootPosition.x,
+          y: droppedRootPosition.y - plannedRootPosition.y,
+        };
+        positions.forEach((position, id) => {
+          if (id !== draggedID) {
+            positions.set(id, {
+              x: position.x + offset.x,
+              y: position.y + offset.y,
+            });
+          }
+        });
+      }
+    }
+
+    const draggedPosition = graph?.getElementById(draggedID).position();
+    if (!draggedPosition) {
+      return positions;
+    }
+    positions.forEach((position, id) => {
+      if (id !== draggedID) {
+        positions.set(id, separatePosition(position, draggedPosition, minNodeSpacing(id, draggedID)));
+      }
+    });
+    return positions;
+  }
+
+  function separatePosition(
+    position: { x: number; y: number },
+    avoidedPosition: { x: number; y: number },
+    minDistance: number,
+  ) {
+    const dx = position.x - avoidedPosition.x;
+    const dy = position.y - avoidedPosition.y;
+    const distance = Math.hypot(dx, dy);
+    if (distance >= minDistance) {
+      return position;
+    }
+    const angle = distance > 0.1 ? Math.atan2(dy, dx) : -Math.PI / 2;
+    return {
+      x: avoidedPosition.x + Math.cos(angle) * minDistance,
+      y: avoidedPosition.y + Math.sin(angle) * minDistance,
+    };
+  }
+
+  function minNodeSpacing(nodeID: string, avoidedNodeID: string) {
+    const node = graph?.getElementById(nodeID);
+    const avoidedNode = graph?.getElementById(avoidedNodeID);
+    return nodeRadius(node) + nodeRadius(avoidedNode) + 24;
+  }
+
+  function nodeRadius(node: NodeSingular | undefined) {
+    if (!node?.length) {
+      return 28;
+    }
+    const width = Number(node.style("width"));
+    const height = Number(node.style("height"));
+    return Math.max(Number.isFinite(width) ? width : 56, Number.isFinite(height) ? height : 56) / 2;
+  }
+
+  function graphLayoutSignature() {
+    return [
+      graphRootDevice?.id ?? "",
+      graphDevices.map((device) => device.id).sort().join(","),
+      visibleEdges.map((edge) => edge.id).sort().join(","),
+      graphEl?.clientWidth ?? 0,
+      graphEl?.clientHeight ?? 0,
+    ].join("|");
+  }
+
   interface PhysicsNode extends SimulationNodeDatum {
     id: string;
+  }
+
+  function refreshPhysics(cy: Core) {
+    const signature = [
+      cy.nodes().map((node) => node.id()).sort().join(","),
+      cy.edges().map((edge) => edge.id()).sort().join(","),
+    ].join("|");
+    if (signature === physicsSignature) {
+      return;
+    }
+    cleanupPhysics?.();
+    cleanupPhysics = setupPhysics(cy);
+    physicsSignature = signature;
   }
 
   function setupPhysics(cy: Core) {
@@ -965,7 +1178,7 @@
       });
     });
 
-    let sim = forceSimulation(nodes)
+    const sim = forceSimulation(nodes)
       .force(
         "link",
         forceLink(links)
@@ -979,27 +1192,80 @@
 
     let isDragging = false;
 
-    cy.on("grab", "node", () => {
+    const syncSimulationNodesFromGraph = () => {
+      for (const [id, simNode] of physicsNodesMap) {
+        const node = cy.getElementById(id);
+        if (!node.length) {
+          continue;
+        }
+        const pos = node.position();
+        simNode.x = pos.x;
+        simNode.y = pos.y;
+        simNode.vx = 0;
+        simNode.vy = 0;
+      }
+    };
+
+    const onGrab = (event: cytoscape.EventObject) => {
+      const node = event.target as NodeSingular;
+      const simNode = physicsNodesMap.get(node.id());
+      cy.elements().stop(true, false);
+      graphDragActive = true;
+      graphDragMoved = false;
+      syncSimulationNodesFromGraph();
+      if (simNode) {
+        const pos = node.position();
+        simNode.fx = pos.x;
+        simNode.fy = pos.y;
+      }
       isDragging = true;
+      sim.alphaDecay(0.02);
       sim.alpha(0.8).restart();
-    });
+    };
 
-    cy.on("free", "node", () => {
+    const onFree = (event: cytoscape.EventObject) => {
+      const node = event.target as NodeSingular;
+      const simNode = physicsNodesMap.get(node.id());
+      const didMove = graphDragMoved;
+      if (simNode) {
+        const pos = node.position();
+        simNode.x = pos.x;
+        simNode.y = pos.y;
+        simNode.fx = undefined;
+        simNode.fy = undefined;
+      }
       isDragging = false;
+      graphDragActive = false;
+      if (didMove) {
+        lastGraphDragEndAt = Date.now();
+      }
       sim.alphaDecay(0.1);
-    });
+      sim.stop();
+      window.setTimeout(() => {
+        graphDragMoved = false;
+      }, 120);
+      if (pendingLayoutSync) {
+        pendingLayoutSync = false;
+        syncGraph();
+      } else if (didMove) {
+        spreadGraphAfterDrag(node.id(), syncSimulationNodesFromGraph);
+      }
+    };
 
-    cy.on("drag", "node", (event) => {
-      const node = event.target;
+    const onDrag = (event: cytoscape.EventObject) => {
+      const node = event.target as NodeSingular;
       const simNode = physicsNodesMap.get(node.id());
       if (!simNode) return;
 
+      graphDragMoved = true;
       const pos = node.position();
       simNode.x = pos.x;
       simNode.y = pos.y;
+      simNode.fx = pos.x;
+      simNode.fy = pos.y;
 
       sim.nodes(nodes).alpha(0.8).restart();
-    });
+    };
 
     const tickCallback = () => {
       if (!isDragging) return;
@@ -1013,6 +1279,17 @@
     };
 
     sim.on("tick", tickCallback);
+    cy.on("grab", "node", onGrab);
+    cy.on("free", "node", onFree);
+    cy.on("drag", "node", onDrag);
+
+    return () => {
+      cy.off("grab", "node", onGrab);
+      cy.off("free", "node", onFree);
+      cy.off("drag", "node", onDrag);
+      graphDragActive = false;
+      sim.stop();
+    };
   }
 
   function placeOnRing(
