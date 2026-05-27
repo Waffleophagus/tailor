@@ -1,6 +1,6 @@
 # Scoped ACL edit, validate, and save loop
 
-Labels: ready-for-agent
+Labels: ready-for-human
 Type: AFK
 
 ## What to build
@@ -33,6 +33,7 @@ Start with one scoped edit path rather than a general policy editor. Preferred f
 
 - This intentionally prioritizes a real save loop over a perfect editor because real policy changes are needed to validate graph behavior on an open tailnet.
 - The first edit operation should append a new rule rather than rewriting an existing rule, because append-only changes are easier for a human to inspect and revert.
-- This does not replace the later Policy Lens editor. It is the tracer bullet for safe edits, validation, save, and graph refresh.
+- This does not replace the later Policy Lens editor or graph-backed policy workbench. It is the tracer bullet for safe edits, validation, save, and graph refresh.
 - Implemented with `POST /api/policy/draft`, `POST /api/policy/validate`, and `POST /api/policy/save`.
 - The UI currently shows the exact appended rule and draft HuJSON, not a side-by-side diff.
+- Follow-up work should use the graph as the preview and review surface, with raw HuJSON available as an advanced audit view.

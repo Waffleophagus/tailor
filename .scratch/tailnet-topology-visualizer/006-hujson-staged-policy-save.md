@@ -1,23 +1,22 @@
 # HuJSON staged policy save loop
 
-Labels: ready-for-agent
+Labels: ready-for-human
 Type: AFK
+
+## Status
+
+Superseded by 008-scoped-acl-edit-save-loop.md for the first real save path.
 
 ## What to build
 
-Implement the smallest safe ACL editing loop: users can make a scoped policy change, review old vs. new HuJSON, validate the draft with the Cloud API, and save only after validation succeeds. The HuJSON round-trip must preserve existing admin comments and formatting outside mutated sections.
+This ticket originally described the first safe ACL editing loop. That path now exists in 008-scoped-acl-edit-save-loop.md.
 
-This slice should focus on one narrow edit path, such as adding or changing a Device Tag owner or a simple ACL destination entry, rather than the full Policy Lens editor.
+The broader staged commit experience is now tracked in 016-staged-commit-tray-and-hujson-diff.md. The new version should not be a raw HuJSON-first editor. It should be the review and save surface for graph-backed policy drafts.
 
 ## Acceptance criteria
 
-- [ ] The backend parses HuJSON with Tailscale's `github.com/tailscale/hujson` library using the accepted AST hybrid approach.
-- [ ] The UI accumulates policy edits in draft state before save.
-- [ ] A diff viewer shows old HuJSON and new HuJSON before validation.
-- [ ] `POST /api/validate` calls the Cloud API validate endpoint and returns line-aware errors when available.
-- [ ] `POST /api/acl` saves only a draft that has passed validation.
-- [ ] On successful save, the app refreshes policy data and graph edges.
-- [ ] Tests verify comments and formatting are preserved outside mutated policy sections.
+- [x] The first safe save loop exists through 008-scoped-acl-edit-save-loop.md.
+- [x] Follow-up staged review work is captured in 016-staged-commit-tray-and-hujson-diff.md.
 
 ## Blocked by
 
