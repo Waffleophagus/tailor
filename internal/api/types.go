@@ -34,17 +34,61 @@ const (
 	EdgeKindACL    EdgeKind = "acl"
 )
 
+type AccessScope string
+
+const (
+	AccessScopeUnknown AccessScope = ""
+	AccessScopeSSH     AccessScope = "ssh"
+	AccessScopeHTTP    AccessScope = "http"
+	AccessScopeBroad   AccessScope = "broad"
+	AccessScopeCustom  AccessScope = "custom"
+	AccessScopeLimited AccessScope = "limited"
+	AccessScopeNone    AccessScope = "none"
+)
+
 type Edge struct {
-	ID     string   `json:"id"`
-	From   string   `json:"from"`
-	To     string   `json:"to"`
-	Kind   EdgeKind `json:"kind"`
-	Labels []string `json:"labels,omitempty"`
+	ID           string      `json:"id"`
+	From         string      `json:"from"`
+	To           string      `json:"to"`
+	Kind         EdgeKind    `json:"kind"`
+	Labels       []string    `json:"labels,omitempty"`
+	Protocols    []string    `json:"protocols,omitempty"`
+	Ports        []string    `json:"ports,omitempty"`
+	AccessScope  AccessScope `json:"accessScope,omitempty"`
+	PolicyRefs   []PolicyRef `json:"policyRefs,omitempty"`
+	Perspectives []string    `json:"perspectives,omitempty"`
+}
+
+type PolicyRef struct {
+	Section string `json:"section"`
+	Index   int    `json:"index"`
+	Src     string `json:"src,omitempty"`
+	Dst     string `json:"dst,omitempty"`
 }
 
 type TopologyResponse struct {
 	Devices []Device `json:"devices"`
 	Edges   []Edge   `json:"edges"`
+}
+
+type CloudAuthRequest struct {
+	Tailnet string `json:"tailnet"`
+	APIKey  string `json:"apiKey"`
+}
+
+type CloudAuthStatusResponse struct {
+	Authenticated bool   `json:"authenticated"`
+	Tailnet       string `json:"tailnet,omitempty"`
+	HasPolicy     bool   `json:"hasPolicy"`
+}
+
+type PolicyResponse struct {
+	Tailnet string `json:"tailnet"`
+	HuJSON  string `json:"hujson"`
+}
+
+type ErrorResponse struct {
+	Error string `json:"error"`
 }
 
 type SocketMessage struct {

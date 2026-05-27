@@ -37,11 +37,45 @@ export type Edge = {
     to: string;
     kind: EdgeKind;
     labels?: Array<string>;
+    protocols?: Array<string>;
+    ports?: Array<string>;
+    accessScope?: AccessScope;
+    policyRefs?: Array<PolicyRef>;
+    perspectives?: Array<string>;
+};
+
+export type AccessScope = 'ssh' | 'http' | 'broad' | 'custom' | 'limited' | 'none';
+
+export type PolicyRef = {
+    section: string;
+    index: number;
+    src?: string;
+    dst?: string;
 };
 
 export type TopologyResponse = {
     devices: Array<Device>;
     edges: Array<Edge>;
+};
+
+export type CloudAuthRequest = {
+    tailnet: string;
+    apiKey: string;
+};
+
+export type CloudAuthStatusResponse = {
+    authenticated: boolean;
+    tailnet?: string;
+    hasPolicy: boolean;
+};
+
+export type PolicyResponse = {
+    tailnet: string;
+    hujson: string;
+};
+
+export type ErrorResponse = {
+    error: string;
 };
 
 export type GetHealthData = {
@@ -100,3 +134,77 @@ export type GetStatusResponses = {
 };
 
 export type GetStatusResponse = GetStatusResponses[keyof GetStatusResponses];
+
+export type GetCloudStatusData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/cloud/status';
+};
+
+export type GetCloudStatusResponses = {
+    /**
+     * Cloud API authentication status.
+     */
+    200: CloudAuthStatusResponse;
+};
+
+export type GetCloudStatusResponse = GetCloudStatusResponses[keyof GetCloudStatusResponses];
+
+export type AuthenticateCloudData = {
+    body: CloudAuthRequest;
+    path?: never;
+    query?: never;
+    url: '/api/cloud/auth';
+};
+
+export type AuthenticateCloudErrors = {
+    /**
+     * Invalid auth request.
+     */
+    400: ErrorResponse;
+    /**
+     * Tailscale Cloud API request failed.
+     */
+    502: ErrorResponse;
+};
+
+export type AuthenticateCloudError = AuthenticateCloudErrors[keyof AuthenticateCloudErrors];
+
+export type AuthenticateCloudResponses = {
+    /**
+     * API key authentication succeeded and policy was fetched.
+     */
+    200: CloudAuthStatusResponse;
+};
+
+export type AuthenticateCloudResponse = AuthenticateCloudResponses[keyof AuthenticateCloudResponses];
+
+export type GetPolicyData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/policy';
+};
+
+export type GetPolicyErrors = {
+    /**
+     * Cloud API authentication has not been enabled.
+     */
+    401: ErrorResponse;
+    /**
+     * Tailscale Cloud API request failed.
+     */
+    502: ErrorResponse;
+};
+
+export type GetPolicyError = GetPolicyErrors[keyof GetPolicyErrors];
+
+export type GetPolicyResponses = {
+    /**
+     * Current tailnet policy file as raw HuJSON.
+     */
+    200: PolicyResponse;
+};
+
+export type GetPolicyResponse = GetPolicyResponses[keyof GetPolicyResponses];

@@ -38,6 +38,26 @@ export const topologyResponseSchema = z.object({
   edges: z.array(edgeSchema),
 });
 
+export const cloudAuthStatusResponseSchema = z.object({
+  authenticated: z.boolean(),
+  tailnet: z.string().optional(),
+  hasPolicy: z.boolean(),
+});
+
+export const cloudAuthRequestSchema = z.object({
+  tailnet: z.string(),
+  apiKey: z.string(),
+});
+
+export const policyResponseSchema = z.object({
+  tailnet: z.string(),
+  hujson: z.string(),
+});
+
+export const errorResponseSchema = z.object({
+  error: z.string(),
+});
+
 export const topologySnapshotMessageSchema = z.object({
   type: z.literal("topology.snapshot"),
   requestId: z.string().optional(),
@@ -60,4 +80,7 @@ export type LocalAPIStatusResponse = z.infer<typeof localApiStatusResponseSchema
 export type Device = z.infer<typeof deviceSchema>;
 export type Edge = z.infer<typeof edgeSchema>;
 export type TopologyResponse = z.infer<typeof topologyResponseSchema>;
+export type CloudAuthStatusResponse = z.infer<typeof cloudAuthStatusResponseSchema>;
+export type CloudAuthRequest = z.infer<typeof cloudAuthRequestSchema>;
+export type PolicyResponse = z.infer<typeof policyResponseSchema>;
 export type SocketMessage = z.infer<typeof socketMessageSchema>;

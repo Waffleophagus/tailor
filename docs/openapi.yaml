@@ -39,6 +39,66 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/LocalAPIStatusResponse"
+  /api/cloud/status:
+    get:
+      operationId: getCloudStatus
+      responses:
+        "200":
+          description: Cloud API authentication status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CloudAuthStatusResponse"
+  /api/cloud/auth:
+    post:
+      operationId: authenticateCloud
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CloudAuthRequest"
+      responses:
+        "200":
+          description: API key authentication succeeded and policy was fetched.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CloudAuthStatusResponse"
+        "400":
+          description: Invalid auth request.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: Tailscale Cloud API request failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/policy:
+    get:
+      operationId: getPolicy
+      responses:
+        "200":
+          description: Current tailnet policy file as raw HuJSON.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PolicyResponse"
+        "401":
+          description: Cloud API authentication has not been enabled.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: Tailscale Cloud API request failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 components:
   schemas:
     HealthResponse:
@@ -122,3 +182,35 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Edge"
+    CloudAuthRequest:
+      type: object
+      required: [tailnet, apiKey]
+      properties:
+        tailnet:
+          type: string
+        apiKey:
+          type: string
+    CloudAuthStatusResponse:
+      type: object
+      required: [authenticated, hasPolicy]
+      properties:
+        authenticated:
+          type: boolean
+        tailnet:
+          type: string
+        hasPolicy:
+          type: boolean
+    PolicyResponse:
+      type: object
+      required: [tailnet, hujson]
+      properties:
+        tailnet:
+          type: string
+        hujson:
+          type: string
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string

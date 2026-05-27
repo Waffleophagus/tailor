@@ -43,6 +43,13 @@ main {
   background: #ffffff;
 }
 
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-width: 0;
+}
+
 .eyebrow {
   margin: 0;
   color: #586761;
@@ -84,6 +91,74 @@ p {
   font-size: 0.85rem;
   font-weight: 700;
   text-align: center;
+}
+
+.phase-chip {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 8.5rem;
+  min-height: 2.35rem;
+  padding: 0.35rem 0.65rem;
+  border: 1px solid oklch(0.82 0.018 158);
+  border-radius: 8px;
+  color: #596963;
+  background: oklch(0.975 0.008 158);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.phase-chip[data-authenticated="true"] {
+  border-color: oklch(0.7 0.07 158);
+  color: #1f5f43;
+  background: oklch(0.94 0.035 158);
+}
+
+.phase-chip strong {
+  overflow: hidden;
+  color: #172126;
+  font-size: 0.82rem;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.primary-btn,
+.secondary-btn {
+  min-height: 2.35rem;
+  padding: 0.45rem 0.75rem;
+  border-radius: 7px;
+  font-size: 0.84rem;
+  font-weight: 800;
+  transition:
+    background-color 160ms ease-out,
+    border-color 160ms ease-out,
+    color 160ms ease-out,
+    transform 160ms ease-out;
+}
+
+.primary-btn {
+  border: 1px solid oklch(0.52 0.09 158);
+  color: oklch(0.985 0.006 158);
+  background: oklch(0.46 0.095 158);
+}
+
+.secondary-btn {
+  border: 1px solid oklch(0.78 0.022 158);
+  color: #172126;
+  background: oklch(0.975 0.008 158);
+}
+
+.primary-btn:hover,
+.secondary-btn:hover {
+  transform: translateY(-1px);
+}
+
+.primary-btn:disabled,
+.secondary-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+  transform: none;
 }
 
 .content {
@@ -217,6 +292,166 @@ aside:last-child {
     background-color 160ms ease-out,
     border-color 160ms ease-out,
     transform 160ms ease-out;
+}
+
+.policy-panel {
+  position: absolute;
+  z-index: 4;
+  right: 0.75rem;
+  bottom: 0.75rem;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  width: min(48rem, calc(100% - 1.5rem));
+  max-height: min(34rem, calc(100% - 5rem));
+  overflow: hidden;
+  border: 1px solid oklch(0.78 0.022 158);
+  border-radius: 8px;
+  background: oklch(0.985 0.006 158);
+  box-shadow: 0 18px 48px rgb(23 33 38 / 16%);
+}
+
+.policy-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.8rem 0.9rem;
+  border-bottom: 1px solid oklch(0.86 0.012 158);
+}
+
+.policy-panel-header h2 {
+  margin: 0;
+}
+
+.policy-panel-header button,
+.auth-dialog-header button {
+  display: grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  border: 1px solid oklch(0.78 0.022 158);
+  border-radius: 6px;
+  color: #172126;
+  background: oklch(0.975 0.008 158);
+  font-size: 1.25rem;
+  line-height: 1;
+}
+
+.policy-panel pre {
+  min-height: 0;
+  margin: 0;
+  padding: 0.9rem;
+  overflow: auto;
+  color: #1c2c26;
+  background: oklch(0.96 0.009 158);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 0.78rem;
+  line-height: 1.5;
+  tab-size: 2;
+  white-space: pre;
+}
+
+.cloud-error {
+  position: absolute;
+  z-index: 5;
+  right: 0.75rem;
+  bottom: 0.75rem;
+  max-width: min(32rem, calc(100% - 1.5rem));
+  padding: 0.65rem 0.75rem;
+  border: 1px solid oklch(0.65 0.09 35);
+  border-radius: 8px;
+  color: oklch(0.34 0.065 35);
+  background: oklch(0.96 0.03 55);
+  font-size: 0.84rem;
+  font-weight: 700;
+  box-shadow: 0 12px 32px rgb(23 33 38 / 12%);
+}
+
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: rgb(23 33 38 / 38%);
+}
+
+.auth-dialog {
+  width: min(31rem, 100%);
+  overflow: hidden;
+  border: 1px solid oklch(0.8 0.018 158);
+  border-radius: 8px;
+  background: oklch(0.985 0.006 158);
+  box-shadow: 0 24px 72px rgb(23 33 38 / 24%);
+}
+
+.auth-dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem;
+  border-bottom: 1px solid oklch(0.86 0.012 158);
+}
+
+.auth-dialog-header h2 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.auth-dialog form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+  padding: 1rem;
+}
+
+.auth-dialog label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  color: #3a4a44;
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.auth-dialog input {
+  width: 100%;
+  min-height: 2.45rem;
+  padding: 0.5rem 0.65rem;
+  border: 1px solid oklch(0.8 0.018 158);
+  border-radius: 7px;
+  color: #172126;
+  background: oklch(0.975 0.008 158);
+  font-size: 0.9rem;
+}
+
+.auth-dialog input:focus {
+  outline: 2px solid oklch(0.68 0.08 158 / 0.4);
+  outline-offset: 1px;
+}
+
+.auth-note,
+.form-error {
+  margin: 0;
+  font-size: 0.84rem;
+}
+
+.form-error {
+  padding: 0.6rem 0.7rem;
+  border: 1px solid oklch(0.65 0.09 35);
+  border-radius: 7px;
+  color: oklch(0.34 0.065 35);
+  background: oklch(0.96 0.03 55);
+  font-weight: 700;
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  padding-top: 0.2rem;
 }
 
 .graph-controls button:hover {

@@ -10,8 +10,10 @@ import (
 	"time"
 
 	"github.com/Waffleophagus/tailor/internal/api"
+	"github.com/Waffleophagus/tailor/internal/cloudapi"
 	"github.com/Waffleophagus/tailor/internal/frontend"
 	"github.com/Waffleophagus/tailor/internal/localapi"
+	"github.com/Waffleophagus/tailor/internal/policy"
 	"github.com/Waffleophagus/tailor/internal/topology"
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
@@ -23,6 +25,7 @@ type Options struct {
 
 type Server struct {
 	localAPI *localapi.Client
+	cloudAPI *cloudapi.Client
 }
 
 func New(options ...Options) http.Handler {
@@ -33,6 +36,7 @@ func New(options ...Options) http.Handler {
 
 	server := &Server{
 		localAPI: localapi.New(opts.LocalAPIEndpoint),
+		cloudAPI: cloudapi.New(),
 	}
 
 	mux := http.NewServeMux()
@@ -40,11 +44,58 @@ func New(options ...Options) http.Handler {
 	mux.HandleFunc("GET /api/status", server.handleStatus)
 	mux.HandleFunc("GET /api/topology", server.handleTopology)
 	mux.HandleFunc("GET /api/topology/socket", server.handleTopologySocket)
+	mux.HandleFunc("GET /api/cloud/status", server.handleCloudStatus)
+	mux.HandleFunc("POST /api/cloud/auth", server.handleCloudAuth)
+	mux.HandleFunc("GET /api/policy", server.handlePolicy)
 
 	spa := spaHandler(http.FileServer(frontend.FileSystem()))
 	mux.Handle("/", spa)
 
 	return mux
+}
+
+func (s *Server) handleCloudStatus(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, cloudAuthStatusResponse(s.cloudAPI.Status()))
+}
+
+func (s *Server) handleCloudAuth(w http.ResponseWriter, r *http.Request) {
+	var request api.CloudAuthRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&request); err != nil {
+		writeError(w, http.StatusBadRequest, "Request body must be valid JSON.")
+		return
+	}
+
+	status, err := s.cloudAPI.Authenticate(r.Context(), cloudapi.AuthRequest{
+		Tailnet: request.Tailnet,
+		APIKey:  request.APIKey,
+	})
+	if err != nil {
+		statusCode := http.StatusBadGateway
+		if strings.Contains(err.Error(), "required") {
+			statusCode = http.StatusBadRequest
+		}
+		writeError(w, statusCode, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, cloudAuthStatusResponse(status))
+}
+
+func (s *Server) handlePolicy(w http.ResponseWriter, r *http.Request) {
+	policy, err := s.cloudAPI.Policy(r.Context())
+	if err != nil {
+		if errors.Is(err, cloudapi.ErrNotAuthenticated) {
+			writeError(w, http.StatusUnauthorized, "Enable ACL editing before fetching the policy file.")
+			return
+		}
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	status := s.cloudAPI.Status()
+	writeJSON(w, http.StatusOK, api.PolicyResponse{
+		Tailnet: status.Tailnet,
+		HuJSON:  policy,
+	})
 }
 
 func handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -87,7 +138,7 @@ func (s *Server) handleTopology(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, topologySnapshot(devices))
+	writeJSON(w, http.StatusOK, s.topologySnapshot(r.Context(), devices))
 }
 
 func (s *Server) handleTopologySocket(w http.ResponseWriter, r *http.Request) {
@@ -153,14 +204,23 @@ func (s *Server) topologySocketMessage(ctx context.Context) api.SocketMessage {
 
 	return api.SocketMessage{
 		Type:    api.SocketMessageTopologySnapshot,
-		Payload: topologySnapshot(devices),
+		Payload: s.topologySnapshot(ctx, devices),
 	}
 }
 
-func topologySnapshot(devices []api.Device) api.TopologyResponse {
+func (s *Server) topologySnapshot(ctx context.Context, devices []api.Device) api.TopologyResponse {
+	edges := topology.Phase1Edges(devices)
+	if status := s.cloudAPI.Status(); status.Authenticated && status.HasPolicy {
+		rawPolicy, err := s.cloudAPI.Policy(ctx)
+		if err == nil {
+			if accessEdges, err := policy.EffectiveAccessEdges(rawPolicy, devices, policy.EdgeOptions{}); err == nil {
+				edges = accessEdges
+			}
+		}
+	}
 	return api.TopologyResponse{
 		Devices: devices,
-		Edges:   topology.Phase1Edges(devices),
+		Edges:   edges,
 	}
 }
 
@@ -169,6 +229,18 @@ func writeJSON(w http.ResponseWriter, status int, payload any) {
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(payload); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+func writeError(w http.ResponseWriter, status int, message string) {
+	writeJSON(w, status, api.ErrorResponse{Error: message})
+}
+
+func cloudAuthStatusResponse(status cloudapi.AuthStatus) api.CloudAuthStatusResponse {
+	return api.CloudAuthStatusResponse{
+		Authenticated: status.Authenticated,
+		Tailnet:       status.Tailnet,
+		HasPolicy:     status.HasPolicy,
 	}
 }
 

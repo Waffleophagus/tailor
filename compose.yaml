@@ -5,4 +5,26 @@ services:
       - "8080:8080"
     environment:
       TAILOR_ADDR: ":8080"
+
+      # auto chooses embedded mode unless you provide an external LocalAPI socket.
+      # Use "embedded" to force the container to run its own tailscaled, or
+      # "external" to force Tailor to use a mounted host socket.
       TAILOR_TAILSCALE_MODE: "auto"
+
+      # Embedded mode:
+      # Set an auth key when you want this container to join the tailnet as its
+      # own Tailscale node. Create one in the Tailscale admin console.
+      # TAILSCALE_AUTHKEY: "tskey-auth-..."
+      # TAILSCALE_HOSTNAME: "tailor"
+      # TAILSCALE_UP_EXTRA_ARGS: "--advertise-tags=tag:tailor"
+
+      # Host socket mode:
+      # Uncomment this plus the volume below to piggyback on the host's Linux
+      # tailscaled instead of running tailscaled inside the container.
+      # TAILOR_TAILSCALE_MODE: "external"
+      # TAILOR_LOCALAPI_SOCKET: "/var/run/tailscale/tailscaled.sock"
+
+    # Host socket mode volume:
+    # Only works on Linux hosts with a tailscaled Unix socket at this path.
+    # volumes:
+    #   - /var/run/tailscale/tailscaled.sock:/var/run/tailscale/tailscaled.sock:ro

@@ -2,7 +2,7 @@
 
 import type { Client, Options as Options2, TDataShape } from './client';
 import { client } from './client.gen';
-import type { GetHealthData, GetHealthResponses, GetStatusData, GetStatusResponses, GetTopologyData, GetTopologyErrors, GetTopologyResponses } from './types.gen';
+import type { AuthenticateCloudData, AuthenticateCloudErrors, AuthenticateCloudResponses, GetCloudStatusData, GetCloudStatusResponses, GetHealthData, GetHealthResponses, GetPolicyData, GetPolicyErrors, GetPolicyResponses, GetStatusData, GetStatusResponses, GetTopologyData, GetTopologyErrors, GetTopologyResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -23,3 +23,16 @@ export const getHealth = <ThrowOnError extends boolean = false>(options?: Option
 export const getTopology = <ThrowOnError extends boolean = false>(options?: Options<GetTopologyData, ThrowOnError>) => (options?.client ?? client).get<GetTopologyResponses, GetTopologyErrors, ThrowOnError>({ url: '/api/topology', ...options });
 
 export const getStatus = <ThrowOnError extends boolean = false>(options?: Options<GetStatusData, ThrowOnError>) => (options?.client ?? client).get<GetStatusResponses, unknown, ThrowOnError>({ url: '/api/status', ...options });
+
+export const getCloudStatus = <ThrowOnError extends boolean = false>(options?: Options<GetCloudStatusData, ThrowOnError>) => (options?.client ?? client).get<GetCloudStatusResponses, unknown, ThrowOnError>({ url: '/api/cloud/status', ...options });
+
+export const authenticateCloud = <ThrowOnError extends boolean = false>(options: Options<AuthenticateCloudData, ThrowOnError>) => (options.client ?? client).post<AuthenticateCloudResponses, AuthenticateCloudErrors, ThrowOnError>({
+    url: '/api/cloud/auth',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+export const getPolicy = <ThrowOnError extends boolean = false>(options?: Options<GetPolicyData, ThrowOnError>) => (options?.client ?? client).get<GetPolicyResponses, GetPolicyErrors, ThrowOnError>({ url: '/api/policy', ...options });

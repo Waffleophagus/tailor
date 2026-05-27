@@ -10,8 +10,9 @@
   import type { SimulationNodeDatum, SimulationLinkDatum } from "d3-force";
   import { onDestroy, onMount } from "svelte";
 
+  import { authenticateCloud, fetchCloudStatus, fetchPolicy } from "./lib/api/cloud";
   import { fetchHealth } from "./lib/api/health";
-  import type { Device, Edge, LocalAPIStatusResponse } from "./lib/api/schemas";
+  import type { CloudAuthStatusResponse, Device, Edge, LocalAPIStatusResponse, PolicyResponse } from "./lib/api/schemas";
   import { connectTopologySocket } from "./lib/api/topologySocket";
   import SidebarLeft from "./lib/components/SidebarLeft.svelte";
   import SidebarRight from "./lib/components/SidebarRight.svelte";
@@ -23,6 +24,14 @@
   let edges = $state<Edge[]>([]);
   let selectedDevice = $state<Device | undefined>();
   let localApiError = $state<LocalAPIStatusResponse | Error | undefined>();
+  let cloudStatus = $state<CloudAuthStatusResponse>({ authenticated: false, hasPolicy: false });
+  let policy = $state<PolicyResponse | undefined>();
+  let phase2Open = $state(false);
+  let policyOpen = $state(false);
+  let cloudError = $state("");
+  let cloudBusy = $state(false);
+  let authTailnet = $state("-");
+  let authAPIKey = $state("");
   let showOffline = $state(true);
   let showSubnetRouters = $state(true);
   let showTailnet = $state(false);
@@ -97,6 +106,16 @@
       },
       err: (error) => {
         apiStatus = error.message;
+      },
+    });
+
+    const cloud = await fetchCloudStatus();
+    cloud.match({
+      ok: (value) => {
+        cloudStatus = value;
+      },
+      err: (error) => {
+        cloudError = error.message;
       },
     });
 
@@ -387,6 +406,51 @@
       duration: 320,
       easing: "ease-out-cubic",
     });
+  }
+
+  async function enableACLEditing() {
+    if (cloudBusy) {
+      return;
+    }
+    cloudBusy = true;
+    cloudError = "";
+    const result = await authenticateCloud({
+      tailnet: authTailnet.trim() || "-",
+      apiKey: authAPIKey,
+    });
+    await result.match({
+      ok: async (value) => {
+        cloudStatus = value;
+        authAPIKey = "";
+        phase2Open = false;
+        await loadPolicy();
+      },
+      err: async (error) => {
+        cloudError = error.message;
+      },
+    });
+    cloudBusy = false;
+  }
+
+  async function loadPolicy() {
+    const result = await fetchPolicy();
+    result.match({
+      ok: (value) => {
+        policy = value;
+        policyOpen = true;
+        cloudError = "";
+      },
+      err: (error) => {
+        cloudError = error.message;
+      },
+    });
+  }
+
+  function closePhase2Dialog() {
+    if (cloudBusy) {
+      return;
+    }
+    phase2Open = false;
   }
 
   function applyGraphFocus(node: NodeSingular) {
@@ -871,6 +935,10 @@
     }
     return error.message;
   }
+
+  function phaseLabel() {
+    return cloudStatus.authenticated ? "Phase 2" : "Phase 1";
+  }
 </script>
 
 <main>
@@ -880,7 +948,22 @@
         <p class="eyebrow">Tailnet topology</p>
         <h1>Tailor</h1>
       </div>
-      <div class="status" data-state={apiStatus}><span class="status-pip"></span>{apiStatus}</div>
+      <div class="topbar-actions">
+        <div class="phase-chip" data-authenticated={cloudStatus.authenticated}>
+          <span>{phaseLabel()}</span>
+          {#if cloudStatus.authenticated}
+            <strong>{cloudStatus.tailnet}</strong>
+          {:else}
+            <strong>LocalAPI only</strong>
+          {/if}
+        </div>
+        {#if cloudStatus.authenticated}
+          <button class="secondary-btn" type="button" onclick={loadPolicy}>Raw HuJSON</button>
+        {:else}
+          <button class="primary-btn" type="button" onclick={() => (phase2Open = true)}>Enable ACL Editing</button>
+        {/if}
+        <div class="status" data-state={apiStatus}><span class="status-pip"></span>{apiStatus}</div>
+      </div>
     </div>
 
     <div class="content">
@@ -933,6 +1016,21 @@
             <p>{localApiErrorMessage(localApiError)}</p>
           </div>
         {/if}
+        {#if policyOpen && policy}
+          <section class="policy-panel" aria-label="Raw HuJSON policy">
+            <div class="policy-panel-header">
+              <div>
+                <p class="eyebrow">Raw HuJSON</p>
+                <h2>{policy.tailnet}</h2>
+              </div>
+              <button type="button" title="Close policy panel" onclick={() => (policyOpen = false)}>×</button>
+            </div>
+            <pre>{policy.hujson}</pre>
+          </section>
+        {/if}
+        {#if cloudError}
+          <div class="cloud-error" role="alert">{cloudError}</div>
+        {/if}
       </section>
 
       <SidebarRight
@@ -942,4 +1040,40 @@
       />
     </div>
   </section>
+
+  {#if phase2Open}
+    <div class="dialog-backdrop" role="presentation">
+      <div class="auth-dialog" role="dialog" aria-modal="true" aria-labelledby="phase2-title">
+        <div class="auth-dialog-header">
+          <div>
+            <p class="eyebrow">Phase 2</p>
+            <h2 id="phase2-title">Enable ACL Editing</h2>
+          </div>
+          <button type="button" title="Close" onclick={closePhase2Dialog}>×</button>
+        </div>
+        <form onsubmit={(event) => { event.preventDefault(); void enableACLEditing(); }}>
+          <label>
+            <span>Tailnet</span>
+            <input bind:value={authTailnet} autocomplete="organization" placeholder="example.com or -" />
+          </label>
+          <label>
+            <span>Tailscale API Key</span>
+            <input bind:value={authAPIKey} autocomplete="off" type="password" placeholder="tskey-api-..." />
+          </label>
+          <p class="auth-note">
+            The backend uses this key to fetch the policy file and keeps it in memory only.
+          </p>
+          {#if cloudError}
+            <p class="form-error">{cloudError}</p>
+          {/if}
+          <div class="dialog-actions">
+            <button class="secondary-btn" type="button" onclick={closePhase2Dialog} disabled={cloudBusy}>Cancel</button>
+            <button class="primary-btn" type="submit" disabled={cloudBusy}>
+              {cloudBusy ? "Connecting..." : "Fetch Policy"}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  {/if}
 </main>
