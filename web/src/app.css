@@ -123,6 +123,32 @@ p {
   white-space: nowrap;
 }
 
+.graph-mode-toggle {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.2rem;
+  border: 1px solid oklch(0.78 0.022 158);
+  border-radius: 8px;
+  background: oklch(0.975 0.008 158);
+}
+
+.graph-mode-toggle button {
+  min-height: 1.95rem;
+  padding: 0.35rem 0.55rem;
+  border: 0;
+  border-radius: 6px;
+  color: #586761;
+  background: transparent;
+  font-size: 0.78rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.graph-mode-toggle button.active {
+  color: oklch(0.985 0.006 158);
+  background: oklch(0.46 0.095 158);
+}
+
 .primary-btn,
 .secondary-btn {
   min-height: 2.35rem;
@@ -301,8 +327,8 @@ aside:last-child {
   bottom: 0.75rem;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
-  width: min(48rem, calc(100% - 1.5rem));
-  max-height: min(34rem, calc(100% - 5rem));
+  width: min(52rem, calc(100% - 1.5rem));
+  max-height: min(38rem, calc(100% - 5rem));
   overflow: hidden;
   border: 1px solid oklch(0.78 0.022 158);
   border-radius: 8px;
@@ -337,7 +363,72 @@ aside:last-child {
   line-height: 1;
 }
 
-.policy-panel pre {
+.policy-editor {
+  min-height: 0;
+  overflow: auto;
+}
+
+.acl-edit-form {
+  display: grid;
+  grid-template-columns: 1fr 1fr 10rem;
+  gap: 0.7rem;
+  padding: 0.9rem;
+  border-bottom: 1px solid oklch(0.86 0.012 158);
+  background: oklch(0.985 0.006 158);
+}
+
+.acl-edit-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  color: #3a4a44;
+  font-size: 0.75rem;
+  font-weight: 800;
+}
+
+.acl-edit-form input,
+.acl-edit-form select {
+  min-height: 2.3rem;
+  padding: 0.45rem 0.55rem;
+  border: 1px solid oklch(0.8 0.018 158);
+  border-radius: 7px;
+  color: #172126;
+  background: oklch(0.975 0.008 158);
+  font-size: 0.86rem;
+}
+
+.policy-actions {
+  display: flex;
+  grid-column: 1 / -1;
+  gap: 0.5rem;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.edit-status {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: #315044;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.draft-summary {
+  padding: 0.9rem;
+  border-bottom: 1px solid oklch(0.86 0.012 158);
+  background: oklch(0.965 0.01 158);
+}
+
+.raw-policy summary {
+  padding: 0.7rem 0.9rem;
+  color: #315044;
+  font-size: 0.82rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.policy-panel pre,
+.draft-summary pre {
   min-height: 0;
   margin: 0;
   padding: 0.9rem;
@@ -349,6 +440,13 @@ aside:last-child {
   line-height: 1.5;
   tab-size: 2;
   white-space: pre;
+}
+
+.draft-summary pre {
+  margin-top: 0.45rem;
+  padding: 0.7rem;
+  border: 1px solid oklch(0.82 0.018 158);
+  border-radius: 7px;
 }
 
 .cloud-error {

@@ -76,6 +76,65 @@ func EffectiveAccessEdges(raw string, devices []api.Device, options EdgeOptions)
 	return ResolveEffectiveAccess(p, devices, options), nil
 }
 
+func AppendACLRule(raw string, rule api.ACLDraft) (string, error) {
+	rule.Action = strings.TrimSpace(rule.Action)
+	if rule.Action == "" {
+		rule.Action = "accept"
+	}
+	if rule.Action != "accept" {
+		return "", fmt.Errorf("only accept ACL rules are supported")
+	}
+	rule.Src = compactStrings(rule.Src)
+	rule.Dst = compactStrings(rule.Dst)
+	rule.Proto = strings.TrimSpace(rule.Proto)
+	if len(rule.Src) == 0 {
+		return "", fmt.Errorf("at least one source selector is required")
+	}
+	if len(rule.Dst) == 0 {
+		return "", fmt.Errorf("at least one destination selector is required")
+	}
+
+	root, err := hujson.Parse([]byte(raw))
+	if err != nil {
+		return "", fmt.Errorf("parse policy HuJSON: %w", err)
+	}
+	obj, ok := root.Value.(*hujson.Object)
+	if !ok {
+		return "", fmt.Errorf("policy root must be an object")
+	}
+
+	ruleValue, err := hujson.Parse(marshalRule(rule))
+	if err != nil {
+		return "", err
+	}
+	ruleValue.BeforeExtra = []byte("\n\t\t")
+	ruleValue.AfterExtra = nil
+
+	aclsValue := findObjectMemberValue(obj, "acls")
+	if aclsValue == nil {
+		array := &hujson.Array{Elements: []hujson.ArrayElement{ruleValue}, AfterExtra: []byte("\n\t")}
+		obj.Members = append(obj.Members, hujson.ObjectMember{
+			Name:  hujson.Value{BeforeExtra: []byte("\n\t"), Value: hujson.String("acls"), AfterExtra: []byte(" ")},
+			Value: hujson.Value{Value: array},
+		})
+		obj.AfterExtra = []byte("\n")
+		return string(root.Pack()), nil
+	}
+
+	acls, ok := aclsValue.Value.(*hujson.Array)
+	if !ok {
+		return "", fmt.Errorf("policy acls field must be an array")
+	}
+	if len(acls.Elements) == 0 {
+		ruleValue.BeforeExtra = []byte("\n\t\t")
+		acls.AfterExtra = []byte("\n\t")
+	} else if len(acls.AfterExtra) == 0 {
+		acls.AfterExtra = []byte("\n\t")
+	}
+	acls.Elements = append(acls.Elements, ruleValue)
+	return string(root.Pack()), nil
+}
+
 func ResolveEffectiveAccess(p Policy, devices []api.Device, options EdgeOptions) []api.Edge {
 	acc := map[string]*accessAccumulator{}
 	for i, rule := range p.ACLs {
@@ -165,6 +224,46 @@ func selectorIncludesPerspective(selector string, p Policy, perspective string) 
 		}
 	}
 	return false
+}
+
+func findObjectMemberValue(obj *hujson.Object, name string) *hujson.Value {
+	for i := range obj.Members {
+		lit, ok := obj.Members[i].Name.Value.(hujson.Literal)
+		if !ok {
+			continue
+		}
+		if lit.String() == name {
+			return &obj.Members[i].Value
+		}
+	}
+	return nil
+}
+
+func marshalRule(rule api.ACLDraft) []byte {
+	payload := map[string]any{
+		"action": rule.Action,
+		"src":    rule.Src,
+		"dst":    rule.Dst,
+	}
+	if rule.Proto != "" {
+		payload["proto"] = rule.Proto
+	}
+	b, _ := json.Marshal(payload)
+	return b
+}
+
+func compactStrings(values []string) []string {
+	out := make([]string, 0, len(values))
+	seen := map[string]bool{}
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	return out
 }
 
 func devicesForSelector(selector string, p Policy, devices []api.Device) []api.Device {

@@ -74,6 +74,42 @@ export type PolicyResponse = {
     hujson: string;
 };
 
+export type PolicyDraftRequest = {
+    sources: Array<string>;
+    destinations: Array<string>;
+    ports: Array<string>;
+    protocol?: string;
+};
+
+export type AclDraft = {
+    action: string;
+    src: Array<string>;
+    dst: Array<string>;
+    proto?: string;
+};
+
+export type PolicyDraftResponse = {
+    tailnet: string;
+    rule: AclDraft;
+    hujson: string;
+};
+
+export type PolicyValidateRequest = {
+    hujson: string;
+};
+
+export type PolicyValidateResponse = {
+    valid: boolean;
+    tailnet: string;
+    errors?: Array<string>;
+};
+
+export type PolicySaveResponse = {
+    saved: boolean;
+    tailnet: string;
+    hujson: string;
+};
+
 export type ErrorResponse = {
     error: string;
 };
@@ -208,3 +244,86 @@ export type GetPolicyResponses = {
 };
 
 export type GetPolicyResponse = GetPolicyResponses[keyof GetPolicyResponses];
+
+export type DraftPolicyAclRuleData = {
+    body: PolicyDraftRequest;
+    path?: never;
+    query?: never;
+    url: '/api/policy/draft';
+};
+
+export type DraftPolicyAclRuleErrors = {
+    /**
+     * Invalid draft request.
+     */
+    400: ErrorResponse;
+    /**
+     * Cloud API authentication has not been enabled.
+     */
+    401: ErrorResponse;
+};
+
+export type DraftPolicyAclRuleError = DraftPolicyAclRuleErrors[keyof DraftPolicyAclRuleErrors];
+
+export type DraftPolicyAclRuleResponses = {
+    /**
+     * Draft policy with appended ACL rule.
+     */
+    200: PolicyDraftResponse;
+};
+
+export type DraftPolicyAclRuleResponse = DraftPolicyAclRuleResponses[keyof DraftPolicyAclRuleResponses];
+
+export type ValidatePolicyDraftData = {
+    body: PolicyValidateRequest;
+    path?: never;
+    query?: never;
+    url: '/api/policy/validate';
+};
+
+export type ValidatePolicyDraftErrors = {
+    /**
+     * Draft policy failed validation or Cloud API request failed.
+     */
+    502: PolicyValidateResponse;
+};
+
+export type ValidatePolicyDraftError = ValidatePolicyDraftErrors[keyof ValidatePolicyDraftErrors];
+
+export type ValidatePolicyDraftResponses = {
+    /**
+     * Draft policy is valid.
+     */
+    200: PolicyValidateResponse;
+};
+
+export type ValidatePolicyDraftResponse = ValidatePolicyDraftResponses[keyof ValidatePolicyDraftResponses];
+
+export type SaveValidatedPolicyDraftData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/policy/save';
+};
+
+export type SaveValidatedPolicyDraftErrors = {
+    /**
+     * Cloud API authentication has not been enabled.
+     */
+    401: ErrorResponse;
+    /**
+     * Save failed.
+     */
+    502: ErrorResponse;
+};
+
+export type SaveValidatedPolicyDraftError = SaveValidatedPolicyDraftErrors[keyof SaveValidatedPolicyDraftErrors];
+
+export type SaveValidatedPolicyDraftResponses = {
+    /**
+     * Last validated draft was saved.
+     */
+    200: PolicySaveResponse;
+};
+
+export type SaveValidatedPolicyDraftResponse = SaveValidatedPolicyDraftResponses[keyof SaveValidatedPolicyDraftResponses];

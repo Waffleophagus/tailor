@@ -47,6 +47,9 @@ func New(options ...Options) http.Handler {
 	mux.HandleFunc("GET /api/cloud/status", server.handleCloudStatus)
 	mux.HandleFunc("POST /api/cloud/auth", server.handleCloudAuth)
 	mux.HandleFunc("GET /api/policy", server.handlePolicy)
+	mux.HandleFunc("POST /api/policy/draft", server.handlePolicyDraft)
+	mux.HandleFunc("POST /api/policy/validate", server.handlePolicyValidate)
+	mux.HandleFunc("POST /api/policy/save", server.handlePolicySave)
 
 	spa := spaHandler(http.FileServer(frontend.FileSystem()))
 	mux.Handle("/", spa)
@@ -94,6 +97,73 @@ func (s *Server) handlePolicy(w http.ResponseWriter, r *http.Request) {
 	status := s.cloudAPI.Status()
 	writeJSON(w, http.StatusOK, api.PolicyResponse{
 		Tailnet: status.Tailnet,
+		HuJSON:  policy,
+	})
+}
+
+func (s *Server) handlePolicyDraft(w http.ResponseWriter, r *http.Request) {
+	var request api.PolicyDraftRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&request); err != nil {
+		writeError(w, http.StatusBadRequest, "Request body must be valid JSON.")
+		return
+	}
+	rule, err := draftRule(request)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	current, err := s.cloudAPI.Policy(r.Context())
+	if err != nil {
+		if errors.Is(err, cloudapi.ErrNotAuthenticated) {
+			writeError(w, http.StatusUnauthorized, "Enable ACL editing before drafting a policy change.")
+			return
+		}
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	draft, err := policy.AppendACLRule(current, rule)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	status := s.cloudAPI.Status()
+	writeJSON(w, http.StatusOK, api.PolicyDraftResponse{Tailnet: status.Tailnet, Rule: rule, HuJSON: draft})
+}
+
+func (s *Server) handlePolicyValidate(w http.ResponseWriter, r *http.Request) {
+	var request api.PolicyValidateRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 10<<20)).Decode(&request); err != nil {
+		writeError(w, http.StatusBadRequest, "Request body must be valid JSON.")
+		return
+	}
+	if err := s.cloudAPI.ValidatePolicy(r.Context(), request.HuJSON); err != nil {
+		if errors.Is(err, cloudapi.ErrNotAuthenticated) {
+			writeError(w, http.StatusUnauthorized, "Enable ACL editing before validating a policy change.")
+			return
+		}
+		writeJSON(w, http.StatusBadGateway, api.PolicyValidateResponse{
+			Valid:   false,
+			Tailnet: s.cloudAPI.Status().Tailnet,
+			Errors:  []string{err.Error()},
+		})
+		return
+	}
+	writeJSON(w, http.StatusOK, api.PolicyValidateResponse{Valid: true, Tailnet: s.cloudAPI.Status().Tailnet})
+}
+
+func (s *Server) handlePolicySave(w http.ResponseWriter, r *http.Request) {
+	policy, err := s.cloudAPI.SaveValidatedPolicy(r.Context())
+	if err != nil {
+		if errors.Is(err, cloudapi.ErrNotAuthenticated) {
+			writeError(w, http.StatusUnauthorized, "Enable ACL editing before saving a policy change.")
+			return
+		}
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, api.PolicySaveResponse{
+		Saved:   true,
+		Tailnet: s.cloudAPI.Status().Tailnet,
 		HuJSON:  policy,
 	})
 }
@@ -242,6 +312,49 @@ func cloudAuthStatusResponse(status cloudapi.AuthStatus) api.CloudAuthStatusResp
 		Tailnet:       status.Tailnet,
 		HasPolicy:     status.HasPolicy,
 	}
+}
+
+func draftRule(request api.PolicyDraftRequest) (api.ACLDraft, error) {
+	sources := compactStrings(request.Sources)
+	destinations := compactStrings(request.Destinations)
+	ports := compactStrings(request.Ports)
+	if len(sources) == 0 {
+		return api.ACLDraft{}, errors.New("at least one source selector is required")
+	}
+	if len(destinations) == 0 {
+		return api.ACLDraft{}, errors.New("at least one destination selector is required")
+	}
+	if len(ports) == 0 {
+		return api.ACLDraft{}, errors.New("at least one destination port is required")
+	}
+	dst := make([]string, 0, len(destinations))
+	portSet := strings.Join(ports, ",")
+	for _, destination := range destinations {
+		if strings.Contains(destination, ":") && strings.HasSuffix(destination, ":*") {
+			dst = append(dst, destination)
+			continue
+		}
+		dst = append(dst, destination+":"+portSet)
+	}
+	proto := strings.TrimSpace(request.Protocol)
+	if proto == "tcp" {
+		proto = ""
+	}
+	return api.ACLDraft{Action: "accept", Src: sources, Dst: dst, Proto: proto}, nil
+}
+
+func compactStrings(values []string) []string {
+	out := make([]string, 0, len(values))
+	seen := map[string]bool{}
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	return out
 }
 
 func spaHandler(fileServer http.Handler) http.Handler {

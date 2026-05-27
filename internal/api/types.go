@@ -87,6 +87,42 @@ type PolicyResponse struct {
 	HuJSON  string `json:"hujson"`
 }
 
+type PolicyDraftRequest struct {
+	Sources      []string `json:"sources"`
+	Destinations []string `json:"destinations"`
+	Ports        []string `json:"ports"`
+	Protocol     string   `json:"protocol,omitempty"`
+}
+
+type PolicyDraftResponse struct {
+	Tailnet string   `json:"tailnet"`
+	Rule    ACLDraft `json:"rule"`
+	HuJSON  string   `json:"hujson"`
+}
+
+type ACLDraft struct {
+	Action string   `json:"action"`
+	Src    []string `json:"src"`
+	Dst    []string `json:"dst"`
+	Proto  string   `json:"proto,omitempty"`
+}
+
+type PolicyValidateRequest struct {
+	HuJSON string `json:"hujson"`
+}
+
+type PolicyValidateResponse struct {
+	Valid   bool     `json:"valid"`
+	Tailnet string   `json:"tailnet"`
+	Errors  []string `json:"errors,omitempty"`
+}
+
+type PolicySaveResponse struct {
+	Saved   bool   `json:"saved"`
+	Tailnet string `json:"tailnet"`
+	HuJSON  string `json:"hujson"`
+}
+
 type ErrorResponse struct {
 	Error string `json:"error"`
 }

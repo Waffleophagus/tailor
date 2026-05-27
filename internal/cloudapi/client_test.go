@@ -2,6 +2,7 @@ package cloudapi
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -103,5 +104,59 @@ func TestAuthenticateRequiresAPIKeyPrefix(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "tskey-api-") {
 		t.Fatalf("unexpected error: %q", err.Error())
+	}
+}
+
+func TestValidateAndSavePolicyUsesValidatedDraftAndRefreshesPolicy(t *testing.T) {
+	var validated string
+	var saved string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/tailnet/example.com/acl":
+			if r.Method == http.MethodGet {
+				if saved != "" {
+					_, _ = w.Write([]byte(saved))
+					return
+				}
+				_, _ = w.Write([]byte(`{"acls":[]}`))
+				return
+			}
+			if r.Method == http.MethodPost {
+				body, _ := io.ReadAll(r.Body)
+				saved = string(body)
+				_, _ = w.Write([]byte(saved))
+				return
+			}
+			t.Fatalf("unexpected method %s", r.Method)
+		case "/api/v2/tailnet/example.com/acl/validate":
+			body, _ := io.ReadAll(r.Body)
+			validated = string(body)
+			_, _ = w.Write([]byte(`{}`))
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client := New(WithBaseURL(server.URL))
+	if _, err := client.Authenticate(context.Background(), AuthRequest{Tailnet: "example.com", APIKey: "tskey-api-test"}); err != nil {
+		t.Fatal(err)
+	}
+	draft := `{"acls":[{"action":"accept","src":["*"],"dst":["*:*"]}]}`
+	if err := client.ValidatePolicy(context.Background(), draft); err != nil {
+		t.Fatal(err)
+	}
+	if validated != draft {
+		t.Fatalf("validated = %q, want draft", validated)
+	}
+	refreshed, err := client.SaveValidatedPolicy(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved != draft || refreshed != draft {
+		t.Fatalf("save did not use/refresh draft: saved=%q refreshed=%q", saved, refreshed)
+	}
+	if _, err := client.SaveValidatedPolicy(context.Background()); err == nil {
+		t.Fatal("expected second save without validation to fail")
 	}
 }

@@ -1,6 +1,7 @@
 package policy
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/Waffleophagus/tailor/internal/api"
@@ -61,6 +62,35 @@ func TestEffectiveAccessEdgesCanFilterByPerspective(t *testing.T) {
 	assertEdge(t, edges, "alice", "web", api.AccessScopeHTTP, []string{"443"})
 	if len(edges[0].Perspectives) != 1 || edges[0].Perspectives[0] != "alice@example.com" {
 		t.Fatalf("missing perspective provenance: %#v", edges[0].Perspectives)
+	}
+}
+
+func TestAppendACLRulePreservesExistingHuJSONAndAppendsRule(t *testing.T) {
+	raw := `{
+	// keep this comment
+	"groups": {
+		"group:eng": ["alice@example.com"],
+	},
+	"acls": [
+		{"action": "accept", "src": ["*"], "dst": ["*:*"]},
+	],
+}`
+	draft, err := AppendACLRule(raw, api.ACLDraft{
+		Action: "accept",
+		Src:    []string{"alice@example.com"},
+		Dst:    []string{"tag:web:443"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(draft, "// keep this comment") {
+		t.Fatalf("draft did not preserve comment:\n%s", draft)
+	}
+	if !strings.Contains(draft, `"src":["alice@example.com"]`) {
+		t.Fatalf("draft missing appended src:\n%s", draft)
+	}
+	if _, err := Parse(draft); err != nil {
+		t.Fatalf("draft is not parseable: %v\n%s", err, draft)
 	}
 }
 

@@ -31,6 +31,20 @@ export const edgeSchema = z.object({
   to: z.string(),
   kind: z.enum(["owner", "tag", "subnet", "acl"]),
   labels: z.array(z.string()).optional(),
+  protocols: z.array(z.string()).optional(),
+  ports: z.array(z.string()).optional(),
+  accessScope: z.enum(["ssh", "http", "broad", "custom", "limited", "none"]).optional(),
+  policyRefs: z
+    .array(
+      z.object({
+        section: z.string(),
+        index: z.number(),
+        src: z.string().optional(),
+        dst: z.string().optional(),
+      }),
+    )
+    .optional(),
+  perspectives: z.array(z.string()).optional(),
 });
 
 export const topologyResponseSchema = z.object({
@@ -50,6 +64,38 @@ export const cloudAuthRequestSchema = z.object({
 });
 
 export const policyResponseSchema = z.object({
+  tailnet: z.string(),
+  hujson: z.string(),
+});
+
+export const policyDraftRequestSchema = z.object({
+  sources: z.array(z.string()),
+  destinations: z.array(z.string()),
+  ports: z.array(z.string()),
+  protocol: z.string().optional(),
+});
+
+export const aclDraftSchema = z.object({
+  action: z.string(),
+  src: z.array(z.string()),
+  dst: z.array(z.string()),
+  proto: z.string().optional(),
+});
+
+export const policyDraftResponseSchema = z.object({
+  tailnet: z.string(),
+  rule: aclDraftSchema,
+  hujson: z.string(),
+});
+
+export const policyValidateResponseSchema = z.object({
+  valid: z.boolean(),
+  tailnet: z.string(),
+  errors: z.array(z.string()).optional(),
+});
+
+export const policySaveResponseSchema = z.object({
+  saved: z.boolean(),
   tailnet: z.string(),
   hujson: z.string(),
 });
@@ -83,4 +129,8 @@ export type TopologyResponse = z.infer<typeof topologyResponseSchema>;
 export type CloudAuthStatusResponse = z.infer<typeof cloudAuthStatusResponseSchema>;
 export type CloudAuthRequest = z.infer<typeof cloudAuthRequestSchema>;
 export type PolicyResponse = z.infer<typeof policyResponseSchema>;
+export type PolicyDraftRequest = z.infer<typeof policyDraftRequestSchema>;
+export type PolicyDraftResponse = z.infer<typeof policyDraftResponseSchema>;
+export type PolicyValidateResponse = z.infer<typeof policyValidateResponseSchema>;
+export type PolicySaveResponse = z.infer<typeof policySaveResponseSchema>;
 export type SocketMessage = z.infer<typeof socketMessageSchema>;

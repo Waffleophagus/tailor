@@ -10,7 +10,14 @@
   import type { SimulationNodeDatum, SimulationLinkDatum } from "d3-force";
   import { onDestroy, onMount } from "svelte";
 
-  import { authenticateCloud, fetchCloudStatus, fetchPolicy } from "./lib/api/cloud";
+  import {
+    authenticateCloud,
+    draftPolicyRule,
+    fetchCloudStatus,
+    fetchPolicy,
+    saveValidatedPolicyDraft,
+    validatePolicyDraft,
+  } from "./lib/api/cloud";
   import { fetchHealth } from "./lib/api/health";
   import type { CloudAuthStatusResponse, Device, Edge, LocalAPIStatusResponse, PolicyResponse } from "./lib/api/schemas";
   import { connectTopologySocket } from "./lib/api/topologySocket";
@@ -26,6 +33,15 @@
   let localApiError = $state<LocalAPIStatusResponse | Error | undefined>();
   let cloudStatus = $state<CloudAuthStatusResponse>({ authenticated: false, hasPolicy: false });
   let policy = $state<PolicyResponse | undefined>();
+  let draftHuJSON = $state("");
+  let draftRuleText = $state("");
+  let editSource = $state("");
+  let editDestination = $state("");
+  let editPortPreset = $state("443");
+  let editCustomPorts = $state("");
+  let editStatus = $state("");
+  let editBusy = $state(false);
+  let draftValid = $state(false);
   let phase2Open = $state(false);
   let policyOpen = $state(false);
   let cloudError = $state("");
@@ -36,6 +52,7 @@
   let showSubnetRouters = $state(true);
   let showTailnet = $state(false);
   let showLabels = $state(false);
+  let graphMode = $state<"focused" | "all">("focused");
   let selectedTag = $state("all");
   let selectedOwner = $state("all");
   let selectedOS = $state("all");
@@ -53,6 +70,7 @@
     from: string;
     to: string;
     kind: string;
+    accessScope?: Edge["accessScope"];
   }
 
   const visibleDevices = $derived(
@@ -79,9 +97,12 @@
   const ownerOptions = $derived(unique(devices.map((device) => device.owner).filter(Boolean)));
   const osOptions = $derived(unique(devices.map((device) => device.os).filter(Boolean)));
   const rootDevice = $derived(devices[0]);
+  const graphRootDevice = $derived(cloudStatus.authenticated && graphMode === "focused" ? (selectedDevice ?? rootDevice) : rootDevice);
   const visibleDeviceIDs = $derived(new Set(visibleDevices.map((device) => device.id)));
-  const visibleEdges = $derived(spokeEdges());
+  const visibleEdges = $derived(graphEdges());
+  const graphDevices = $derived(devicesForGraph());
   const visibleOnlineCount = $derived(visibleDevices.filter((device) => device.online).length);
+  const graphOnlineCount = $derived(graphDevices.filter((device) => device.online).length);
 
   $effect(() => {
     if (!graphEl) {
@@ -94,6 +115,8 @@
     }
     void showLabels;
     void edges;
+    void graphMode;
+    void selectedDevice;
     renderGraph();
   });
 
@@ -287,6 +310,39 @@
         },
       },
       {
+        selector: "edge.scope-ssh",
+        style: {
+          "line-color": "#2f9f68",
+          "target-arrow-color": "#2f9f68",
+          width: 2.8,
+        },
+      },
+      {
+        selector: "edge.scope-http",
+        style: {
+          "line-color": "#438aa1",
+          "target-arrow-color": "#438aa1",
+          width: 2.4,
+        },
+      },
+      {
+        selector: "edge.scope-broad",
+        style: {
+          "line-color": "#b0892f",
+          "target-arrow-color": "#b0892f",
+          width: 3.1,
+        },
+      },
+      {
+        selector: "edge.scope-custom, edge.scope-limited",
+        style: {
+          "line-color": "#7c6fb0",
+          "target-arrow-color": "#7c6fb0",
+          "line-style": "dashed",
+          width: 2.3,
+        },
+      },
+      {
         selector: "edge.local",
         style: {
           "curve-style": "straight",
@@ -437,6 +493,9 @@
     result.match({
       ok: (value) => {
         policy = value;
+        draftHuJSON = "";
+        draftRuleText = "";
+        draftValid = false;
         policyOpen = true;
         cloudError = "";
       },
@@ -444,6 +503,75 @@
         cloudError = error.message;
       },
     });
+  }
+
+  async function createPolicyDraft() {
+    if (editBusy) {
+      return;
+    }
+    editBusy = true;
+    cloudError = "";
+    editStatus = "";
+    draftValid = false;
+    const result = await draftPolicyRule({
+      sources: splitSelectors(editSource),
+      destinations: splitSelectors(editDestination),
+      ports: selectedPorts(),
+      protocol: "tcp",
+    });
+    result.match({
+      ok: (value) => {
+        draftHuJSON = value.hujson;
+        draftRuleText = JSON.stringify(value.rule, null, 2);
+        editStatus = "Draft ready. Validate before saving.";
+      },
+      err: (error) => {
+        cloudError = error.message;
+      },
+    });
+    editBusy = false;
+  }
+
+  async function validateDraft() {
+    if (editBusy || !draftHuJSON) {
+      return;
+    }
+    editBusy = true;
+    cloudError = "";
+    const result = await validatePolicyDraft(draftHuJSON);
+    result.match({
+      ok: (value) => {
+        draftValid = value.valid;
+        editStatus = value.valid ? "Draft validated. Save is enabled." : (value.errors ?? ["Draft failed validation."]).join(" ");
+      },
+      err: (error) => {
+        draftValid = false;
+        cloudError = error.message;
+      },
+    });
+    editBusy = false;
+  }
+
+  async function saveDraft() {
+    if (editBusy || !draftValid) {
+      return;
+    }
+    editBusy = true;
+    cloudError = "";
+    const result = await saveValidatedPolicyDraft();
+    result.match({
+      ok: (value) => {
+        policy = { tailnet: value.tailnet, hujson: value.hujson };
+        draftHuJSON = "";
+        draftRuleText = "";
+        draftValid = false;
+        editStatus = "Saved. Topology will refresh from the updated policy.";
+      },
+      err: (error) => {
+        cloudError = error.message;
+      },
+    });
+    editBusy = false;
   }
 
   function closePhase2Dialog() {
@@ -499,13 +627,13 @@
 
   function graphElements(positions: Map<string, { x: number; y: number }>) {
     const elements: ElementDefinition[] = [
-      ...visibleDevices.map((device) => ({
+      ...graphDevices.map((device) => ({
         classes: deviceClasses(device),
         data: deviceData(device),
         position: positions.get(device.id),
       })),
       ...visibleEdges.map((edge) => ({
-        classes: edge.kind,
+        classes: edgeClasses(edge),
         data: {
           id: edge.id,
           source: edge.from,
@@ -521,7 +649,7 @@
       return;
     }
 
-    const desiredNodeIDs = new Set(visibleDevices.map((device) => device.id));
+    const desiredNodeIDs = new Set(graphDevices.map((device) => device.id));
     const desiredEdgeIDs = new Set(visibleEdges.map((edge) => edge.id));
     const positions = graphPositions();
     const existingSelectedID = graph.$("node:selected")[0]?.id();
@@ -537,7 +665,7 @@
       }
     });
 
-    for (const device of visibleDevices) {
+    for (const device of graphDevices) {
       const targetPosition = positions.get(device.id);
       if (!targetPosition) {
         continue;
@@ -556,7 +684,7 @@
     for (const edge of visibleEdges) {
       const existing = graph.getElementById(edge.id);
       if (existing.length) {
-        existing.classes(edge.kind);
+        existing.classes(edgeClasses(edge));
         continue;
       }
       addEdge(edge);
@@ -572,9 +700,9 @@
     if (!graph) {
       return;
     }
-    const rootPosition = rootDevice ? graph.getElementById(rootDevice.id).position() : undefined;
+    const rootPosition = graphRootDevice ? graph.getElementById(graphRootDevice.id).position() : undefined;
     const startPosition =
-      device.online && rootDevice?.id !== device.id && rootPosition?.x !== undefined
+      device.online && graphRootDevice?.id !== device.id && rootPosition?.x !== undefined
         ? rootPosition
         : targetPosition;
     const node = graph.add({
@@ -610,7 +738,7 @@
     }
     const added = graph.add({
       group: "edges",
-      classes: edge.kind,
+      classes: edgeClasses(edge),
       data: {
         id: edge.id,
         source: edge.from,
@@ -700,7 +828,7 @@
   function deviceClasses(device: Device) {
     return [
       device.online ? "online" : "offline",
-      rootDevice?.id === device.id ? "root" : "",
+      graphRootDevice?.id === device.id ? "root" : "",
       device.subnetRouter ? "subnet-router" : "",
       showLabels ? "with-labels" : "hide-labels",
     ]
@@ -713,11 +841,30 @@
       id: device.id,
       label: device.name || device.ip || device.id,
       color: deviceColor(device),
-      ringColor: rootDevice?.id === device.id ? "#163f31" : device.online ? "#1f7a52" : "#74857e",
+      ringColor: graphRootDevice?.id === device.id ? "#163f31" : device.online ? "#1f7a52" : "#74857e",
     };
   }
 
-  function spokeEdges(): RenderEdge[] {
+  function graphEdges(): RenderEdge[] {
+    if (cloudStatus.authenticated && edges.length > 0) {
+      const renderedEdges = edges
+        .filter((edge) => visibleDeviceIDs.has(edge.from) && visibleDeviceIDs.has(edge.to))
+        .map((edge) => ({
+          id: edge.id,
+          from: edge.from,
+          to: edge.to,
+          kind: edge.kind,
+          accessScope: edge.accessScope,
+        }));
+      if (graphMode === "all") {
+        return renderedEdges;
+      }
+      const focusID = graphRootDevice?.id;
+      if (!focusID) {
+        return [];
+      }
+      return renderedEdges.filter((edge) => edge.from === focusID || edge.to === focusID);
+    }
     const root = rootDevice;
     if (!root || !visibleDeviceIDs.has(root.id) || !root.online) {
       return [];
@@ -733,15 +880,48 @@
       }));
   }
 
+  function devicesForGraph() {
+    if (!cloudStatus.authenticated || graphMode === "all" || edges.length === 0) {
+      return visibleDevices;
+    }
+    const ids = new Set<string>();
+    if (graphRootDevice?.id && visibleDeviceIDs.has(graphRootDevice.id)) {
+      ids.add(graphRootDevice.id);
+    }
+    for (const edge of visibleEdges) {
+      ids.add(edge.from);
+      ids.add(edge.to);
+    }
+    return visibleDevices.filter((device) => ids.has(device.id));
+  }
+
+  function edgeClasses(edge: RenderEdge) {
+    return [edge.kind, edge.accessScope ? `scope-${edge.accessScope}` : ""].filter(Boolean).join(" ");
+  }
+
+  function splitSelectors(value: string) {
+    return value
+      .split(",")
+      .map((part) => part.trim())
+      .filter(Boolean);
+  }
+
+  function selectedPorts() {
+    if (editPortPreset === "custom") {
+      return splitSelectors(editCustomPorts);
+    }
+    return splitSelectors(editPortPreset);
+  }
+
   function graphPositions() {
     const width = graphEl?.clientWidth || 900;
     const height = graphEl?.clientHeight || 620;
     const center = { x: width / 2, y: height / 2 };
     const positions = new Map<string, { x: number; y: number }>();
 
-    const rootID = rootDevice && visibleDevices.some((device) => device.id === rootDevice.id) ? rootDevice.id : undefined;
-    const onlinePeers = visibleDevices.filter((device) => device.id !== rootID && device.online);
-    const offlinePeers = visibleDevices.filter((device) => device.id !== rootID && !device.online);
+    const rootID = graphRootDevice && graphDevices.some((device) => device.id === graphRootDevice.id) ? graphRootDevice.id : undefined;
+    const onlinePeers = graphDevices.filter((device) => device.id !== rootID && device.online);
+    const offlinePeers = graphDevices.filter((device) => device.id !== rootID && !device.online);
     const minDimension = Math.min(width, height);
     const onlineRadius = clamp(onlinePeers.length * 18, 150, Math.max(170, minDimension * 0.34));
     const offlineRadius = clamp(onlineRadius + 92, onlineRadius + 72, Math.max(onlineRadius + 96, minDimension * 0.47));
@@ -958,6 +1138,24 @@
           {/if}
         </div>
         {#if cloudStatus.authenticated}
+          <div class="graph-mode-toggle" aria-label="Policy Lens graph mode">
+            <button
+              type="button"
+              class:active={graphMode === "focused"}
+              onclick={() => (graphMode = "focused")}
+            >
+              Focused
+            </button>
+            <button
+              type="button"
+              class:active={graphMode === "all"}
+              onclick={() => (graphMode = "all")}
+            >
+              All connections
+            </button>
+          </div>
+        {/if}
+        {#if cloudStatus.authenticated}
           <button class="secondary-btn" type="button" onclick={loadPolicy}>Raw HuJSON</button>
         {:else}
           <button class="primary-btn" type="button" onclick={() => (phase2Open = true)}>Enable ACL Editing</button>
@@ -1000,8 +1198,11 @@
         />
 
         <div class="graph-hud" aria-label="Graph summary">
-          <span><strong>{visibleOnlineCount}</strong> online</span>
+          <span><strong>{graphOnlineCount}</strong> online</span>
           <span><strong>{visibleEdges.length}</strong> links</span>
+          {#if cloudStatus.authenticated && graphMode === "focused" && graphRootDevice}
+            <span><strong>{graphRootDevice.name || graphRootDevice.ip}</strong> focus</span>
+          {/if}
         </div>
         <div class="graph-controls" aria-label="Graph controls">
           <button type="button" title="Zoom in" onclick={() => zoomGraph(1.2)}>+</button>
@@ -1020,12 +1221,57 @@
           <section class="policy-panel" aria-label="Raw HuJSON policy">
             <div class="policy-panel-header">
               <div>
-                <p class="eyebrow">Raw HuJSON</p>
+                <p class="eyebrow">Policy editor</p>
                 <h2>{policy.tailnet}</h2>
               </div>
               <button type="button" title="Close policy panel" onclick={() => (policyOpen = false)}>×</button>
             </div>
-            <pre>{policy.hujson}</pre>
+            <div class="policy-editor">
+              <form class="acl-edit-form" onsubmit={(event) => { event.preventDefault(); void createPolicyDraft(); }}>
+                <label>
+                  <span>Sources</span>
+                  <input bind:value={editSource} placeholder="alice@example.com, group:eng, tag:client" />
+                </label>
+                <label>
+                  <span>Destination</span>
+                  <input bind:value={editDestination} placeholder="tag:web, db-host, 100.64.0.10" />
+                </label>
+                <label>
+                  <span>Ports</span>
+                  <select bind:value={editPortPreset}>
+                    <option value="443">HTTPS 443</option>
+                    <option value="80,443">HTTP/S 80,443</option>
+                    <option value="22">SSH 22</option>
+                    <option value="*">All ports</option>
+                    <option value="custom">Custom</option>
+                  </select>
+                </label>
+                {#if editPortPreset === "custom"}
+                  <label>
+                    <span>Custom ports</span>
+                    <input bind:value={editCustomPorts} placeholder="8080,8443" />
+                  </label>
+                {/if}
+                <div class="policy-actions">
+                  <button class="secondary-btn" type="submit" disabled={editBusy}>Draft rule</button>
+                  <button class="secondary-btn" type="button" onclick={validateDraft} disabled={editBusy || !draftHuJSON}>Validate</button>
+                  <button class="primary-btn" type="button" onclick={saveDraft} disabled={editBusy || !draftValid}>Save</button>
+                </div>
+                {#if editStatus}
+                  <p class="edit-status">{editStatus}</p>
+                {/if}
+              </form>
+              {#if draftRuleText}
+                <div class="draft-summary">
+                  <p class="eyebrow">Rule to append</p>
+                  <pre>{draftRuleText}</pre>
+                </div>
+              {/if}
+              <details class="raw-policy" open={!draftHuJSON}>
+                <summary>{draftHuJSON ? "Draft HuJSON" : "Current HuJSON"}</summary>
+                <pre>{draftHuJSON || policy.hujson}</pre>
+              </details>
+            </div>
           </section>
         {/if}
         {#if cloudError}

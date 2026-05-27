@@ -4,9 +4,16 @@ import {
   cloudAuthStatusResponseSchema,
   errorResponseSchema,
   policyResponseSchema,
+  policyDraftResponseSchema,
+  policySaveResponseSchema,
+  policyValidateResponseSchema,
   type CloudAuthRequest,
   type CloudAuthStatusResponse,
+  type PolicyDraftRequest,
+  type PolicyDraftResponse,
   type PolicyResponse,
+  type PolicySaveResponse,
+  type PolicyValidateResponse,
 } from "./schemas";
 
 export async function fetchCloudStatus(): Promise<Result<CloudAuthStatusResponse, Error>> {
@@ -25,6 +32,30 @@ export async function authenticateCloud(
 
 export async function fetchPolicy(): Promise<Result<PolicyResponse, Error>> {
   return fetchJSON("/api/policy", policyResponseSchema);
+}
+
+export async function draftPolicyRule(
+  request: PolicyDraftRequest,
+): Promise<Result<PolicyDraftResponse, Error>> {
+  return fetchJSON("/api/policy/draft", policyDraftResponseSchema, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(request),
+  });
+}
+
+export async function validatePolicyDraft(hujson: string): Promise<Result<PolicyValidateResponse, Error>> {
+  return fetchJSON("/api/policy/validate", policyValidateResponseSchema, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ hujson }),
+  });
+}
+
+export async function saveValidatedPolicyDraft(): Promise<Result<PolicySaveResponse, Error>> {
+  return fetchJSON("/api/policy/save", policySaveResponseSchema, {
+    method: "POST",
+  });
 }
 
 async function fetchJSON<T>(

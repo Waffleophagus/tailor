@@ -99,6 +99,78 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/policy/draft:
+    post:
+      operationId: draftPolicyAclRule
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PolicyDraftRequest"
+      responses:
+        "200":
+          description: Draft policy with appended ACL rule.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PolicyDraftResponse"
+        "400":
+          description: Invalid draft request.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Cloud API authentication has not been enabled.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/policy/validate:
+    post:
+      operationId: validatePolicyDraft
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PolicyValidateRequest"
+      responses:
+        "200":
+          description: Draft policy is valid.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PolicyValidateResponse"
+        "502":
+          description: Draft policy failed validation or Cloud API request failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PolicyValidateResponse"
+  /api/policy/save:
+    post:
+      operationId: saveValidatedPolicyDraft
+      responses:
+        "200":
+          description: Last validated draft was saved.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PolicySaveResponse"
+        "401":
+          description: Cloud API authentication has not been enabled.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: Save failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 components:
   schemas:
     HealthResponse:
@@ -170,6 +242,39 @@ components:
           type: array
           items:
             type: string
+        protocols:
+          type: array
+          items:
+            type: string
+        ports:
+          type: array
+          items:
+            type: string
+        accessScope:
+          $ref: "#/components/schemas/AccessScope"
+        policyRefs:
+          type: array
+          items:
+            $ref: "#/components/schemas/PolicyRef"
+        perspectives:
+          type: array
+          items:
+            type: string
+    AccessScope:
+      type: string
+      enum: [ssh, http, broad, custom, limited, none]
+    PolicyRef:
+      type: object
+      required: [section, index]
+      properties:
+        section:
+          type: string
+        index:
+          type: integer
+        src:
+          type: string
+        dst:
+          type: string
     TopologyResponse:
       type: object
       required: [devices, edges]
@@ -204,6 +309,78 @@ components:
       type: object
       required: [tailnet, hujson]
       properties:
+        tailnet:
+          type: string
+        hujson:
+          type: string
+    PolicyDraftRequest:
+      type: object
+      required: [sources, destinations, ports]
+      properties:
+        sources:
+          type: array
+          items:
+            type: string
+        destinations:
+          type: array
+          items:
+            type: string
+        ports:
+          type: array
+          items:
+            type: string
+        protocol:
+          type: string
+    ACLDraft:
+      type: object
+      required: [action, src, dst]
+      properties:
+        action:
+          type: string
+        src:
+          type: array
+          items:
+            type: string
+        dst:
+          type: array
+          items:
+            type: string
+        proto:
+          type: string
+    PolicyDraftResponse:
+      type: object
+      required: [tailnet, rule, hujson]
+      properties:
+        tailnet:
+          type: string
+        rule:
+          $ref: "#/components/schemas/ACLDraft"
+        hujson:
+          type: string
+    PolicyValidateRequest:
+      type: object
+      required: [hujson]
+      properties:
+        hujson:
+          type: string
+    PolicyValidateResponse:
+      type: object
+      required: [valid, tailnet]
+      properties:
+        valid:
+          type: boolean
+        tailnet:
+          type: string
+        errors:
+          type: array
+          items:
+            type: string
+    PolicySaveResponse:
+      type: object
+      required: [saved, tailnet, hujson]
+      properties:
+        saved:
+          type: boolean
         tailnet:
           type: string
         hujson:

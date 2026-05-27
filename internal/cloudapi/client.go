@@ -28,9 +28,10 @@ type Client struct {
 }
 
 type Session struct {
-	Tailnet string
-	APIKey  string
-	Policy  string
+	Tailnet        string
+	APIKey         string
+	Policy         string
+	ValidatedDraft string
 }
 
 type AuthRequest struct {
@@ -157,6 +158,49 @@ func (c *Client) RefreshPolicy(ctx context.Context) (string, error) {
 	return policy, nil
 }
 
+func (c *Client) ValidatePolicy(ctx context.Context, draft string) error {
+	session, err := c.ensureSession(ctx)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(draft) == "" {
+		return errors.New("draft policy is required")
+	}
+	if err := c.sendPolicy(ctx, http.MethodPost, session.Tailnet, session.APIKey, "/validate", draft); err != nil {
+		return err
+	}
+	c.mu.Lock()
+	if c.session != nil {
+		c.session.ValidatedDraft = draft
+	}
+	c.mu.Unlock()
+	return nil
+}
+
+func (c *Client) SaveValidatedPolicy(ctx context.Context) (string, error) {
+	session, err := c.ensureSession(ctx)
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(session.ValidatedDraft) == "" {
+		return "", errors.New("validate a draft policy before saving")
+	}
+	if err := c.sendPolicy(ctx, http.MethodPost, session.Tailnet, session.APIKey, "", session.ValidatedDraft); err != nil {
+		return "", err
+	}
+	policy, err := c.fetchPolicy(ctx, session.Tailnet, session.APIKey)
+	if err != nil {
+		return "", err
+	}
+	c.mu.Lock()
+	if c.session != nil {
+		c.session.Policy = policy
+		c.session.ValidatedDraft = ""
+	}
+	c.mu.Unlock()
+	return policy, nil
+}
+
 func (c *Client) ensureSession(ctx context.Context) (*Session, error) {
 	_ = ctx
 	c.mu.Lock()
@@ -202,6 +246,32 @@ func (c *Client) fetchPolicy(ctx context.Context, tailnet, apiKey string) (strin
 		return "", apiError(resp.StatusCode, body, "policy fetch failed")
 	}
 	return string(body), nil
+}
+
+func (c *Client) sendPolicy(ctx context.Context, method, tailnet, apiKey, suffix, policy string) error {
+	endpoint := c.baseURL + "/api/v2/tailnet/" + url.PathEscape(tailnet) + "/acl" + suffix
+	req, err := http.NewRequestWithContext(ctx, method, endpoint, strings.NewReader(policy))
+	if err != nil {
+		return err
+	}
+	req.SetBasicAuth(apiKey, "")
+	req.Header.Set("Content-Type", "application/hujson")
+	req.Header.Set("Accept", "application/hujson, application/json, text/plain")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("policy request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return apiError(resp.StatusCode, body, "policy request failed")
+	}
+	return nil
 }
 
 func apiError(statusCode int, body []byte, fallback string) error {
