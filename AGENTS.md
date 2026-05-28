@@ -14,3 +14,15 @@ Issues are local markdown files under `.scratch/<feature>/`. See `docs/agents/is
 ### Triage labels
 
 `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
+
+
+## Rules
+When you are done modifying anything in the front end, run the following in order
+```
+pnpm format && pnpm lint
+```
+then fix issues, and then run
+```
+pnpm check
+```
+and make sure you have not introduced issues.
