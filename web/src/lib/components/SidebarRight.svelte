@@ -2,7 +2,6 @@
 	import type { Device, PolicyEvaluateDraftResponse, PolicyMapResponse } from '../api/schemas';
 	import type { RenderEdge } from '../graph/engine';
 	import { kindLabel, validatePerspective } from '../perspective/catalog';
-	import { isPerspectiveDevice, perspectiveSelectorFromDevice } from '../perspective/device';
 	import ResizableSidebar from './ResizableSidebar.svelte';
 
 	let {
@@ -13,12 +12,14 @@
 		visibleEdges = [],
 		colorBy = $bindable<'status' | 'tag' | 'owner' | 'os'>('status'),
 		activePerspective = '',
+		scenarioSourceIds,
 		policyMap,
 		graphViewMode = 'current',
 		draftEvaluation = undefined,
 		onSeedSource = () => {},
 		onSeedDestination = () => {},
 		onOpenPolicy = () => {},
+		onOpenPolicySection = () => {},
 		onViewAsOwner = () => {},
 		onViewAsTag = () => {}
 	}: {
@@ -29,23 +30,24 @@
 		visibleEdges?: RenderEdge[];
 		colorBy?: 'status' | 'tag' | 'owner' | 'os';
 		activePerspective?: string;
+		scenarioSourceIds?: ReadonlySet<string>;
 		policyMap?: PolicyMapResponse;
 		graphViewMode?: 'current' | 'draft' | 'diff';
 		draftEvaluation?: PolicyEvaluateDraftResponse;
 		onSeedSource?: () => void;
 		onSeedDestination?: () => void;
 		onOpenPolicy?: () => void;
+		onOpenPolicySection?: (section: string) => void;
 		onViewAsOwner?: (owner: string) => void;
 		onViewAsTag?: (tag: string) => void;
 	} = $props();
 
-	const isPerspectiveSelection = $derived(
-		selectedDevice ? isPerspectiveDevice(selectedDevice) : false
+	const isScenarioSourceSelection = $derived(
+		Boolean(activePerspective && selectedDevice && scenarioSourceIds?.has(selectedDevice.id))
 	);
-	const perspectiveSelector = $derived(perspectiveSelectorFromDevice(selectedDevice));
-	const perspectiveValidation = $derived(
-		perspectiveSelector
-			? validatePerspective(perspectiveSelector, devices, policyMap)
+	const scenarioValidation = $derived(
+		activePerspective
+			? validatePerspective(activePerspective, devices, policyMap)
 			: { status: 'empty' as const }
 	);
 
@@ -171,7 +173,16 @@
 				<span class="detail-label">Rules</span>
 				<span class="detail-value">
 					{#if selectedEdge.policyRefs?.length}
-						{selectedEdge.policyRefs.map((ref) => `${ref.section} #${ref.index + 1}`).join(', ')}
+						{#each selectedEdge.policyRefs as ref, index (ref.section + ref.index)}
+							<button
+								type="button"
+								class="ref-link"
+								onclick={() => onOpenPolicySection(ref.section)}
+							>
+								{ref.section} #{ref.index + 1}
+							</button>{#if index < selectedEdge.policyRefs.length - 1},
+							{/if}
+						{/each}
 					{:else}
 						no policy reference
 					{/if}
@@ -186,21 +197,21 @@
 			<button class="lens-button" type="button" onclick={onSeedDestination}>
 				Use destination in builder
 			</button>
-			<button class="lens-button" type="button" onclick={onOpenPolicy}>Open HuJSON detail</button>
+			<button class="lens-button" type="button" onclick={onOpenPolicy}>Open access controls</button>
 		</div>
-	{:else if selectedDevice && isPerspectiveSelection}
+	{:else if selectedDevice && isScenarioSourceSelection}
 		<div class="border-base-light mb-[0.85rem] border-b pb-[0.85rem]">
 			<p class="m-0 text-[0.72rem] font-extrabold tracking-wider text-label uppercase">
-				Simulated policy subject
+				Scenario source device
 			</p>
-			<h3 class="mt-1 mb-0 text-[1rem] leading-[1.2] wrap-anywhere">{perspectiveSelector}</h3>
+			<h3 class="mt-1 mb-0 text-[1rem] leading-[1.2] wrap-anywhere">{activePerspective}</h3>
 			<p class="mt-2 mb-0 text-[0.78rem] leading-[1.45] font-semibold text-secondary">
-				Simulation only — not real login or device impersonation. The graph shows effective access
-				this subject would have under saved policy.
+				This device is part of the active simulation cohort. The graph shows effective access from
+				these sources under saved policy.
 			</p>
-			{#if perspectiveValidation.status === 'valid'}
+			{#if scenarioValidation.status === 'valid'}
 				<p class="mt-2 mb-0 text-[0.78rem] font-bold text-primary">
-					{kindLabel(perspectiveValidation.kind)} · {perspectiveValidation.deviceCount} source device{perspectiveValidation.deviceCount ===
+					{kindLabel(scenarioValidation.kind)} · {scenarioValidation.deviceCount} source device{scenarioValidation.deviceCount ===
 					1
 						? ''
 						: 's'}
@@ -477,6 +488,9 @@
 	}
 	.lens-button.primary {
 		@apply border-panel-accent bg-panel-accent text-panel-fg hover:bg-panel-accent;
+	}
+	.ref-link {
+		@apply cursor-pointer border-0 bg-transparent p-0 text-[0.78rem] font-extrabold text-teal underline-offset-2 hover:underline;
 	}
 	.dot {
 		@apply h-[0.6rem] w-[0.6rem] shrink-0 rounded-full bg-gray;

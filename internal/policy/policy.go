@@ -560,9 +560,17 @@ func selectorIncludesPerspective(selector string, p Policy, perspective string) 
 		if strings.HasPrefix(perspective, "group:") {
 			return true
 		}
+		if perspective == "autogroup:member" || perspective == "cohort:member+tagged" {
+			return true
+		}
 	}
-	if selector == "autogroup:tagged" && strings.HasPrefix(perspective, "tag:") {
-		return true
+	if selector == "autogroup:tagged" {
+		if strings.HasPrefix(perspective, "tag:") {
+			return true
+		}
+		if perspective == "autogroup:tagged" || perspective == "cohort:member+tagged" {
+			return true
+		}
 	}
 	if selector == "autogroup:admin" && (perspective == "autogroup:admin" || strings.Contains(perspective, "@")) {
 		return true
@@ -592,10 +600,14 @@ func devicesForPerspective(perspective string, p Policy, devices []api.Device) [
 		return devicesForTag(perspective, devices)
 	}
 	switch perspective {
-	case "autogroup:member", "autogroup:admin":
+	case "autogroup:member":
+		return devicesWithOwnerUntagged(devices)
+	case "autogroup:admin":
 		return devicesWithOwner(devices)
 	case "autogroup:tagged":
 		return devicesWithTags(devices)
+	case "cohort:member+tagged":
+		return unionDevices(devicesWithOwnerUntagged(devices), devicesWithTags(devices))
 	}
 	if strings.Contains(perspective, "@") {
 		return devicesForUser(perspective, devices)
@@ -911,8 +923,14 @@ func devicesForSelector(selector string, p Policy, devices []api.Device) []api.D
 	if selector == "" {
 		return nil
 	}
-	if selector == "*" || selector == "autogroup:member" || selector == "autogroup:admin" {
+	if selector == "*" || selector == "autogroup:admin" {
 		return devicesWithOwner(devices)
+	}
+	if selector == "autogroup:member" {
+		return devicesWithOwnerUntagged(devices)
+	}
+	if selector == "cohort:member+tagged" {
+		return unionDevices(devicesWithOwnerUntagged(devices), devicesWithTags(devices))
 	}
 	if selector == "autogroup:tagged" {
 		return devicesWithTags(devices)
@@ -944,6 +962,29 @@ func devicesWithOwner(devices []api.Device) []api.Device {
 		if d.Owner != "" {
 			out = append(out, d)
 		}
+	}
+	return out
+}
+
+func devicesWithOwnerUntagged(devices []api.Device) []api.Device {
+	var out []api.Device
+	for _, d := range devices {
+		if d.Owner != "" && len(d.Tags) == 0 {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
+func unionDevices(a, b []api.Device) []api.Device {
+	seen := map[string]bool{}
+	var out []api.Device
+	for _, d := range append(a, b...) {
+		if seen[d.ID] {
+			continue
+		}
+		seen[d.ID] = true
+		out = append(out, d)
 	}
 	return out
 }

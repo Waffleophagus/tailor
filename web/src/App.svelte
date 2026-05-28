@@ -3,11 +3,11 @@
 	import { SvelteSet } from 'svelte/reactivity';
 	import {
 		authenticateCloud,
-		draftPolicyRule,
 		evaluatePolicyDraft,
 		fetchCloudStatus,
 		fetchPolicy,
 		fetchPolicyMap,
+		mutatePolicyDraft,
 		saveValidatedPolicyDraft,
 		validatePolicyDraft
 	} from './lib/api/cloud';
@@ -25,15 +25,29 @@
 	import { connectTopologySocket } from './lib/api/topologySocket';
 	import type { RenderEdge } from './lib/graph/engine';
 	import { saveRecentPerspective, validatePerspective } from './lib/perspective/catalog';
-	import { createPerspectiveDevice, isPerspectiveDevice } from './lib/perspective/device';
-	import { hiddenSubjectSourceDeviceIds, remapEdgesForPerspective } from './lib/perspective/edges';
 	import { subjectDeviceIds } from './lib/perspective/subjects';
+	import { focusedScenarioNodeIds, scenarioReachableCount } from './lib/scenario/graph';
+	import {
+		createScenario,
+		loadScenario,
+		saveScenario,
+		scenarioLabel,
+		type PolicyScenario
+	} from './lib/scenario/state';
+	import {
+		createChange,
+		diffLines,
+		type DraftChange,
+		type PolicyMutation
+	} from './lib/draft/types';
 	import AuthDialog from './lib/components/AuthDialog.svelte';
 	import DraftTray from './lib/components/DraftTray.svelte';
 	import GraphCanvas from './lib/components/GraphCanvas.svelte';
 	import GraphLegend from './lib/components/GraphLegend.svelte';
 	import PerspectiveBar from './lib/components/PerspectiveBar.svelte';
-	import PolicyPanel from './lib/components/PolicyPanel.svelte';
+	import PolicyWorkbench from './lib/workbench/PolicyWorkbench.svelte';
+	import { defaultWorkbenchRoute, type WorkbenchRoute } from './lib/workbench/nav';
+	import RawPolicyPanel from './lib/components/RawPolicyPanel.svelte';
 	import SidebarLeft from './lib/components/SidebarLeft.svelte';
 	import SidebarRight from './lib/components/SidebarRight.svelte';
 	import SidebarToggleButton from './lib/components/SidebarToggleButton.svelte';
@@ -54,21 +68,24 @@
 	let policySearch = $state('');
 	let draftHuJSON = $state('');
 	let draftRuleText = $state('');
+	let draftChanges = $state<DraftChange[]>([]);
 	let draftEvaluation = $state<PolicyEvaluateDraftResponse | undefined>();
 	let draftEvaluationPerspective = $state('');
-	let editSource = $state('');
-	let editDestination = $state('');
-	let editPortPreset = $state('443');
-	let editCustomPorts = $state('');
+	let editSeed = $state({ sources: '', destinations: '', ports: '443' });
 	let editStatus = $state('');
 	let editBusy = $state(false);
-	let draftValid = $state(false);
+	let draftValid = $state<boolean | null>(null);
+	let scenario = $state<PolicyScenario | null>(null);
+	let showGhostEdges = $state(true);
 	let policyPerspective = $state('');
 	let simulatedPerspective = $state('');
 	let perspectiveEvaluation = $state<PolicyEvaluateDraftResponse | undefined>();
 	let policyGraphViewMode = $state<'current' | 'draft' | 'diff'>('current');
 	let phase2Open = $state(false);
-	let policyOpen = $state(false);
+	let workbenchOpen = $state(false);
+	let workbenchRoute = $state<WorkbenchRoute>(defaultWorkbenchRoute());
+	let rawPolicyOpen = $state(false);
+	let sidebarSnapshot = $state<{ left: boolean; right: boolean } | null>(null);
 	let localApiError = $state<LocalAPIStatusResponse | Error | undefined>();
 	let cloudBusy = $state(false);
 	let showOffline = $state(true);
@@ -119,38 +136,102 @@
 			: undefined
 	);
 	const activePolicyEvaluation = $derived(activeDraftEvaluation ?? activePerspectiveEvaluation);
-	const perspectiveDevice = $derived(
-		activePerspectiveEvaluation && activePerspective
-			? createPerspectiveDevice(activePerspective)
-			: undefined
+	const activeScenario = $derived(
+		Boolean(scenario && activePerspective && activePerspective === simulatedPerspective)
 	);
 	const subjectIDs = $derived.by(() => {
 		if (!activePerspective) return new SvelteSet<string>();
 		return new SvelteSet(subjectDeviceIds(activePerspective, devices, policyMap));
 	});
-	const graphRootDevice = $derived(
-		perspectiveDevice ??
-			(cloudStatus.authenticated && graphMode === 'focused'
-				? (selectedDevice ?? rootDevice)
-				: rootDevice)
-	);
-	const graphVisibleDeviceIDs = $derived.by(() => {
-		const ids = new SvelteSet(visibleDevices.map((device) => device.id));
-		if (perspectiveDevice) ids.add(perspectiveDevice.id);
-		return ids;
+	const scenarioSourceIDs = $derived(activeScenario ? subjectIDs : new SvelteSet<string>());
+	const graphRootDevice = $derived.by(() => {
+		if (activeScenario && subjectIDs.size > 0) {
+			if (selectedDevice && subjectIDs.has(selectedDevice.id)) return selectedDevice;
+			return visibleDevices.find((device) => subjectIDs.has(device.id)) ?? rootDevice;
+		}
+		if (cloudStatus.authenticated && graphMode === 'focused') {
+			return selectedDevice ?? rootDevice;
+		}
+		return rootDevice;
 	});
+	const graphVisibleDeviceIDs = $derived(new SvelteSet(visibleDevices.map((device) => device.id)));
 	const visibleEdges = $derived(graphEdges());
 	const graphDevices = $derived(devicesForGraph());
-	const perspectiveReachableCount = $derived.by(() => {
-		if (!perspectiveDevice) return 0;
-		const targets = new SvelteSet<string>();
-		for (const edge of visibleEdges) {
-			if (edge.from === perspectiveDevice.id) targets.add(edge.to);
-		}
-		return targets.size;
-	});
+	const scenarioSourceCount = $derived(activeScenario ? subjectIDs.size : 0);
+	const perspectiveReachableCount = $derived(
+		activeScenario ? scenarioReachableCount(visibleEdges, subjectIDs) : 0
+	);
+	const activeScenarioLabel = $derived(
+		activeScenario && scenario ? scenarioLabel(scenario, scenarioSourceCount) : ''
+	);
+	const draftDiffLines = $derived(
+		policy?.hujson && draftHuJSON ? diffLines(policy.hujson, draftHuJSON) : []
+	);
 	const visibleOnlineCount = $derived(visibleDevices.filter((device) => device.online).length);
 	const graphOnlineCount = $derived(graphDevices.filter((device) => device.online).length);
+
+	function ghostDeniedEdges(allowed: RenderEdge[], sourceIds: ReadonlySet<string>): RenderEdge[] {
+		const allowedPairs = new Set(allowed.map((edge) => `${edge.from}\0${edge.to}`));
+		const reachable = new Set<string>(); // eslint-disable-line svelte/prefer-svelte-reactivity
+		for (const edge of allowed) {
+			if (sourceIds.has(edge.from)) reachable.add(edge.to);
+		}
+		const ghosts: RenderEdge[] = [];
+		let count = 0;
+		for (const sourceId of sourceIds) {
+			for (const device of visibleDevices) {
+				if (sourceIds.has(device.id) || reachable.has(device.id)) continue;
+				const key = `${sourceId}\0${device.id}`;
+				if (allowedPairs.has(key)) continue;
+				ghosts.push({
+					id: `ghost:${sourceId}:${device.id}`,
+					from: sourceId,
+					to: device.id,
+					kind: 'acl',
+					state: 'ghost-denied'
+				});
+				count += 1;
+				if (count >= 24) return ghosts;
+			}
+		}
+		return ghosts;
+	}
+
+	function syncScenarioModes() {
+		if (!scenario) return;
+		scenario = {
+			...scenario,
+			policyMode: policyGraphViewMode,
+			graphMode
+		};
+		saveScenario(scenario);
+	}
+
+	async function applyDraftMutation(mutation: PolicyMutation, label: string) {
+		if (editBusy) return;
+		editBusy = true;
+		cloudError = '';
+		draftValid = null;
+		editStatus = '';
+		const result = await mutatePolicyDraft({
+			hujson: draftHuJSON || undefined,
+			mutation
+		});
+		await result.match({
+			ok: async (value) => {
+				draftHuJSON = value.hujson;
+				draftRuleText = label;
+				draftChanges = [...draftChanges, createChange(label)];
+				policyGraphViewMode = 'draft';
+				syncScenarioModes();
+				await evaluateDraftImpact(value.hujson);
+			},
+			err: async (error) => {
+				cloudError = error.message;
+			}
+		});
+		editBusy = false;
+	}
 
 	function unique(values: string[]) {
 		return [...new Set(values)].sort((a, b) => a.localeCompare(b));
@@ -159,13 +240,18 @@
 	function graphEdges(): RenderEdge[] {
 		if (cloudStatus.authenticated && edges.length > 0) {
 			let rendered = policyEdgesForGraph();
-			if (perspectiveDevice && activePerspectiveEvaluation) {
-				rendered = remapEdgesForPerspective(rendered, perspectiveDevice.id, subjectIDs);
-			}
 			rendered = rendered.filter(
 				(edge) => graphVisibleDeviceIDs.has(edge.from) || graphVisibleDeviceIDs.has(edge.to)
 			);
 			if (graphMode === 'all') return rendered;
+			if (activeScenario && subjectIDs.size > 0) {
+				const nodeIds = focusedScenarioNodeIds(rendered, subjectIDs);
+				rendered = rendered.filter((edge) => nodeIds.has(edge.from) && nodeIds.has(edge.to));
+				if (showGhostEdges && graphMode === 'focused') {
+					rendered = [...rendered, ...ghostDeniedEdges(rendered, subjectIDs)];
+				}
+				return rendered;
+			}
 			const focusID = graphRootDevice?.id;
 			if (!focusID) return [];
 			return rendered.filter((edge) => edge.from === focusID || edge.to === focusID);
@@ -224,36 +310,25 @@
 	}
 
 	function devicesForGraph(): Device[] {
-		let pool = visibleDevices;
-		if (perspectiveDevice && activePerspectiveEvaluation) {
-			const hidden = hiddenSubjectSourceDeviceIds(visibleEdges, subjectIDs, perspectiveDevice.id);
-			pool = pool.filter((device) => !hidden.has(device.id));
-		}
+		const pool = visibleDevices;
 		if (!cloudStatus.authenticated || graphMode === 'all' || edges.length === 0) {
-			if (perspectiveDevice && activePerspectiveEvaluation) {
-				return pool.some((d) => d.id === perspectiveDevice.id)
-					? pool
-					: [...pool, perspectiveDevice];
-			}
 			return pool;
 		}
 		const ids = new Set<string>(); // eslint-disable-line svelte/prefer-svelte-reactivity
-		if (graphRootDevice?.id) {
-			ids.add(graphRootDevice.id);
+		if (activeScenario && subjectIDs.size > 0) {
+			for (const id of subjectIDs) ids.add(id);
+			for (const edge of visibleEdges) {
+				ids.add(edge.from);
+				ids.add(edge.to);
+			}
+			return pool.filter((device) => ids.has(device.id));
 		}
+		if (graphRootDevice?.id) ids.add(graphRootDevice.id);
 		for (const edge of visibleEdges) {
 			ids.add(edge.from);
 			ids.add(edge.to);
 		}
-		const focused = pool.filter((device) => ids.has(device.id));
-		if (
-			perspectiveDevice &&
-			ids.has(perspectiveDevice.id) &&
-			!focused.some((d) => d.id === perspectiveDevice.id)
-		) {
-			return [...focused, perspectiveDevice];
-		}
-		return focused;
+		return pool.filter((device) => ids.has(device.id));
 	}
 
 	function chooseDevice(device: Device) {
@@ -273,20 +348,6 @@
 			return error.error ?? `Unable to reach ${error.localApiEndpoint}`;
 		}
 		return error.message;
-	}
-
-	function splitSelectors(value: string) {
-		return value
-			.split(',')
-			.map((part) => part.trim())
-			.filter(Boolean);
-	}
-
-	function getPorts() {
-		if (editPortPreset === 'custom') {
-			return splitSelectors(editCustomPorts);
-		}
-		return splitSelectors(editPortPreset);
 	}
 
 	async function enableACLEditing(data: { tailnet: string; apiKey: string }) {
@@ -322,19 +383,21 @@
 		cloudBusy = false;
 	}
 
-	async function loadPolicy(options: { open?: boolean } = {}) {
+	async function loadPolicy() {
 		const [rawResult, mapResult] = await Promise.all([fetchPolicy(), fetchPolicyMap()]);
 		rawResult.match({
 			ok: (value) => {
 				policy = value;
 				draftHuJSON = '';
 				draftRuleText = '';
+				draftChanges = [];
 				draftEvaluation = undefined;
 				draftEvaluationPerspective = '';
-				draftValid = false;
+				draftValid = null;
 				perspectiveEvaluation = undefined;
 				simulatedPerspective = '';
-				policyOpen = options.open ?? false;
+				scenario = null;
+				saveScenario(null);
 				cloudError = '';
 			},
 			err: (error) => {
@@ -349,34 +412,6 @@
 				cloudError = error.message;
 			}
 		});
-	}
-
-	async function createPolicyDraft() {
-		if (editBusy) return;
-		editBusy = true;
-		cloudError = '';
-		editStatus = '';
-		draftValid = false;
-		draftEvaluation = undefined;
-		draftEvaluationPerspective = '';
-		const result = await draftPolicyRule({
-			sources: splitSelectors(editSource),
-			destinations: splitSelectors(editDestination),
-			ports: getPorts(),
-			protocol: 'tcp'
-		});
-		await result.match({
-			ok: async (value) => {
-				draftHuJSON = value.hujson;
-				draftRuleText = JSON.stringify(value.rule, null, 2);
-				policyGraphViewMode = 'draft';
-				await evaluateDraftImpact(value.hujson);
-			},
-			err: async (error) => {
-				cloudError = error.message;
-			}
-		});
-		editBusy = false;
 	}
 
 	async function evaluateDraftImpact(hujson: string) {
@@ -402,11 +437,58 @@
 	function finishPerspectiveSimulation(selector: string) {
 		simulatedPerspective = selector;
 		graphMode = 'focused';
-		const hypo = createPerspectiveDevice(selector);
-		selectedDevice = hypo;
+		scenario = createScenario(selector);
+		scenario.policyMode = policyGraphViewMode;
+		scenario.graphMode = graphMode;
+		saveScenario(scenario);
+		const sources = subjectDeviceIds(selector, devices, policyMap);
+		const firstSource = visibleDevices.find((device) => sources.has(device.id));
+		selectedDevice = firstSource ?? rootDevice;
 		selectedEdge = undefined;
 		saveRecentPerspective(selector);
-		graphAPI?.selectDevice(hypo);
+		if (selectedDevice) graphAPI?.selectDevice(selectedDevice);
+	}
+
+	function openWorkbench(options: { ensurePolicy?: boolean; route?: WorkbenchRoute } = {}) {
+		const openPanel = () => {
+			if (options.route) workbenchRoute = options.route;
+			if (!workbenchOpen) {
+				sidebarSnapshot = { left: leftOpen, right: rightOpen };
+				leftOpen = false;
+				rightOpen = false;
+			}
+			workbenchOpen = true;
+			queueMicrotask(() => graphAPI?.reflow());
+		};
+		if (policy) {
+			openPanel();
+			return;
+		}
+		if (options.ensurePolicy === false) {
+			openPanel();
+			return;
+		}
+		void loadPolicy().then(openPanel);
+	}
+
+	function closeWorkbench() {
+		workbenchOpen = false;
+		if (sidebarSnapshot) {
+			leftOpen = sidebarSnapshot.left;
+			rightOpen = sidebarSnapshot.right;
+			sidebarSnapshot = null;
+		}
+		queueMicrotask(() => graphAPI?.reflow());
+	}
+
+	function openRawPolicy() {
+		if (policy) {
+			rawPolicyOpen = true;
+			return;
+		}
+		void loadPolicy().then(() => {
+			rawPolicyOpen = true;
+		});
 	}
 
 	async function simulatePerspective() {
@@ -448,6 +530,8 @@
 		policyPerspective = '';
 		simulatedPerspective = '';
 		perspectiveEvaluation = undefined;
+		scenario = null;
+		saveScenario(null);
 		policyGraphViewMode = draftHuJSON ? 'draft' : 'current';
 		graphMode = 'focused';
 		selectedDevice = rootDevice;
@@ -496,11 +580,13 @@
 	function discardDraft() {
 		draftHuJSON = '';
 		draftRuleText = '';
+		draftChanges = [];
 		draftEvaluation = undefined;
 		draftEvaluationPerspective = '';
-		draftValid = false;
+		draftValid = null;
 		editStatus = '';
 		policyGraphViewMode = 'current';
+		syncScenarioModes();
 	}
 
 	async function saveDraft() {
@@ -514,11 +600,14 @@
 				void refreshPolicyMap();
 				draftHuJSON = '';
 				draftRuleText = '';
+				draftChanges = [];
 				draftEvaluation = undefined;
 				draftEvaluationPerspective = '';
-				draftValid = false;
+				draftValid = null;
 				perspectiveEvaluation = undefined;
 				simulatedPerspective = '';
+				scenario = null;
+				saveScenario(null);
 				policyGraphViewMode = 'current';
 				editStatus = 'Saved. Topology will refresh from the updated policy.';
 			},
@@ -572,14 +661,6 @@
 		return host === '*' || host === '*:*';
 	}
 
-	async function openPolicyEditor() {
-		if (policy) {
-			policyOpen = true;
-			return;
-		}
-		await loadPolicy({ open: true });
-	}
-
 	function seedBuilder(role: 'source' | 'destination') {
 		const edge = selectedEdge;
 		const edgeRef = edge?.policyRefs?.[0];
@@ -588,15 +669,41 @@
 			: selectedDevice;
 		const deviceSelector = selectorForDevice(device, role);
 
-		if (role === 'source') {
-			editSource = edgeRef?.src && !isWildcardSelector(edgeRef.src) ? edgeRef.src : deviceSelector;
-		} else {
-			const refDestination = stripDestinationPorts(edgeRef?.dst ?? '');
-			editDestination =
-				refDestination && !isWildcardSelector(refDestination) ? refDestination : deviceSelector;
-		}
-		void openPolicyEditor();
+		const sources =
+			role === 'source'
+				? edgeRef?.src && !isWildcardSelector(edgeRef.src)
+					? edgeRef.src
+					: deviceSelector
+				: editSeed.sources;
+		const refDestination = stripDestinationPorts(edgeRef?.dst ?? '');
+		const destinations =
+			role === 'destination'
+				? refDestination && !isWildcardSelector(refDestination)
+					? refDestination
+					: deviceSelector
+				: editSeed.destinations;
+
+		editSeed = {
+			sources,
+			destinations,
+			ports: edge?.ports?.join(',') || editSeed.ports || '443'
+		};
+		openWorkbench({ route: edge?.accessScope === 'ssh' ? 'ssh' : 'general-access' });
 	}
+
+	function openPolicyFromLens(section?: string) {
+		const route: WorkbenchRoute = section === 'ssh' ? 'ssh' : 'general-access';
+		openWorkbench({ route });
+	}
+
+	$effect(() => {
+		if (!scenario) return;
+		const mode = policyGraphViewMode;
+		const graph = graphMode;
+		if (scenario.policyMode === mode && scenario.graphMode === graph) return;
+		scenario = { ...scenario, policyMode: mode, graphMode: graph };
+		saveScenario(scenario);
+	});
 
 	onMount(async () => {
 		const health = await fetchHealth();
@@ -618,6 +725,18 @@
 				cloudError = error.message;
 			}
 		});
+
+		const restored = loadScenario();
+		if (cloudStatus.authenticated) {
+			await loadPolicy();
+			if (restored) {
+				scenario = restored;
+				policyPerspective = restored.sourceSelector;
+				policyGraphViewMode = restored.policyMode;
+				graphMode = restored.graphMode;
+				await simulatePerspective();
+			}
+		}
 
 		disconnectTopologySocket = connectTopologySocket({
 			onSnapshot: (value) => {
@@ -670,31 +789,10 @@
 			</div>
 			<div class="flex min-w-0 items-center gap-[0.6rem]">
 				{#if cloudStatus.authenticated}
-					<div class="hidden" aria-label="Policy Lens graph mode">
-						<button
-							type="button"
-							class="min-h-[1.95rem] rounded-md border-0 bg-transparent px-[0.55rem] py-[0.35rem] text-[0.78rem] font-extrabold whitespace-nowrap text-secondary"
-							class:bg-panel-accent={graphMode === 'focused'}
-							class:text-panel-fg={graphMode === 'focused'}
-							onclick={() => (graphMode = 'focused')}
-						>
-							Focused
-						</button>
-						<button
-							type="button"
-							class="min-h-[1.95rem] rounded-md border-0 bg-transparent px-[0.55rem] py-[0.35rem] text-[0.78rem] font-extrabold whitespace-nowrap text-secondary"
-							class:bg-panel-accent={graphMode === 'all'}
-							class:text-panel-fg={graphMode === 'all'}
-							onclick={() => (graphMode = 'all')}
-						>
-							All connections
-						</button>
-					</div>
-				{/if}
-				{#if cloudStatus.authenticated}
-					<button class="btn-secondary" type="button" onclick={() => loadPolicy({ open: true })}>
-						Raw HuJSON
+					<button class="btn-primary" type="button" onclick={() => openWorkbench()}>
+						Access controls
 					</button>
+					<button class="btn-secondary" type="button" onclick={openRawPolicy}>Raw HuJSON</button>
 				{:else}
 					<button class="btn-primary" type="button" onclick={() => (phase2Open = true)}>
 						Enable ACL Editing
@@ -731,169 +829,179 @@
 				onViewAsOwner={(owner) => void applyPerspectiveFromSelector(owner)}
 			/>
 
-			<section
-				class="graph relative min-h-[32rem] min-w-0 flex-1 overflow-hidden"
-				aria-label="Topology graph"
-			>
-				<SidebarToggleButton
-					position="left"
-					open={leftOpen}
-					ontoggle={() => (leftOpen = !leftOpen)}
-				/>
-				<SidebarToggleButton
-					position="right"
-					open={rightOpen}
-					ontoggle={() => (rightOpen = !rightOpen)}
-				/>
-
-				<div
-					class="absolute top-3 left-3 z-[2] flex items-center gap-[0.4rem] rounded-lg border border-graph-border bg-graph-hud-bg p-[0.35rem] shadow-[0_10px_26px_rgb(23_33_38/8%)]"
-					aria-label="Graph summary"
+			<div class="flex min-h-0 min-w-0 flex-1">
+				<section
+					class="graph relative min-h-[32rem] min-w-0 flex-1 overflow-hidden"
+					aria-label="Topology graph"
 				>
-					<span
-						class="inline-flex min-h-8 items-baseline gap-[0.3rem] rounded-md bg-graph-dot p-[0.35rem_0.55rem] text-[0.78rem] font-bold whitespace-nowrap text-secondary"
-						><strong class="text-[0.98rem] leading-none text-graph-hud-strong"
-							>{graphOnlineCount}</strong
-						> online</span
+					<SidebarToggleButton
+						position="left"
+						open={leftOpen}
+						ontoggle={() => (leftOpen = !leftOpen)}
+					/>
+					<SidebarToggleButton
+						position="right"
+						open={rightOpen}
+						ontoggle={() => (rightOpen = !rightOpen)}
+					/>
+
+					<div
+						class="absolute top-3 left-3 z-[2] flex items-center gap-[0.4rem] rounded-lg border border-graph-border bg-graph-hud-bg p-[0.35rem] shadow-[0_10px_26px_rgb(23_33_38/8%)]"
+						aria-label="Graph summary"
 					>
-					<span
-						class="inline-flex min-h-8 items-baseline gap-[0.3rem] rounded-md bg-graph-dot p-[0.35rem_0.55rem] text-[0.78rem] font-bold whitespace-nowrap text-secondary"
-						><strong class="text-[0.98rem] leading-none text-graph-hud-strong"
-							>{visibleEdges.length}</strong
-						> links</span
-					>
-					{#if cloudStatus.authenticated}
-						<span
-							class="inline-flex min-h-8 items-baseline gap-[0.3rem] rounded-md bg-graph-dot p-[0.35rem_0.55rem] text-[0.78rem] font-bold whitespace-nowrap text-secondary capitalize"
-							>{policyGraphViewMode} view</span
-						>
-					{/if}
-					{#if cloudStatus.authenticated && graphMode === 'focused' && graphRootDevice}
 						<span
 							class="inline-flex min-h-8 items-baseline gap-[0.3rem] rounded-md bg-graph-dot p-[0.35rem_0.55rem] text-[0.78rem] font-bold whitespace-nowrap text-secondary"
 							><strong class="text-[0.98rem] leading-none text-graph-hud-strong"
-								>{graphRootDevice.name || graphRootDevice.ip}</strong
-							>{isPerspectiveDevice(graphRootDevice) ? ' simulated' : ' focus'}</span
+								>{graphOnlineCount}</strong
+							> online</span
 						>
-					{/if}
-				</div>
-				{#if cloudStatus.authenticated}
-					<PerspectiveBar
-						bind:perspective={policyPerspective}
-						{devices}
-						{policyMap}
-						bind:graphViewMode={policyGraphViewMode}
-						hasDraft={Boolean(draftHuJSON)}
-						hasPerspectivePreview={Boolean(
-							activePerspectiveEvaluation || (activePerspective && activeDraftEvaluation)
-						)}
-						reachableCount={perspectiveReachableCount}
-						busy={editBusy}
-						onApply={simulatePerspective}
-						onClear={clearPerspective}
-					/>
-				{/if}
-				<div
-					class="absolute top-3 right-3 z-[2] flex gap-[0.35rem] rounded-lg border border-graph-border bg-graph-hud-bg p-[0.35rem] shadow-[0_8px_22px_rgb(23_33_38/8%)]"
-					aria-label="Graph controls"
-				>
-					<button
-						type="button"
-						title="Zoom in"
-						onclick={() => graphAPI?.zoom(1.2)}
-						class="grid h-[2.1rem] w-[2.1rem] min-w-[2.1rem] place-items-center rounded-md border border-panel-border bg-panel-weak leading-none font-extrabold text-primary transition-[background-color,border-color,transform] duration-[160ms] ease-out hover:-translate-y-px hover:border-teal hover:bg-hover motion-reduce:transition-none motion-reduce:hover:transform-none"
-						>+</button
-					>
-					<button
-						type="button"
-						title="Zoom out"
-						onclick={() => graphAPI?.zoom(0.8)}
-						class="grid h-[2.1rem] w-[2.1rem] min-w-[2.1rem] place-items-center rounded-md border border-panel-border bg-panel-weak leading-none font-extrabold text-primary transition-[background-color,border-color,transform] duration-[160ms] ease-out hover:-translate-y-px hover:border-teal hover:bg-hover motion-reduce:transition-none motion-reduce:hover:transform-none"
-						>-</button
-					>
-					<button
-						type="button"
-						title="Fit to view"
-						onclick={() => graphAPI?.fit()}
-						class="grid h-[2.1rem] w-[2.1rem] min-w-[2.1rem] place-items-center rounded-md border border-panel-border bg-panel-weak leading-none font-extrabold text-primary transition-[background-color,border-color,transform] duration-[160ms] ease-out hover:-translate-y-px hover:border-teal hover:bg-hover motion-reduce:transition-none motion-reduce:hover:transform-none"
-						>⌖</button
-					>
-					<button
-						type="button"
-						title="Reflow layout"
-						onclick={() => graphAPI?.reflow()}
-						class="grid h-[2.1rem] w-[2.1rem] min-w-[2.1rem] place-items-center rounded-md border border-panel-border bg-panel-weak leading-none font-extrabold text-primary transition-[background-color,border-color,transform] duration-[160ms] ease-out hover:-translate-y-px hover:border-teal hover:bg-hover motion-reduce:transition-none motion-reduce:hover:transform-none"
-						>↻</button
-					>
-				</div>
-
-				<GraphCanvas
-					devices={graphDevices}
-					{edges}
-					visibleDevices={graphDevices}
-					{visibleEdges}
-					{graphMode}
-					bind:selectedDevice
-					bind:selectedEdge
-					{showLabels}
-					{cloudStatus}
-					{colorBy}
-					rootDevice={graphRootDevice}
-					onReady={(api) => (graphAPI = api)}
-				/>
-
-				<GraphLegend
-					{colorBy}
-					authenticated={cloudStatus.authenticated}
-					{graphMode}
-					{tagOptions}
-					{ownerOptions}
-					{osOptions}
-				/>
-
-				{#if localApiError}
-					<div
-						class="absolute top-1/2 left-1/2 w-[min(28rem,calc(100%-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-lg border border-base bg-surface p-4 shadow-[0_10px_30px_rgb(23_33_38/8%)]"
-					>
-						<h2 class="mb-[0.4rem] text-base">Connect to Tailscale</h2>
-						<p class="mb-0 wrap-anywhere">{localApiErrorMessage(localApiError)}</p>
+						<span
+							class="inline-flex min-h-8 items-baseline gap-[0.3rem] rounded-md bg-graph-dot p-[0.35rem_0.55rem] text-[0.78rem] font-bold whitespace-nowrap text-secondary"
+							><strong class="text-[0.98rem] leading-none text-graph-hud-strong"
+								>{visibleEdges.length}</strong
+							> links</span
+						>
+						{#if cloudStatus.authenticated}
+							<span
+								class="inline-flex min-h-8 items-baseline gap-[0.3rem] rounded-md bg-graph-dot p-[0.35rem_0.55rem] text-[0.78rem] font-bold whitespace-nowrap text-secondary capitalize"
+								>{policyGraphViewMode} view</span
+							>
+						{/if}
+						{#if cloudStatus.authenticated && graphMode === 'focused' && graphRootDevice}
+							<span
+								class="inline-flex min-h-8 items-baseline gap-[0.3rem] rounded-md bg-graph-dot p-[0.35rem_0.55rem] text-[0.78rem] font-bold whitespace-nowrap text-secondary"
+								><strong class="text-[0.98rem] leading-none text-graph-hud-strong"
+									>{graphRootDevice.name || graphRootDevice.ip}</strong
+								>{activeScenario ? ' simulated' : ' focus'}</span
+							>
+						{/if}
 					</div>
-				{/if}
+					{#if cloudStatus.authenticated}
+						<PerspectiveBar
+							bind:perspective={policyPerspective}
+							{devices}
+							{policyMap}
+							bind:graphViewMode={policyGraphViewMode}
+							bind:graphMode
+							bind:showGhostEdges
+							hasDraft={Boolean(draftHuJSON)}
+							hasPerspectivePreview={Boolean(
+								activePerspectiveEvaluation || (activePerspective && activeDraftEvaluation)
+							)}
+							sourceCount={scenarioSourceCount}
+							reachableCount={perspectiveReachableCount}
+							scenarioActive={activeScenario}
+							busy={editBusy}
+							onApply={simulatePerspective}
+							onClear={clearPerspective}
+						/>
+					{/if}
+					<div
+						class="absolute top-3 right-3 z-[2] flex gap-[0.35rem] rounded-lg border border-graph-border bg-graph-hud-bg p-[0.35rem] shadow-[0_8px_22px_rgb(23_33_38/8%)]"
+						aria-label="Graph controls"
+					>
+						<button
+							type="button"
+							title="Zoom in"
+							onclick={() => graphAPI?.zoom(1.2)}
+							class="grid h-[2.1rem] w-[2.1rem] min-w-[2.1rem] place-items-center rounded-md border border-panel-border bg-panel-weak leading-none font-extrabold text-primary transition-[background-color,border-color,transform] duration-[160ms] ease-out hover:-translate-y-px hover:border-teal hover:bg-hover motion-reduce:transition-none motion-reduce:hover:transform-none"
+							>+</button
+						>
+						<button
+							type="button"
+							title="Zoom out"
+							onclick={() => graphAPI?.zoom(0.8)}
+							class="grid h-[2.1rem] w-[2.1rem] min-w-[2.1rem] place-items-center rounded-md border border-panel-border bg-panel-weak leading-none font-extrabold text-primary transition-[background-color,border-color,transform] duration-[160ms] ease-out hover:-translate-y-px hover:border-teal hover:bg-hover motion-reduce:transition-none motion-reduce:hover:transform-none"
+							>-</button
+						>
+						<button
+							type="button"
+							title="Fit to view"
+							onclick={() => graphAPI?.fit()}
+							class="grid h-[2.1rem] w-[2.1rem] min-w-[2.1rem] place-items-center rounded-md border border-panel-border bg-panel-weak leading-none font-extrabold text-primary transition-[background-color,border-color,transform] duration-[160ms] ease-out hover:-translate-y-px hover:border-teal hover:bg-hover motion-reduce:transition-none motion-reduce:hover:transform-none"
+							>⌖</button
+						>
+						<button
+							type="button"
+							title="Reflow layout"
+							onclick={() => graphAPI?.reflow()}
+							class="grid h-[2.1rem] w-[2.1rem] min-w-[2.1rem] place-items-center rounded-md border border-panel-border bg-panel-weak leading-none font-extrabold text-primary transition-[background-color,border-color,transform] duration-[160ms] ease-out hover:-translate-y-px hover:border-teal hover:bg-hover motion-reduce:transition-none motion-reduce:hover:transform-none"
+							>↻</button
+						>
+					</div>
 
-				<PolicyPanel
-					bind:open={policyOpen}
+					<GraphCanvas
+						devices={graphDevices}
+						{edges}
+						visibleDevices={graphDevices}
+						{visibleEdges}
+						{graphMode}
+						bind:selectedDevice
+						bind:selectedEdge
+						{showLabels}
+						{cloudStatus}
+						{colorBy}
+						rootDevice={graphRootDevice}
+						scenarioSourceIds={scenarioSourceIDs}
+						onReady={(api) => (graphAPI = api)}
+					/>
+
+					<GraphLegend
+						{colorBy}
+						authenticated={cloudStatus.authenticated}
+						{graphMode}
+						{tagOptions}
+						{ownerOptions}
+						{osOptions}
+					/>
+
+					{#if localApiError}
+						<div
+							class="absolute top-1/2 left-1/2 w-[min(28rem,calc(100%-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-lg border border-base bg-surface p-4 shadow-[0_10px_30px_rgb(23_33_38/8%)]"
+						>
+							<h2 class="mb-[0.4rem] text-base">Connect to Tailscale</h2>
+							<p class="mb-0 wrap-anywhere">{localApiErrorMessage(localApiError)}</p>
+						</div>
+					{/if}
+
+					<RawPolicyPanel
+						bind:open={rawPolicyOpen}
+						{policy}
+						{draftHuJSON}
+						onClose={() => (rawPolicyOpen = false)}
+					/>
+					<DraftTray
+						{draftEvaluation}
+						{draftRuleText}
+						{draftChanges}
+						{draftDiffLines}
+						{draftValid}
+						{editBusy}
+						{editStatus}
+						onValidate={validateDraft}
+						onSave={saveDraft}
+						onDiscard={discardDraft}
+						onOpenAdvanced={openRawPolicy}
+						onOpenWorkbench={() => openWorkbench()}
+					/>
+				</section>
+
+				<PolicyWorkbench
+					bind:open={workbenchOpen}
+					bind:route={workbenchRoute}
 					{policy}
 					{policyMap}
 					bind:search={policySearch}
 					{draftHuJSON}
-					{draftRuleText}
-					{draftEvaluation}
-					{draftValid}
+					scenarioSource={activePerspective}
+					bind:editSeed
 					{editBusy}
-					{editStatus}
-					bind:editSource
-					bind:editDestination
-					bind:editPortPreset
-					bind:editCustomPorts
-					{cloudError}
-					onClose={() => (policyOpen = false)}
-					onDraft={createPolicyDraft}
-					onValidate={validateDraft}
-					onSave={saveDraft}
+					{activeScenarioLabel}
+					onClose={closeWorkbench}
+					onMutate={applyDraftMutation}
 					onViewAs={(selector) => void applyPerspectiveFromSelector(selector)}
 				/>
-				<DraftTray
-					{draftEvaluation}
-					{draftRuleText}
-					draftValid={draftValid ? true : null}
-					{editBusy}
-					{editStatus}
-					onValidate={validateDraft}
-					onSave={saveDraft}
-					onDiscard={discardDraft}
-					onOpenAdvanced={openPolicyEditor}
-				/>
-			</section>
+			</div>
 
 			<SidebarRight
 				bind:open={rightOpen}
@@ -908,7 +1016,9 @@
 				{policyMap}
 				onSeedSource={() => seedBuilder('source')}
 				onSeedDestination={() => seedBuilder('destination')}
-				onOpenPolicy={openPolicyEditor}
+				onOpenPolicy={openPolicyFromLens}
+				onOpenPolicySection={(section) => openPolicyFromLens(section)}
+				scenarioSourceIds={scenarioSourceIDs}
 				onViewAsOwner={(owner) => void applyPerspectiveFromSelector(owner)}
 				onViewAsTag={(tag) => void applyPerspectiveFromSelector(tag)}
 			/>

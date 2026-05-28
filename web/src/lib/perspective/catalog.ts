@@ -15,16 +15,23 @@ const AUTOGROUPS: PerspectiveOption[] = [
 	{
 		selector: 'autogroup:member',
 		kind: 'autogroup',
-		label: 'autogroup:member',
+		label: 'Member devices (user-owned, untagged)',
 		deviceCount: 0,
-		description: 'Any user-owned device'
+		description: 'User-owned devices without tags'
 	},
 	{
 		selector: 'autogroup:tagged',
 		kind: 'autogroup',
-		label: 'autogroup:tagged',
+		label: 'Tagged devices',
 		deviceCount: 0,
-		description: 'Any tagged device'
+		description: 'Devices with one or more tags'
+	},
+	{
+		selector: 'cohort:member+tagged',
+		kind: 'autogroup',
+		label: 'Members and tagged devices (all initiators)',
+		deviceCount: 0,
+		description: 'Union of member and tagged source devices'
 	},
 	{
 		selector: 'autogroup:admin',
@@ -117,6 +124,7 @@ function classifySelector(
 	if (selector.startsWith('group:')) return 'group';
 	if (selector.startsWith('tag:')) return 'tag';
 	if (selector.startsWith('autogroup:')) return 'autogroup';
+	if (selector.startsWith('cohort:')) return 'autogroup';
 	if (selector.includes('@')) return 'user';
 	return undefined;
 }

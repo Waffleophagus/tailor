@@ -49,6 +49,7 @@ func New(options ...Options) http.Handler {
 	mux.HandleFunc("GET /api/policy", server.handlePolicy)
 	mux.HandleFunc("GET /api/policy/map", server.handlePolicyMap)
 	mux.HandleFunc("POST /api/policy/draft", server.handlePolicyDraft)
+	mux.HandleFunc("POST /api/policy/mutate", server.handlePolicyMutate)
 	mux.HandleFunc("POST /api/policy/evaluate-draft", server.handlePolicyEvaluateDraft)
 	mux.HandleFunc("POST /api/policy/validate", server.handlePolicyValidate)
 	mux.HandleFunc("POST /api/policy/save", server.handlePolicySave)
@@ -149,6 +150,38 @@ func (s *Server) handlePolicyDraft(w http.ResponseWriter, r *http.Request) {
 	}
 	status := s.cloudAPI.Status()
 	writeJSON(w, http.StatusOK, api.PolicyDraftResponse{Tailnet: status.Tailnet, Rule: rule, HuJSON: draft})
+}
+
+func (s *Server) handlePolicyMutate(w http.ResponseWriter, r *http.Request) {
+	var request api.PolicyMutationRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 10<<20)).Decode(&request); err != nil {
+		writeError(w, http.StatusBadRequest, "Request body must be valid JSON.")
+		return
+	}
+	base := strings.TrimSpace(request.HuJSON)
+	if base == "" {
+		current, err := s.cloudAPI.Policy(r.Context())
+		if err != nil {
+			if errors.Is(err, cloudapi.ErrNotAuthenticated) {
+				writeError(w, http.StatusUnauthorized, "Enable ACL editing before mutating policy.")
+				return
+			}
+			writeError(w, http.StatusBadGateway, err.Error())
+			return
+		}
+		base = current
+	}
+	draft, err := policy.ApplyMutation(base, request.Mutation)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	status := s.cloudAPI.Status()
+	writeJSON(w, http.StatusOK, api.PolicyMutationResponse{
+		Tailnet: status.Tailnet,
+		HuJSON:  draft,
+		Summary: request.Mutation.Type,
+	})
 }
 
 func (s *Server) handlePolicyEvaluateDraft(w http.ResponseWriter, r *http.Request) {

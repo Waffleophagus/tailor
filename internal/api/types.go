@@ -1,5 +1,7 @@
 package api
 
+import "encoding/json"
+
 type HealthResponse struct {
 	Status  string `json:"status"`
 	Version string `json:"version"`
@@ -130,6 +132,38 @@ type ACLDraft struct {
 	Src    []string `json:"src"`
 	Dst    []string `json:"dst"`
 	Proto  string   `json:"proto,omitempty"`
+}
+
+type GrantDraft struct {
+	Src []string       `json:"src"`
+	Dst []string       `json:"dst"`
+	IP  []string       `json:"ip,omitempty"`
+	App map[string]any `json:"app,omitempty"`
+}
+
+type PolicyMutation struct {
+	Type    string          `json:"type"`
+	Section string          `json:"section,omitempty"`
+	Key     string          `json:"key,omitempty"`
+	Index   int             `json:"index,omitempty"`
+	Rule    ACLDraft        `json:"rule,omitempty"`
+	Grant   GrantDraft      `json:"grant,omitempty"`
+	Host    string          `json:"host,omitempty"`
+	IPSet   []string        `json:"ipSet,omitempty"`
+	Members []string        `json:"members,omitempty"`
+	Owners  []string        `json:"owners,omitempty"`
+	Value   json.RawMessage `json:"value,omitempty"`
+}
+
+type PolicyMutationRequest struct {
+	HuJSON   string         `json:"hujson,omitempty"`
+	Mutation PolicyMutation `json:"mutation"`
+}
+
+type PolicyMutationResponse struct {
+	Tailnet string `json:"tailnet"`
+	HuJSON  string `json:"hujson"`
+	Summary string `json:"summary,omitempty"`
 }
 
 type PolicyValidateRequest struct {

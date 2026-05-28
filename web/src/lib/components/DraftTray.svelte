@@ -1,19 +1,25 @@
 <script lang="ts">
 	import type { PolicyEvaluateDraftResponse } from '../api/schemas';
+	import type { DraftChange } from '../draft/types';
 
 	let {
 		draftEvaluation = undefined,
 		draftRuleText = '',
+		draftChanges = [],
+		draftDiffLines = [],
 		draftValid = null,
 		editBusy = false,
 		editStatus = '',
 		onValidate = () => {},
 		onSave = () => {},
 		onDiscard = () => {},
-		onOpenAdvanced = () => {}
+		onOpenAdvanced = () => {},
+		onOpenWorkbench = () => {}
 	}: {
 		draftEvaluation?: PolicyEvaluateDraftResponse;
 		draftRuleText?: string;
+		draftChanges?: DraftChange[];
+		draftDiffLines?: string[];
 		draftValid?: boolean | null;
 		editBusy?: boolean;
 		editStatus?: string;
@@ -21,6 +27,7 @@
 		onSave?: () => void;
 		onDiscard?: () => void;
 		onOpenAdvanced?: () => void;
+		onOpenWorkbench?: () => void;
 	} = $props();
 
 	const addedCount = $derived(draftEvaluation?.added.length ?? 0);
@@ -28,7 +35,8 @@
 	const changedCount = $derived(draftEvaluation?.changed.length ?? 0);
 	const broadCount = $derived(draftEvaluation?.broadAccess.length ?? 0);
 	const unresolvedCount = $derived(draftEvaluation?.unresolvedSelectors.length ?? 0);
-	const hasDraft = $derived(Boolean(draftRuleText || draftEvaluation));
+	const hasDraft = $derived(Boolean(draftRuleText || draftEvaluation || draftChanges.length > 0));
+	const recentChanges = $derived([...draftChanges].reverse().slice(0, 5));
 </script>
 
 {#if hasDraft}
@@ -56,7 +64,13 @@
 			{/if}
 		</div>
 
-		{#if draftRuleText}
+		{#if recentChanges.length > 0}
+			<ul class="change-list">
+				{#each recentChanges as change (change.id)}
+					<li>{change.label}</li>
+				{/each}
+			</ul>
+		{:else if draftRuleText}
 			<code
 				class="block max-h-16 overflow-auto rounded-lg border border-panel-border bg-panel-weak p-2 text-[0.72rem] leading-relaxed text-primary"
 			>
@@ -74,9 +88,17 @@
 			>
 		</div>
 
+		{#if draftDiffLines.length > 0}
+			<details class="diff-panel">
+				<summary>HuJSON diff</summary>
+				<pre class="diff-body">{draftDiffLines.join('\n')}</pre>
+			</details>
+		{/if}
+
 		<div class="flex flex-wrap items-center justify-between gap-2">
 			<p class="m-0 min-w-0 text-[0.78rem] font-bold text-secondary">{editStatus}</p>
 			<div class="flex flex-wrap gap-2">
+				<button type="button" class="tray-button" onclick={onOpenWorkbench}>Workbench</button>
 				<button type="button" class="tray-button" onclick={onOpenAdvanced}>HuJSON</button>
 				<button type="button" class="tray-button" onclick={onDiscard} disabled={editBusy}
 					>Discard</button
@@ -111,6 +133,18 @@
 	}
 	.metric.warn strong {
 		@apply text-warn;
+	}
+	.change-list {
+		@apply m-0 max-h-24 list-disc overflow-auto rounded-lg border border-panel-border bg-panel-weak py-2 pr-2 pl-6 text-[0.76rem] font-semibold text-primary;
+	}
+	.diff-panel {
+		@apply rounded-lg border border-panel-border bg-panel-weak p-2 text-[0.76rem] text-secondary;
+	}
+	.diff-panel summary {
+		@apply cursor-pointer font-extrabold text-primary;
+	}
+	.diff-body {
+		@apply mt-2 mb-0 max-h-32 overflow-auto text-[0.68rem] leading-relaxed whitespace-pre-wrap text-primary;
 	}
 	.tray-button {
 		@apply rounded-md border border-panel-border bg-panel-weak px-3 py-[0.45rem] text-[0.78rem] font-extrabold text-primary transition-[background-color,border-color,color] duration-[140ms] ease-out hover:border-teal hover:bg-hover disabled:cursor-not-allowed disabled:opacity-[0.55];

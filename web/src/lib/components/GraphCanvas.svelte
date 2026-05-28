@@ -17,6 +17,7 @@
 		cloudStatus = { authenticated: false, hasPolicy: false } as CloudAuthStatusResponse,
 		colorBy = 'status' as ColorBy,
 		rootDevice,
+		scenarioSourceIds,
 		onNodeSelect = (device: Device) => {
 			selectedDevice = device;
 		},
@@ -36,6 +37,7 @@
 		cloudStatus: CloudAuthStatusResponse;
 		colorBy: ColorBy;
 		rootDevice?: Device;
+		scenarioSourceIds?: ReadonlySet<string>;
 		onNodeSelect?: (device: Device) => void;
 		onEdgeSelect?: (edge?: RenderEdge) => void;
 		onReady?: (api: {
@@ -68,6 +70,7 @@
 				cloudStatus,
 				colorBy,
 				rootDevice,
+				scenarioSourceIds,
 				onNodeSelect,
 				onEdgeSelect
 			});
@@ -93,7 +96,8 @@
 			showLabels,
 			cloudStatus,
 			colorBy,
-			rootDevice
+			rootDevice,
+			scenarioSourceIds
 		});
 	});
 

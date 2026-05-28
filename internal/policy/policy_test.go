@@ -148,6 +148,48 @@ func TestEffectiveAccessEdgesCanFilterByPerspective(t *testing.T) {
 	}
 }
 
+func TestDevicesForPerspectiveMemberExcludesTaggedSources(t *testing.T) {
+	devices := []api.Device{
+		{ID: "untagged", Owner: "alice@example.com", TailscaleIPs: []string{"100.64.0.1"}},
+		{ID: "tagged", Owner: "alice@example.com", Tags: []string{"tag:server"}, TailscaleIPs: []string{"100.64.0.2"}},
+	}
+	matched := devicesForPerspective("autogroup:member", Policy{}, devices)
+	if len(matched) != 1 || matched[0].ID != "untagged" {
+		t.Fatalf("member perspective sources = %#v, want untagged only", matched)
+	}
+}
+
+func TestDevicesForPerspectiveMemberTaggedUnion(t *testing.T) {
+	devices := []api.Device{
+		{ID: "untagged", Owner: "alice@example.com", TailscaleIPs: []string{"100.64.0.1"}},
+		{ID: "tagged", Owner: "bob@example.com", Tags: []string{"tag:server"}, TailscaleIPs: []string{"100.64.0.2"}},
+	}
+	matched := devicesForPerspective("cohort:member+tagged", Policy{}, devices)
+	if len(matched) != 2 {
+		t.Fatalf("union perspective sources = %#v, want both devices", matched)
+	}
+}
+
+func TestEffectiveAccessEdgesMemberPerspectiveTaggedDeviceIsDestinationOnly(t *testing.T) {
+	p := Policy{
+		ACLs: []ACLRule{
+			{Action: "accept", Src: []string{"autogroup:member"}, Dst: []string{"tag:server:443"}},
+		},
+	}
+	devices := []api.Device{
+		{ID: "member", Owner: "alice@example.com", TailscaleIPs: []string{"100.64.0.1"}},
+		{ID: "server", Owner: "alice@example.com", Tags: []string{"tag:server"}, TailscaleIPs: []string{"100.64.0.2"}},
+	}
+
+	edges := ResolveEffectiveAccess(p, devices, EdgeOptions{Perspective: "autogroup:member"})
+	assertEdge(t, edges, "member", "server", api.AccessScopeHTTP, []string{"443"})
+	for _, edge := range edges {
+		if edge.From == "server" {
+			t.Fatalf("tagged device should not be a source under member perspective: %#v", edge)
+		}
+	}
+}
+
 func TestAppendACLRulePreservesExistingHuJSONAndAppendsRule(t *testing.T) {
 	raw := `{
 	// keep this comment

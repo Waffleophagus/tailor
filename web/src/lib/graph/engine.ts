@@ -8,7 +8,6 @@ import type {
 } from 'cytoscape';
 import type { SimulationNodeDatum, SimulationLinkDatum } from 'd3-force';
 import type { Device, Edge } from '../api/schemas';
-import { PERSPECTIVE_DEVICE_OS } from '../perspective/device';
 import type { CloudAuthStatusResponse } from '../api/schemas';
 
 export type ColorBy = 'status' | 'tag' | 'owner' | 'os';
@@ -25,6 +24,7 @@ export interface SyncOptions {
 	cloudStatus: CloudAuthStatusResponse;
 	colorBy: ColorBy;
 	rootDevice?: Device;
+	scenarioSourceIds?: ReadonlySet<string>;
 }
 
 export interface GraphInitOptions extends SyncOptions {
@@ -33,7 +33,7 @@ export interface GraphInitOptions extends SyncOptions {
 	onEdgeSelect: (edge?: RenderEdge) => void;
 }
 
-export type RenderEdgeState = 'added' | 'removed' | 'changed' | 'unchanged';
+export type RenderEdgeState = 'added' | 'removed' | 'changed' | 'unchanged' | 'ghost-denied';
 
 export interface RenderEdge {
 	id: string;
@@ -125,15 +125,15 @@ export function createEngine(opts: GraphInitOptions) {
 		return palette(value || 'unknown');
 	}
 
-	function isPerspectiveDevice(device: Device) {
-		return device.os === PERSPECTIVE_DEVICE_OS || device.id.startsWith('perspective:');
+	function isScenarioSource(device: Device) {
+		return current.scenarioSourceIds?.has(device.id) ?? false;
 	}
 
 	function deviceClasses(device: Device) {
 		return [
 			device.online ? 'online' : 'offline',
 			graphRootDevice()?.id === device.id ? 'root' : '',
-			isPerspectiveDevice(device) ? 'perspective-subject' : '',
+			isScenarioSource(device) ? 'scenario-source' : '',
 			current.selectedDevice?.id === device.id ? 'selected' : '',
 			device.subnetRouter ? 'subnet-router' : '',
 			current.showLabels ? 'with-labels' : 'hide-labels'
@@ -143,12 +143,12 @@ export function createEngine(opts: GraphInitOptions) {
 	}
 
 	function deviceData(device: Device) {
-		const perspective = isPerspectiveDevice(device);
+		const scenarioSource = isScenarioSource(device);
 		return {
 			id: device.id,
 			label: device.name || device.ip || device.id,
-			color: perspective ? '#5d7f73' : deviceColor(device),
-			ringColor: perspective
+			color: scenarioSource ? '#5d7f73' : deviceColor(device),
+			ringColor: scenarioSource
 				? '#2f5f4a'
 				: graphRootDevice()?.id === device.id
 					? '#163f31'
@@ -159,9 +159,6 @@ export function createEngine(opts: GraphInitOptions) {
 	}
 
 	function graphRootDevice() {
-		if (current.rootDevice && isPerspectiveDevice(current.rootDevice)) {
-			return current.rootDevice;
-		}
 		if (current.cloudStatus.authenticated && current.graphMode === 'focused') {
 			return current.selectedDevice ?? current.rootDevice;
 		}
@@ -691,23 +688,21 @@ export function createEngine(opts: GraphInitOptions) {
 				}
 			},
 			{
-				selector: 'node.perspective-subject',
+				selector: 'node.scenario-source',
 				style: {
 					'background-color': '#e8f2ec',
 					'border-color': '#2f5f4a',
-					'border-style': 'dashed',
 					'border-width': 3,
-					height: 62,
-					shape: 'round-rectangle',
-					width: 62
+					height: 58,
+					width: 58
 				}
 			},
 			{
-				selector: 'node.perspective-subject.root',
+				selector: 'node.scenario-source.root',
 				style: {
 					'border-width': 4,
-					'underlay-opacity': 0.24,
-					'underlay-padding': 16
+					'underlay-opacity': 0.22,
+					'underlay-padding': 14
 				}
 			},
 			{
@@ -821,6 +816,16 @@ export function createEngine(opts: GraphInitOptions) {
 					'line-style': 'dashed',
 					opacity: 0.9,
 					width: 3
+				}
+			},
+			{
+				selector: 'edge.state-ghost-denied',
+				style: {
+					'line-color': '#9aa7a1',
+					'target-arrow-color': '#9aa7a1',
+					'line-style': 'dotted',
+					opacity: 0.42,
+					width: 1.8
 				}
 			},
 			{ selector: '.dim', style: { opacity: 0.16 } },

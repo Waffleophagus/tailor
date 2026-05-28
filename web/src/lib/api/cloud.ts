@@ -15,6 +15,9 @@ import {
 	type PolicyDraftResponse,
 	type PolicyEvaluateDraftRequest,
 	type PolicyEvaluateDraftResponse,
+	policyMutationResponseSchema,
+	type PolicyMutationRequest,
+	type PolicyMutationResponse,
 	type PolicyMapResponse,
 	type PolicyResponse,
 	type PolicySaveResponse,
@@ -70,6 +73,16 @@ export async function validatePolicyDraft(
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({ hujson })
+	});
+}
+
+export async function mutatePolicyDraft(
+	request: PolicyMutationRequest
+): Promise<Result<PolicyMutationResponse, Error>> {
+	return fetchJSON('/api/policy/mutate', policyMutationResponseSchema, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(request)
 	});
 }
 

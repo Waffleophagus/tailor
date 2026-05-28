@@ -13,12 +13,27 @@ function devicesForTag(tag: string, devices: Device[]) {
 	return devices.filter((d) => d.tags.includes(tag));
 }
 
+function devicesWithOwnerUntagged(devices: Device[]) {
+	return devices.filter((d) => d.owner && d.tags.length === 0);
+}
+
 function devicesWithOwner(devices: Device[]) {
 	return devices.filter((d) => d.owner);
 }
 
 function devicesWithTags(devices: Device[]) {
 	return devices.filter((d) => d.tags.length > 0);
+}
+
+function unionDevices(a: Device[], b: Device[]) {
+	const seen = new Set<string>();
+	const out: Device[] = [];
+	for (const device of [...a, ...b]) {
+		if (seen.has(device.id)) continue;
+		seen.add(device.id);
+		out.push(device);
+	}
+	return out;
 }
 
 function groupMembers(policyMap: PolicyMapResponse | undefined, group: string): string[] {
@@ -42,10 +57,14 @@ export function subjectDeviceIds(
 		matched = devicesForUsers(groupMembers(policyMap, trimmed), devices);
 	} else if (trimmed.startsWith('tag:')) {
 		matched = devicesForTag(trimmed, devices);
-	} else if (trimmed === 'autogroup:member' || trimmed === 'autogroup:admin') {
+	} else if (trimmed === 'autogroup:member') {
+		matched = devicesWithOwnerUntagged(devices);
+	} else if (trimmed === 'autogroup:admin') {
 		matched = devicesWithOwner(devices);
 	} else if (trimmed === 'autogroup:tagged') {
 		matched = devicesWithTags(devices);
+	} else if (trimmed === 'cohort:member+tagged') {
+		matched = unionDevices(devicesWithOwnerUntagged(devices), devicesWithTags(devices));
 	} else if (trimmed.includes('@')) {
 		matched = devicesForUser(trimmed, devices);
 	}

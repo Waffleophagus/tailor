@@ -164,6 +164,45 @@ export const policySaveResponseSchema = z.object({
 	hujson: z.string()
 });
 
+export const policyMutationSchema = z.object({
+	type: z.string(),
+	section: z.string().optional(),
+	key: z.string().optional(),
+	index: z.number().optional(),
+	rule: z
+		.object({
+			action: z.string().optional(),
+			src: z.array(z.string()).optional(),
+			dst: z.array(z.string()).optional(),
+			proto: z.string().optional()
+		})
+		.optional(),
+	grant: z
+		.object({
+			src: z.array(z.string()).optional(),
+			dst: z.array(z.string()).optional(),
+			ip: z.array(z.string()).optional(),
+			app: z.record(z.string(), z.unknown()).optional()
+		})
+		.optional(),
+	host: z.string().optional(),
+	ipSet: z.array(z.string()).optional(),
+	members: z.array(z.string()).optional(),
+	owners: z.array(z.string()).optional(),
+	value: z.unknown().optional()
+});
+
+export const policyMutationRequestSchema = z.object({
+	hujson: z.string().optional(),
+	mutation: policyMutationSchema
+});
+
+export const policyMutationResponseSchema = z.object({
+	tailnet: z.string(),
+	hujson: z.string(),
+	summary: z.string().optional()
+});
+
 export const errorResponseSchema = z.object({
 	error: z.string()
 });
@@ -201,4 +240,7 @@ export type PolicyEvaluateDraftRequest = z.infer<typeof policyEvaluateDraftReque
 export type PolicyEvaluateDraftResponse = z.infer<typeof policyEvaluateDraftResponseSchema>;
 export type PolicyValidateResponse = z.infer<typeof policyValidateResponseSchema>;
 export type PolicySaveResponse = z.infer<typeof policySaveResponseSchema>;
+export type PolicyMutation = z.infer<typeof policyMutationSchema>;
+export type PolicyMutationRequest = z.infer<typeof policyMutationRequestSchema>;
+export type PolicyMutationResponse = z.infer<typeof policyMutationResponseSchema>;
 export type SocketMessage = z.infer<typeof socketMessageSchema>;
