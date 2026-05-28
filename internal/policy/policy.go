@@ -27,9 +27,10 @@ type ACLRule struct {
 }
 
 type Grant struct {
-	Src []string `json:"src"`
-	Dst []string `json:"dst"`
-	IP  []string `json:"ip"`
+	Src []string       `json:"src"`
+	Dst []string       `json:"dst"`
+	IP  []string       `json:"ip"`
+	App map[string]any `json:"app"`
 }
 
 var supportedPolicySections = map[string]string{
@@ -88,6 +89,26 @@ func EffectiveAccessEdges(raw string, devices []api.Device, options EdgeOptions)
 		return nil, err
 	}
 	return ResolveEffectiveAccess(p, devices, options), nil
+}
+
+func EvaluateDraft(savedRaw, draftRaw string, devices []api.Device, options EdgeOptions) (api.PolicyEvaluateDraftResponse, error) {
+	savedPolicy, err := Parse(savedRaw)
+	if err != nil {
+		return api.PolicyEvaluateDraftResponse{}, err
+	}
+	draftPolicy, err := Parse(draftRaw)
+	if err != nil {
+		return api.PolicyEvaluateDraftResponse{}, err
+	}
+
+	savedEdges := ResolveEffectiveAccess(savedPolicy, devices, options)
+	draftEdges := ResolveEffectiveAccess(draftPolicy, devices, options)
+	response := compareEdges(savedEdges, draftEdges)
+	response.BroadAccess = broadEdges(draftEdges)
+	response.UnresolvedSelectors = unresolvedSelectors(draftPolicy, devices)
+	response.UnsupportedSections = unsupportedSections(draftRaw)
+	response.ApplicationGrants = applicationGrants(draftPolicy)
+	return response, nil
 }
 
 func StructuredMap(raw string) (api.PolicyMapResponse, error) {
@@ -244,6 +265,55 @@ func ResolveEffectiveAccess(p Policy, devices []api.Device, options EdgeOptions)
 			}
 		}
 	}
+	for i, grant := range p.Grants {
+		grantScopes := grantIPScopes(grant.IP)
+		if len(grantScopes) == 0 {
+			continue
+		}
+		for _, src := range grant.Src {
+			srcDevices := devicesForSelector(src, p, devices)
+			if options.Perspective != "" && !selectorIncludesPerspective(src, p, options.Perspective) {
+				srcDevices = nil
+			}
+			for _, dst := range grant.Dst {
+				dstDevices := devicesForSelector(dst, p, devices)
+				for _, from := range srcDevices {
+					for _, to := range dstDevices {
+						if from.ID == "" || to.ID == "" {
+							continue
+						}
+						key := from.ID + "\x00" + to.ID
+						a := acc[key]
+						if a == nil {
+							a = &accessAccumulator{
+								from:         from.ID,
+								to:           to.ID,
+								protocols:    map[string]bool{},
+								ports:        map[string]bool{},
+								perspectives: map[string]bool{},
+							}
+							acc[key] = a
+						}
+						for _, scope := range grantScopes {
+							a.protocols[scope.protocol] = true
+							for _, port := range scope.ports {
+								a.ports[port] = true
+							}
+						}
+						if options.Perspective != "" {
+							a.perspectives[options.Perspective] = true
+						}
+						a.policyRefs = append(a.policyRefs, api.PolicyRef{
+							Section: "grants",
+							Index:   i,
+							Src:     src,
+							Dst:     dst,
+						})
+					}
+				}
+			}
+		}
+	}
 
 	edges := make([]api.Edge, 0, len(acc))
 	for _, a := range acc {
@@ -266,6 +336,190 @@ func ResolveEffectiveAccess(p Policy, devices []api.Device, options EdgeOptions)
 		return edges[i].ID < edges[j].ID
 	})
 	return edges
+}
+
+type grantIPScope struct {
+	protocol string
+	ports    []string
+}
+
+func grantIPScopes(values []string) []grantIPScope {
+	var scopes []grantIPScope
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if value == "*" {
+			scopes = append(scopes, grantIPScope{protocol: "tcp", ports: []string{"*"}})
+			continue
+		}
+		protocol := "tcp"
+		portsRaw := value
+		if idx := strings.Index(value, ":"); idx >= 0 {
+			protocol = normalizeProto(value[:idx])
+			portsRaw = value[idx+1:]
+		}
+		scopes = append(scopes, grantIPScope{protocol: protocol, ports: parsePorts(portsRaw)})
+	}
+	return scopes
+}
+
+func compareEdges(savedEdges, draftEdges []api.Edge) api.PolicyEvaluateDraftResponse {
+	response := api.PolicyEvaluateDraftResponse{
+		Added:     []api.PolicyEdgeChange{},
+		Removed:   []api.PolicyEdgeChange{},
+		Unchanged: []api.PolicyEdgeChange{},
+		Changed:   []api.PolicyEdgeChange{},
+	}
+	savedByPair := map[string]api.Edge{}
+	draftByPair := map[string]api.Edge{}
+	for _, edge := range savedEdges {
+		savedByPair[edgePairKey(edge)] = edge
+	}
+	for _, edge := range draftEdges {
+		draftByPair[edgePairKey(edge)] = edge
+	}
+	keys := sortedUnionKeys(savedByPair, draftByPair)
+	for _, key := range keys {
+		saved, hasSaved := savedByPair[key]
+		draft, hasDraft := draftByPair[key]
+		switch {
+		case hasSaved && hasDraft && saved.ID == draft.ID:
+			response.Unchanged = append(response.Unchanged, api.PolicyEdgeChange{State: "unchanged", Edge: draft})
+		case hasSaved && hasDraft:
+			savedCopy := saved
+			draftCopy := draft
+			response.Changed = append(response.Changed, api.PolicyEdgeChange{
+				State: "changed",
+				Edge:  draft,
+				Saved: &savedCopy,
+				Draft: &draftCopy,
+			})
+		case hasDraft:
+			response.Added = append(response.Added, api.PolicyEdgeChange{State: "added", Edge: draft})
+		case hasSaved:
+			response.Removed = append(response.Removed, api.PolicyEdgeChange{State: "removed", Edge: saved})
+		}
+	}
+	return response
+}
+
+func broadEdges(edges []api.Edge) []api.Edge {
+	var out []api.Edge
+	for _, edge := range edges {
+		if edge.AccessScope == api.AccessScopeBroad {
+			out = append(out, edge)
+		}
+	}
+	return out
+}
+
+func unresolvedSelectors(p Policy, devices []api.Device) []api.UnresolvedSelector {
+	var unresolved []api.UnresolvedSelector
+	for i, rule := range p.ACLs {
+		if rule.Action != "" && rule.Action != "accept" {
+			continue
+		}
+		for _, src := range rule.Src {
+			if len(devicesForSelector(src, p, devices)) == 0 {
+				unresolved = append(unresolved, api.UnresolvedSelector{Section: "acls", Index: i, Selector: src, Role: "src"})
+			}
+		}
+		for _, rawDst := range rule.Dst {
+			dst := parseDstSelector(rawDst)
+			if len(devicesForSelector(dst.Selector, p, devices)) == 0 {
+				unresolved = append(unresolved, api.UnresolvedSelector{Section: "acls", Index: i, Selector: dst.Selector, Role: "dst"})
+			}
+		}
+	}
+	for i, grant := range p.Grants {
+		for _, src := range grant.Src {
+			if len(devicesForSelector(src, p, devices)) == 0 {
+				unresolved = append(unresolved, api.UnresolvedSelector{Section: "grants", Index: i, Selector: src, Role: "src"})
+			}
+		}
+		for _, dst := range grant.Dst {
+			if len(devicesForSelector(dst, p, devices)) == 0 {
+				unresolved = append(unresolved, api.UnresolvedSelector{Section: "grants", Index: i, Selector: dst, Role: "dst"})
+			}
+		}
+	}
+	sort.Slice(unresolved, func(i, j int) bool {
+		if unresolved[i].Section != unresolved[j].Section {
+			return unresolved[i].Section < unresolved[j].Section
+		}
+		if unresolved[i].Index != unresolved[j].Index {
+			return unresolved[i].Index < unresolved[j].Index
+		}
+		return unresolved[i].Selector < unresolved[j].Selector
+	})
+	return unresolved
+}
+
+func unsupportedSections(raw string) []string {
+	standard, err := hujson.Standardize([]byte(raw))
+	if err != nil {
+		return nil
+	}
+	var root map[string]json.RawMessage
+	if err := json.Unmarshal(standard, &root); err != nil {
+		return nil
+	}
+	var out []string
+	for name := range root {
+		if _, supported := supportedPolicySections[name]; !supported {
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func applicationGrants(p Policy) []api.ApplicationGrant {
+	var grants []api.ApplicationGrant
+	for i, grant := range p.Grants {
+		if len(grant.App) == 0 {
+			continue
+		}
+		grants = append(grants, api.ApplicationGrant{
+			Section:      "grants",
+			Index:        i,
+			Src:          append([]string{}, grant.Src...),
+			Dst:          append([]string{}, grant.Dst...),
+			Capabilities: sortedAppCapabilities(grant.App),
+		})
+	}
+	return grants
+}
+
+func sortedAppCapabilities(values map[string]any) []string {
+	out := make([]string, 0, len(values))
+	for key := range values {
+		out = append(out, key)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func edgePairKey(edge api.Edge) string {
+	return edge.From + "\x00" + edge.To
+}
+
+func sortedUnionKeys(saved, draft map[string]api.Edge) []string {
+	seen := map[string]bool{}
+	for key := range saved {
+		seen[key] = true
+	}
+	for key := range draft {
+		seen[key] = true
+	}
+	keys := make([]string, 0, len(seen))
+	for key := range seen {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func selectorIncludesPerspective(selector string, p Policy, perspective string) bool {

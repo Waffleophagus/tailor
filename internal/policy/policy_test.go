@@ -94,6 +94,65 @@ func TestAppendACLRulePreservesExistingHuJSONAndAppendsRule(t *testing.T) {
 	}
 }
 
+func TestEvaluateDraftComparesAccessAndReportsRisk(t *testing.T) {
+	saved := `{
+		"acls": [
+			{"action": "accept", "src": ["alice@example.com"], "dst": ["tag:web:443"]},
+			{"action": "accept", "src": ["bob@example.com"], "dst": ["tag:web:22"]},
+		],
+	}`
+	draft := `{
+		"acls": [
+			{"action": "accept", "src": ["alice@example.com"], "dst": ["tag:web:22"]},
+			{"action": "accept", "src": ["tag:web"], "dst": ["*:0-65535"]},
+			{"action": "accept", "src": ["group:missing"], "dst": ["tag:web:443"]},
+		],
+		"grants": [
+			{"src": ["alice@example.com"], "dst": ["tag:db"], "ip": ["tcp:5432"]},
+			{"src": ["alice@example.com"], "dst": ["tag:web"], "app": {"tailscale.com/cap/file-sharing": [{"shares": ["eng"]}]}},
+		],
+		"customThing": true,
+	}`
+	devices := []api.Device{
+		{ID: "alice", Owner: "alice@example.com", TailscaleIPs: []string{"100.64.0.1"}},
+		{ID: "bob", Owner: "bob@example.com", TailscaleIPs: []string{"100.64.0.2"}},
+		{ID: "web", Owner: "ops@example.com", Tags: []string{"tag:web"}, TailscaleIPs: []string{"100.64.0.3"}},
+		{ID: "db", Owner: "ops@example.com", Tags: []string{"tag:db"}, TailscaleIPs: []string{"100.64.0.4"}},
+	}
+
+	evaluation, err := EvaluateDraft(saved, draft, devices, EdgeOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(evaluation.Changed) != 1 {
+		t.Fatalf("changed = %#v, want one access-scope change", evaluation.Changed)
+	}
+	if evaluation.Changed[0].Saved == nil || evaluation.Changed[0].Saved.AccessScope != api.AccessScopeHTTP {
+		t.Fatalf("changed saved edge = %#v, want HTTP saved edge", evaluation.Changed[0].Saved)
+	}
+	if evaluation.Changed[0].Draft == nil || evaluation.Changed[0].Draft.AccessScope != api.AccessScopeSSH {
+		t.Fatalf("changed draft edge = %#v, want SSH draft edge", evaluation.Changed[0].Draft)
+	}
+	assertChangeEdge(t, evaluation.Added, "alice", "db", api.AccessScopeLimited)
+	assertChangeEdge(t, evaluation.Removed, "bob", "web", api.AccessScopeSSH)
+	assertChangeEdge(t, evaluation.Added, "web", "alice", api.AccessScopeBroad)
+	if len(evaluation.BroadAccess) == 0 {
+		t.Fatal("expected broad access risk")
+	}
+	if len(evaluation.UnresolvedSelectors) != 1 || evaluation.UnresolvedSelectors[0].Selector != "group:missing" {
+		t.Fatalf("unresolved selectors = %#v, want group:missing", evaluation.UnresolvedSelectors)
+	}
+	if len(evaluation.UnsupportedSections) != 1 || evaluation.UnsupportedSections[0] != "customThing" {
+		t.Fatalf("unsupported sections = %#v, want customThing", evaluation.UnsupportedSections)
+	}
+	if len(evaluation.ApplicationGrants) != 1 {
+		t.Fatalf("application grants = %#v, want one app-layer grant", evaluation.ApplicationGrants)
+	}
+	if evaluation.ApplicationGrants[0].Capabilities[0] != "tailscale.com/cap/file-sharing" {
+		t.Fatalf("application grant capabilities = %#v", evaluation.ApplicationGrants[0].Capabilities)
+	}
+}
+
 func TestStructuredMapSurfacesRecognizedAndUnknownSections(t *testing.T) {
 	raw := `{
 		"groups": {
@@ -178,6 +237,19 @@ func assertEdge(t *testing.T, edges []api.Edge, from, to string, scope api.Acces
 		}
 	}
 	t.Fatalf("missing edge %s -> %s in %#v", from, to, edges)
+}
+
+func assertChangeEdge(t *testing.T, changes []api.PolicyEdgeChange, from, to string, scope api.AccessScope) {
+	t.Helper()
+	for _, change := range changes {
+		if change.Edge.From == from && change.Edge.To == to {
+			if change.Edge.AccessScope != scope {
+				t.Fatalf("%s -> %s scope = %q, want %q: %#v", from, to, change.Edge.AccessScope, scope, change)
+			}
+			return
+		}
+	}
+	t.Fatalf("missing change edge %s -> %s in %#v", from, to, changes)
 }
 
 func equalStrings(a, b []string) bool {

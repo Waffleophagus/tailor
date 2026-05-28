@@ -1,5 +1,9 @@
 <script lang="ts">
-	import type { PolicyResponse, PolicyMapResponse } from '../api/schemas';
+	import type {
+		PolicyResponse,
+		PolicyEvaluateDraftResponse,
+		PolicyMapResponse
+	} from '../api/schemas';
 
 	let {
 		open = $bindable(false),
@@ -8,6 +12,7 @@
 		search = $bindable(''),
 		draftHuJSON = '',
 		draftRuleText = '',
+		draftEvaluation,
 		draftValid = false,
 		editBusy = false,
 		editStatus = '',
@@ -27,6 +32,7 @@
 		search?: string;
 		draftHuJSON?: string;
 		draftRuleText?: string;
+		draftEvaluation?: PolicyEvaluateDraftResponse;
 		draftValid?: boolean;
 		editBusy?: boolean;
 		editStatus?: string;
@@ -76,7 +82,7 @@
 
 {#if open && policy}
 	<section
-		class="w-[min(52rem,calc(100%-1.5rem))] max-h-[min(38rem,calc(100%-5rem))] absolute right-3 bottom-3 z-[4] grid grid-rows-[auto_minmax(0,1fr)] overflow-hidden rounded-lg border border-panel-border bg-panel-bg shadow-[0_18px_48px_rgb(23_33_38/16%)]"
+		class="absolute right-3 bottom-3 z-[4] grid max-h-[min(38rem,calc(100%-5rem))] w-[min(52rem,calc(100%-1.5rem))] grid-rows-[auto_minmax(0,1fr)] overflow-hidden rounded-lg border border-panel-border bg-panel-bg shadow-[0_18px_48px_rgb(23_33_38/16%)]"
 		aria-label="Raw HuJSON policy"
 	>
 		<div
@@ -156,7 +162,7 @@
 												<div>
 													<strong class="block text-[0.84rem] text-primary">{entry.label}</strong>
 													{#if entry.summary}
-														<p class="wrap-anywhere mt-[0.2rem] text-[0.8rem] text-code">
+														<p class="mt-[0.2rem] text-[0.8rem] wrap-anywhere text-code">
 															{entry.summary}
 														</p>
 													{/if}
@@ -172,7 +178,7 @@
 													</div>
 												{/if}
 												{#if !entry.summary && entry.value !== undefined}
-													<code class="wrap-anywhere text-[0.76rem] text-code"
+													<code class="text-[0.76rem] wrap-anywhere text-code"
 														>{formatValue(entry.value)}</code
 													>
 												{/if}
@@ -262,6 +268,42 @@
 						class="m-0 min-h-0 overflow-auto bg-[oklch(0.96_0.009_158)] p-[0.9rem] font-mono text-[0.78rem] leading-[1.5] whitespace-pre text-[#1c2c26]">{draftRuleText}</pre>
 				</div>
 			{/if}
+			{#if draftEvaluation}
+				<div class="grid gap-2 border-b border-panel-strong bg-[oklch(0.965_0.012_178)] p-[0.9rem]">
+					<p class="m-0 text-[0.8rem] font-bold tracking-normal text-secondary uppercase">
+						Impact preview
+					</p>
+					<div class="flex flex-wrap gap-[0.4rem]">
+						<span class="impact-pill">+{draftEvaluation.added.length} added</span>
+						<span class="impact-pill">{draftEvaluation.changed.length} changed</span>
+						<span class="impact-pill">-{draftEvaluation.removed.length} removed</span>
+						<span class="impact-pill">{draftEvaluation.unchanged.length} unchanged</span>
+						{#if draftEvaluation.broadAccess.length}
+							<span class="impact-pill warning">{draftEvaluation.broadAccess.length} broad</span>
+						{/if}
+						{#if draftEvaluation.unresolvedSelectors.length}
+							<span class="impact-pill warning"
+								>{draftEvaluation.unresolvedSelectors.length} unresolved selectors</span
+							>
+						{/if}
+						{#if draftEvaluation.applicationGrants.length}
+							<span class="impact-pill">{draftEvaluation.applicationGrants.length} app grants</span>
+						{/if}
+					</div>
+					{#if draftEvaluation.unsupportedSections.length}
+						<p class="m-0 text-[0.78rem] text-code">
+							Unsupported sections in draft: {draftEvaluation.unsupportedSections.join(', ')}
+						</p>
+					{/if}
+					{#if draftEvaluation.applicationGrants.length}
+						<p class="m-0 text-[0.78rem] text-code">
+							App capabilities: {draftEvaluation.applicationGrants
+								.flatMap((grant) => grant.capabilities)
+								.join(', ')}
+						</p>
+					{/if}
+				</div>
+			{/if}
 			<details class="raw-policy" open={!draftHuJSON}>
 				<summary
 					class="cursor-pointer p-[0.7rem_0.9rem] text-[0.82rem] font-extrabold text-status-text"
@@ -277,7 +319,7 @@
 
 {#if cloudError}
 	<div
-		class="max-w-[min(32rem,calc(100%-1.5rem))] border-base-error absolute right-3 bottom-3 z-[5] rounded-lg border bg-error p-[0.65rem_0.75rem] text-[0.84rem] font-bold text-error-text shadow-[0_12px_32px_rgb(23_33_38/12%)]"
+		class="border-base-error absolute right-3 bottom-3 z-[5] max-w-[min(32rem,calc(100%-1.5rem))] rounded-lg border bg-error p-[0.65rem_0.75rem] text-[0.84rem] font-bold text-error-text shadow-[0_12px_32px_rgb(23_33_38/12%)]"
 		role="alert"
 	>
 		{cloudError}
@@ -292,6 +334,12 @@
 	}
 	.btn-secondary {
 		@apply min-h-[2.35rem] rounded-md border border-panel-border bg-panel-weak px-3 py-[0.45rem] text-sm font-extrabold text-primary transition-[background-color,border-color,color,transform] duration-[160ms] ease-out hover:-translate-y-px disabled:transform-none disabled:cursor-not-allowed disabled:opacity-[0.58];
+	}
+	.impact-pill {
+		@apply rounded-full border border-panel-border bg-panel-input px-[0.5rem] py-[0.22rem] text-[0.74rem] font-extrabold text-status-text;
+	}
+	.impact-pill.warning {
+		@apply border-[oklch(0.74_0.09_55)] bg-[oklch(0.93_0.035_55)] text-[#5d3616];
 	}
 	.raw-policy pre {
 		margin: 0;

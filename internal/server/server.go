@@ -49,6 +49,7 @@ func New(options ...Options) http.Handler {
 	mux.HandleFunc("GET /api/policy", server.handlePolicy)
 	mux.HandleFunc("GET /api/policy/map", server.handlePolicyMap)
 	mux.HandleFunc("POST /api/policy/draft", server.handlePolicyDraft)
+	mux.HandleFunc("POST /api/policy/evaluate-draft", server.handlePolicyEvaluateDraft)
 	mux.HandleFunc("POST /api/policy/validate", server.handlePolicyValidate)
 	mux.HandleFunc("POST /api/policy/save", server.handlePolicySave)
 
@@ -148,6 +149,47 @@ func (s *Server) handlePolicyDraft(w http.ResponseWriter, r *http.Request) {
 	}
 	status := s.cloudAPI.Status()
 	writeJSON(w, http.StatusOK, api.PolicyDraftResponse{Tailnet: status.Tailnet, Rule: rule, HuJSON: draft})
+}
+
+func (s *Server) handlePolicyEvaluateDraft(w http.ResponseWriter, r *http.Request) {
+	var request api.PolicyEvaluateDraftRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 10<<20)).Decode(&request); err != nil {
+		writeError(w, http.StatusBadRequest, "Request body must be valid JSON.")
+		return
+	}
+	if strings.TrimSpace(request.HuJSON) == "" {
+		writeError(w, http.StatusBadRequest, "Draft policy is required.")
+		return
+	}
+	current, err := s.cloudAPI.Policy(r.Context())
+	if err != nil {
+		if errors.Is(err, cloudapi.ErrNotAuthenticated) {
+			writeError(w, http.StatusUnauthorized, "Enable ACL editing before evaluating a policy draft.")
+			return
+		}
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	devices, err := s.localAPI.Status(r.Context())
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, localapi.ErrUnavailable) {
+			status = http.StatusServiceUnavailable
+		}
+		writeJSON(w, status, api.LocalAPIStatusResponse{
+			Available:        false,
+			LocalAPIEndpoint: s.localAPI.Endpoint(),
+			Error:            err.Error(),
+		})
+		return
+	}
+	evaluation, err := policy.EvaluateDraft(current, request.HuJSON, devices, policy.EdgeOptions{Perspective: request.Perspective})
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	evaluation.Tailnet = s.cloudAPI.Status().Tailnet
+	writeJSON(w, http.StatusOK, evaluation)
 }
 
 func (s *Server) handlePolicyValidate(w http.ResponseWriter, r *http.Request) {

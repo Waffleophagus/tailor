@@ -3,6 +3,7 @@ import { Result } from 'better-result';
 import {
 	cloudAuthStatusResponseSchema,
 	errorResponseSchema,
+	policyEvaluateDraftResponseSchema,
 	policyMapResponseSchema,
 	policyResponseSchema,
 	policyDraftResponseSchema,
@@ -12,6 +13,8 @@ import {
 	type CloudAuthStatusResponse,
 	type PolicyDraftRequest,
 	type PolicyDraftResponse,
+	type PolicyEvaluateDraftRequest,
+	type PolicyEvaluateDraftResponse,
 	type PolicyMapResponse,
 	type PolicyResponse,
 	type PolicySaveResponse,
@@ -44,6 +47,16 @@ export async function draftPolicyRule(
 	request: PolicyDraftRequest
 ): Promise<Result<PolicyDraftResponse, Error>> {
 	return fetchJSON('/api/policy/draft', policyDraftResponseSchema, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(request)
+	});
+}
+
+export async function evaluatePolicyDraft(
+	request: PolicyEvaluateDraftRequest
+): Promise<Result<PolicyEvaluateDraftResponse, Error>> {
+	return fetchJSON('/api/policy/evaluate-draft', policyEvaluateDraftResponseSchema, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify(request)

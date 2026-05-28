@@ -19,6 +19,7 @@ export interface SyncOptions {
 	visibleEdges: RenderEdge[];
 	graphMode: 'focused' | 'all';
 	selectedDevice?: Device;
+	selectedEdge?: RenderEdge;
 	showLabels: boolean;
 	cloudStatus: CloudAuthStatusResponse;
 	colorBy: ColorBy;
@@ -28,14 +29,23 @@ export interface SyncOptions {
 export interface GraphInitOptions extends SyncOptions {
 	container: HTMLElement;
 	onNodeSelect: (device: Device) => void;
+	onEdgeSelect: (edge?: RenderEdge) => void;
 }
+
+export type RenderEdgeState = 'added' | 'removed' | 'changed' | 'unchanged';
 
 export interface RenderEdge {
 	id: string;
 	from: string;
 	to: string;
 	kind: string;
+	labels?: Edge['labels'];
+	protocols?: Edge['protocols'];
+	ports?: Edge['ports'];
 	accessScope?: Edge['accessScope'];
+	policyRefs?: Edge['policyRefs'];
+	perspectives?: Edge['perspectives'];
+	state?: RenderEdgeState;
 }
 
 let cytoscapeMod: typeof import('cytoscape') | undefined;
@@ -57,7 +67,7 @@ interface PhysicsNode extends SimulationNodeDatum {
 }
 
 export function createEngine(opts: GraphInitOptions) {
-	const { container, onNodeSelect } = opts;
+	const { container, onNodeSelect, onEdgeSelect } = opts;
 
 	if (!cytoscapeMod || !d3Mod) {
 		throw new Error('loadLibs() must be called first');
@@ -163,7 +173,12 @@ export function createEngine(opts: GraphInitOptions) {
 	}
 
 	function edgeClasses(edge: RenderEdge) {
-		return [edge.kind, edge.accessScope ? `scope-${edge.accessScope}` : '']
+		return [
+			edge.kind,
+			edge.accessScope ? `scope-${edge.accessScope}` : '',
+			edge.state ? `state-${edge.state}` : '',
+			current.selectedEdge?.id === edge.id ? 'selected' : ''
+		]
 			.filter(Boolean)
 			.join(' ');
 	}
@@ -334,10 +349,18 @@ export function createEngine(opts: GraphInitOptions) {
 			})),
 			...current.visibleEdges.map((edge) => ({
 				classes: edgeClasses(edge),
-				data: { id: edge.id, source: edge.from, target: edge.to }
+				data: { id: edge.id, source: edge.from, target: edge.to, label: edgeLabel(edge) }
 			}))
 		];
 		return elements;
+	}
+
+	function edgeLabel(edge: RenderEdge) {
+		const ports = edge.ports?.length ? edge.ports.join(',') : '';
+		if (edge.accessScope === 'broad') return 'all ports';
+		if (edge.accessScope === 'ssh') return 'ssh';
+		if (edge.accessScope === 'http') return 'http';
+		return ports;
 	}
 
 	function graphLayoutOptions() {
@@ -364,10 +387,23 @@ export function createEngine(opts: GraphInitOptions) {
 		graph.nodes().forEach((node) => {
 			node.toggleClass('selected', selectedID === node.id());
 		});
+		const selectedEdgeID = current.selectedEdge?.id;
+		graph.edges().forEach((edge) => {
+			const renderEdge = current.visibleEdges.find((candidate) => candidate.id === edge.id());
+			if (renderEdge) edge.classes(edgeClasses(renderEdge));
+			edge.toggleClass('selected', selectedEdgeID === edge.id());
+		});
 	}
 
 	function applyCurrentGraphFocus() {
 		if (!graph) return;
+		if (current.selectedEdge?.id) {
+			const edge = graph.getElementById(current.selectedEdge.id);
+			if (edge.length) {
+				applyEdgeFocus(edge as EdgeSingular);
+				return;
+			}
+		}
 		const focusID = hoveredNodeID ?? current.selectedDevice?.id;
 		if (!focusID) {
 			clearGraphFocus();
@@ -384,6 +420,14 @@ export function createEngine(opts: GraphInitOptions) {
 	function applyGraphFocus(node: NodeSingular) {
 		if (!graph) return;
 		const neighborhood = node.closedNeighborhood();
+		graph.elements().removeClass('dim focused');
+		graph.elements().difference(neighborhood).addClass('dim');
+		neighborhood.addClass('focused');
+	}
+
+	function applyEdgeFocus(edge: EdgeSingular) {
+		if (!graph) return;
+		const neighborhood = edge.connectedNodes().union(edge);
 		graph.elements().removeClass('dim focused');
 		graph.elements().difference(neighborhood).addClass('dim');
 		neighborhood.addClass('focused');
@@ -509,7 +553,7 @@ export function createEngine(opts: GraphInitOptions) {
 		const added = graph.add({
 			group: 'edges',
 			classes: edgeClasses(edge),
-			data: { id: edge.id, source: edge.from, target: edge.to }
+			data: { id: edge.id, source: edge.from, target: edge.to, label: edgeLabel(edge) }
 		});
 		if (prefersReducedMotion()) return;
 		added.style({ opacity: 0, width: 0.2 });
@@ -562,6 +606,7 @@ export function createEngine(opts: GraphInitOptions) {
 		for (const edge of edges) {
 			const existing = graph.getElementById(edge.id);
 			if (existing.length) {
+				existing.data({ id: edge.id, source: edge.from, target: edge.to, label: edgeLabel(edge) });
 				existing.classes(edgeClasses(edge));
 				continue;
 			}
@@ -642,6 +687,20 @@ export function createEngine(opts: GraphInitOptions) {
 					width: 1.8
 				}
 			},
+			{
+				selector: 'edge[label]',
+				style: {
+					color: '#31443d',
+					content: 'data(label)',
+					'font-size': 9,
+					'font-weight': 800,
+					'min-zoomed-font-size': 8,
+					'text-background-color': '#f6faf7',
+					'text-background-opacity': 0.86,
+					'text-background-padding': '2px',
+					'text-rotation': 'autorotate'
+				}
+			},
 			{ selector: 'edge.owner', style: { 'line-color': '#5d7f73', width: 2.4 } },
 			{
 				selector: 'edge.tag',
@@ -699,10 +758,50 @@ export function createEngine(opts: GraphInitOptions) {
 					width: 2.2
 				}
 			},
+			{
+				selector: 'edge.state-added',
+				style: {
+					'line-color': '#2f9f68',
+					'target-arrow-color': '#2f9f68',
+					'line-style': 'dashed',
+					opacity: 0.94,
+					width: 3.3
+				}
+			},
+			{
+				selector: 'edge.state-removed',
+				style: {
+					'line-color': '#b94c4c',
+					'target-arrow-color': '#b94c4c',
+					'line-style': 'dotted',
+					opacity: 0.78,
+					width: 2.8
+				}
+			},
+			{
+				selector: 'edge.state-changed',
+				style: {
+					'line-color': '#b0892f',
+					'target-arrow-color': '#b0892f',
+					'line-style': 'dashed',
+					opacity: 0.9,
+					width: 3
+				}
+			},
 			{ selector: '.dim', style: { opacity: 0.16 } },
 			{
 				selector: 'edge.focused',
 				style: { opacity: 0.96, width: 3.3 }
+			},
+			{
+				selector: 'edge.selected',
+				style: {
+					opacity: 1,
+					width: 4.4,
+					'underlay-color': '#163f31',
+					'underlay-opacity': 0.18,
+					'underlay-padding': 6
+				}
 			},
 			{
 				selector: 'node.focused',
@@ -742,11 +841,21 @@ export function createEngine(opts: GraphInitOptions) {
 			const node = event.target as NodeSingular;
 			const device = current.devices.find((d) => d.id === node.id());
 			if (device) {
+				onEdgeSelect(undefined);
 				onNodeSelect(device);
 				updateGraphSelection();
 				applyGraphFocus(node);
 				pulseNode(node);
 			}
+		});
+
+		graph.on('tap', 'edge', (event: CyEventObject) => {
+			const edgeID = event.target.id();
+			const edge = current.visibleEdges.find((candidate) => candidate.id === edgeID);
+			if (!edge) return;
+			onEdgeSelect(edge);
+			updateGraphSelection();
+			applyEdgeFocus(event.target as EdgeSingular);
 		});
 
 		graph.on('mouseover', 'node', (event: CyEventObject) => {
@@ -764,6 +873,7 @@ export function createEngine(opts: GraphInitOptions) {
 		graph.on('tap', (event: CyEventObject) => {
 			if (event.target === graph) {
 				hoveredNodeID = undefined;
+				onEdgeSelect(undefined);
 				clearGraphFocus();
 			}
 		});

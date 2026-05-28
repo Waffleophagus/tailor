@@ -113,6 +113,45 @@ export const policyDraftResponseSchema = z.object({
 	hujson: z.string()
 });
 
+export const policyEvaluateDraftRequestSchema = z.object({
+	hujson: z.string(),
+	perspective: z.string().optional()
+});
+
+export const policyEdgeChangeSchema = z.object({
+	state: z.enum(['added', 'removed', 'unchanged', 'changed']),
+	edge: edgeSchema,
+	saved: edgeSchema.optional(),
+	draft: edgeSchema.optional()
+});
+
+export const unresolvedSelectorSchema = z.object({
+	section: z.string(),
+	index: z.number(),
+	selector: z.string(),
+	role: z.string()
+});
+
+export const applicationGrantSchema = z.object({
+	section: z.string(),
+	index: z.number(),
+	src: z.array(z.string()),
+	dst: z.array(z.string()),
+	capabilities: z.array(z.string())
+});
+
+export const policyEvaluateDraftResponseSchema = z.object({
+	tailnet: z.string(),
+	added: z.array(policyEdgeChangeSchema),
+	removed: z.array(policyEdgeChangeSchema),
+	unchanged: z.array(policyEdgeChangeSchema),
+	changed: z.array(policyEdgeChangeSchema),
+	broadAccess: z.array(edgeSchema),
+	unresolvedSelectors: z.array(unresolvedSelectorSchema),
+	unsupportedSections: z.array(z.string()),
+	applicationGrants: z.array(applicationGrantSchema)
+});
+
 export const policyValidateResponseSchema = z.object({
 	valid: z.boolean(),
 	tailnet: z.string(),
@@ -158,6 +197,8 @@ export type PolicyMapResponse = z.infer<typeof policyMapResponseSchema>;
 export type PolicySection = z.infer<typeof policySectionSchema>;
 export type PolicyDraftRequest = z.infer<typeof policyDraftRequestSchema>;
 export type PolicyDraftResponse = z.infer<typeof policyDraftResponseSchema>;
+export type PolicyEvaluateDraftRequest = z.infer<typeof policyEvaluateDraftRequestSchema>;
+export type PolicyEvaluateDraftResponse = z.infer<typeof policyEvaluateDraftResponseSchema>;
 export type PolicyValidateResponse = z.infer<typeof policyValidateResponseSchema>;
 export type PolicySaveResponse = z.infer<typeof policySaveResponseSchema>;
 export type SocketMessage = z.infer<typeof socketMessageSchema>;

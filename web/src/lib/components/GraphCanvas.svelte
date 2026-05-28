@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onDestroy } from 'svelte';
 	import { loadLibs, createEngine } from '../graph/engine';
-	import type { ColorBy } from '../graph/engine';
+	import type { ColorBy, RenderEdge } from '../graph/engine';
 	import type { Device, Edge } from '../api/schemas';
 	import type { CloudAuthStatusResponse } from '../api/schemas';
 
@@ -12,6 +12,7 @@
 		visibleEdges = [],
 		graphMode = 'focused',
 		selectedDevice = $bindable<Device | undefined>(undefined),
+		selectedEdge = $bindable<RenderEdge | undefined>(undefined),
 		showLabels = true,
 		cloudStatus = { authenticated: false, hasPolicy: false } as CloudAuthStatusResponse,
 		colorBy = 'status' as ColorBy,
@@ -19,25 +20,24 @@
 		onNodeSelect = (device: Device) => {
 			selectedDevice = device;
 		},
+		onEdgeSelect = (edge?: RenderEdge) => {
+			selectedEdge = edge;
+		},
 		onReady
 	}: {
 		devices: Device[];
 		edges: Edge[];
 		visibleDevices: Device[];
-		visibleEdges: {
-			id: string;
-			from: string;
-			to: string;
-			kind: string;
-			accessScope?: Edge['accessScope'];
-		}[];
+		visibleEdges: RenderEdge[];
 		graphMode: 'focused' | 'all';
 		selectedDevice?: Device;
+		selectedEdge?: RenderEdge;
 		showLabels: boolean;
 		cloudStatus: CloudAuthStatusResponse;
 		colorBy: ColorBy;
 		rootDevice?: Device;
 		onNodeSelect?: (device: Device) => void;
+		onEdgeSelect?: (edge?: RenderEdge) => void;
 		onReady?: (api: {
 			fit: () => void;
 			zoom: (delta: number) => void;
@@ -63,11 +63,13 @@
 				visibleEdges,
 				graphMode,
 				selectedDevice,
+				selectedEdge,
 				showLabels,
 				cloudStatus,
 				colorBy,
 				rootDevice,
-				onNodeSelect
+				onNodeSelect,
+				onEdgeSelect
 			});
 			onReady?.({
 				fit: () => engine!.fit(),
@@ -87,6 +89,7 @@
 			visibleEdges,
 			graphMode,
 			selectedDevice,
+			selectedEdge,
 			showLabels,
 			cloudStatus,
 			colorBy,

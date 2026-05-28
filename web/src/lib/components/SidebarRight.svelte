@@ -1,19 +1,47 @@
 <script lang="ts">
-	import type { Device } from '../api/schemas';
+	import type { Device, PolicyEvaluateDraftResponse } from '../api/schemas';
+	import type { RenderEdge } from '../graph/engine';
 	import ResizableSidebar from './ResizableSidebar.svelte';
 
 	let {
 		open = $bindable(true),
 		selectedDevice = $bindable<Device | undefined>(undefined),
-		colorBy = $bindable<'status' | 'tag' | 'owner' | 'os'>('status')
+		selectedEdge = $bindable<RenderEdge | undefined>(undefined),
+		devices = [],
+		visibleEdges = [],
+		colorBy = $bindable<'status' | 'tag' | 'owner' | 'os'>('status'),
+		activePerspective = '',
+		graphViewMode = 'current',
+		draftEvaluation = undefined,
+		onSeedSource = () => {},
+		onSeedDestination = () => {},
+		onOpenPolicy = () => {}
 	}: {
 		open?: boolean;
 		selectedDevice?: Device;
+		selectedEdge?: RenderEdge;
+		devices?: Device[];
+		visibleEdges?: RenderEdge[];
 		colorBy?: 'status' | 'tag' | 'owner' | 'os';
+		activePerspective?: string;
+		graphViewMode?: 'current' | 'draft' | 'diff';
+		draftEvaluation?: PolicyEvaluateDraftResponse;
+		onSeedSource?: () => void;
+		onSeedDestination?: () => void;
+		onOpenPolicy?: () => void;
 	} = $props();
 
+	const edgeSource = $derived(devices.find((device) => device.id === selectedEdge?.from));
+	const edgeTarget = $derived(devices.find((device) => device.id === selectedEdge?.to));
+	const activeDevice = $derived(selectedDevice ?? edgeSource);
 	const deviceInitials = $derived(
-		selectedDevice?.name ? selectedDevice.name.split('.')[0].slice(0, 2).toUpperCase() : '?'
+		activeDevice?.name ? activeDevice.name.split('.')[0].slice(0, 2).toUpperCase() : '?'
+	);
+	const outgoingEdges = $derived(
+		selectedDevice ? visibleEdges.filter((edge) => edge.from === selectedDevice?.id) : []
+	);
+	const incomingEdges = $derived(
+		selectedDevice ? visibleEdges.filter((edge) => edge.to === selectedDevice?.id) : []
 	);
 
 	const osColors: Record<string, string> = {
@@ -38,26 +66,111 @@
 	}
 
 	const avatarColor = $derived.by((): string | undefined => {
-		if (!selectedDevice) return undefined;
+		if (!activeDevice) return undefined;
 		if (colorBy === 'status') {
-			return selectedDevice.online ? '#41a86f' : '#9aa7a1';
+			return activeDevice.online ? '#41a86f' : '#9aa7a1';
 		}
 		const value =
 			colorBy === 'tag'
-				? (selectedDevice.tags[0] ?? 'untagged')
+				? (activeDevice.tags[0] ?? 'untagged')
 				: colorBy === 'owner'
-					? selectedDevice.owner
-					: selectedDevice.os;
+					? activeDevice.owner
+					: activeDevice.os;
 		return palette(value || 'unknown');
 	});
+
+	function edgeTitle(edge: RenderEdge) {
+		if (edge.accessScope === 'broad') return 'Broad access';
+		if (edge.accessScope === 'ssh') return 'SSH access';
+		if (edge.accessScope === 'http') return 'HTTP access';
+		return 'Custom access';
+	}
+
+	function edgePorts(edge: RenderEdge) {
+		return edge.ports?.length
+			? edge.ports.join(', ')
+			: edge.accessScope === 'broad'
+				? 'all ports'
+				: 'unspecified';
+	}
+
+	function stateLabel(edge: RenderEdge) {
+		return edge.state ? edge.state : graphViewMode === 'current' ? 'saved' : 'preview';
+	}
 </script>
 
 <ResizableSidebar position="right" defaultWidth={18 * 16} {open}>
 	<div class="mb-3 shrink-0">
 		<h2 class="m-0 text-[0.95rem] leading-[1.2]">Policy Lens</h2>
+		<p class="mt-1 mb-0 text-[0.78rem] leading-[1.4] font-semibold text-secondary">
+			{#if activePerspective}
+				Viewing access as <strong class="text-primary">{activePerspective}</strong>.
+			{:else}
+				Select a node or edge to explain and edit policy.
+			{/if}
+		</p>
 	</div>
 
-	{#if selectedDevice}
+	{#if selectedEdge}
+		<div class="border-base-light mb-[0.85rem] border-b pb-[0.85rem]">
+			<div class="flex items-center justify-between gap-2">
+				<div>
+					<p class="m-0 text-[0.72rem] font-extrabold tracking-wider text-label uppercase">
+						Access relationship
+					</p>
+					<h3 class="mt-1 mb-0 text-[1rem] leading-[1.2]">{edgeTitle(selectedEdge)}</h3>
+				</div>
+				<span class="state-pill" data-state={selectedEdge.state ?? 'saved'}
+					>{stateLabel(selectedEdge)}</span
+				>
+			</div>
+
+			<div class="edge-route mt-3">
+				<strong>{edgeSource?.name ?? selectedEdge.from}</strong>
+				<span>can reach</span>
+				<strong>{edgeTarget?.name ?? selectedEdge.to}</strong>
+			</div>
+		</div>
+
+		<div class="border-base-light mb-[0.85rem] border-b pb-[0.85rem]">
+			<h3 class="section-title">Policy source</h3>
+			<div class="detail-row">
+				<span class="detail-label">Scope</span><span class="detail-value"
+					>{selectedEdge.accessScope || 'limited'}</span
+				>
+			</div>
+			<div class="detail-row">
+				<span class="detail-label">Ports</span><span class="detail-value"
+					>{edgePorts(selectedEdge)}</span
+				>
+			</div>
+			<div class="detail-row">
+				<span class="detail-label">Protocols</span><span class="detail-value"
+					>{selectedEdge.protocols?.length ? selectedEdge.protocols.join(', ') : 'tcp'}</span
+				>
+			</div>
+			<div class="detail-row">
+				<span class="detail-label">Rules</span>
+				<span class="detail-value">
+					{#if selectedEdge.policyRefs?.length}
+						{selectedEdge.policyRefs.map((ref) => `${ref.section} #${ref.index + 1}`).join(', ')}
+					{:else}
+						no policy reference
+					{/if}
+				</span>
+			</div>
+		</div>
+
+		<div class="grid gap-2">
+			<button class="lens-button primary" type="button" onclick={onSeedSource}>
+				Use source in builder
+			</button>
+			<button class="lens-button" type="button" onclick={onSeedDestination}>
+				Use destination in builder
+			</button>
+			<button class="lens-button" type="button" onclick={onOpenPolicy}>Open HuJSON detail</button>
+		</div>
+	{:else if selectedDevice}
 		<div
 			class="border-base-light mb-[0.85rem] flex items-center gap-[0.65rem] border-b pb-[0.85rem]"
 		>
@@ -99,10 +212,41 @@
 				</div>
 			</div>
 		</div>
-	{/if}
 
-	{#if selectedDevice}
 		<div class="flex min-h-0 flex-1 flex-col">
+			<div class="border-base-light mb-[0.85rem] border-b pb-[0.85rem]">
+				<h3 class="section-title">Policy actions</h3>
+				<div class="grid gap-2">
+					<button class="lens-button primary" type="button" onclick={onSeedSource}>
+						Allow from this owner/tag
+					</button>
+					<button class="lens-button" type="button" onclick={onSeedDestination}>
+						Allow to this device/tag
+					</button>
+				</div>
+			</div>
+
+			<div class="border-base-light mb-[0.85rem] border-b pb-[0.85rem]">
+				<h3 class="section-title">Reachability</h3>
+				<div class="detail-row">
+					<span class="detail-label">Can reach</span><span class="detail-value"
+						>{outgoingEdges.length} visible target{outgoingEdges.length === 1 ? '' : 's'}</span
+					>
+				</div>
+				<div class="detail-row">
+					<span class="detail-label">Reachable by</span><span class="detail-value"
+						>{incomingEdges.length} visible source{incomingEdges.length === 1 ? '' : 's'}</span
+					>
+				</div>
+				<div class="detail-row">
+					<span class="detail-label">Preview</span><span class="detail-value"
+						>{draftEvaluation
+							? `${draftEvaluation.added.length} added, ${draftEvaluation.removed.length} removed`
+							: 'saved policy'}</span
+					>
+				</div>
+			</div>
+
 			<div class="border-base-light mb-[0.85rem] border-b pb-[0.85rem]">
 				<h3 class="section-title">Identity</h3>
 				<div class="detail-row">
@@ -122,8 +266,9 @@
 				</div>
 				<div class="detail-row">
 					<span class="detail-label">Status</span><span class="detail-value"
-						><span class="dot" class:online={selectedDevice.online}></span
-						>{selectedDevice.online ? 'online' : 'offline'}</span
+						><span class="dot" class:online={selectedDevice.online}></span>{selectedDevice.online
+							? 'online'
+							: 'offline'}</span
 					>
 				</div>
 			</div>
@@ -170,7 +315,7 @@
 	{:else}
 		<div class="flex flex-1 items-center justify-center py-8">
 			<p class="m-0 text-center text-[0.85rem] leading-[1.5] text-muted">
-				Select a node in the graph to inspect its details.
+				Select a graph node for device policy, or an edge to see the rule that grants access.
 			</p>
 		</div>
 	{/if}
@@ -193,7 +338,16 @@
 			</svg>
 		</button>
 		<div class="bg-border h-px w-[1.2rem]"></div>
-		{#if selectedDevice}
+		{#if selectedEdge}
+			<button
+				class="sidebar-icon"
+				title="Selected access relationship"
+				type="button"
+				onclick={() => (open = true)}
+			>
+				<span class="text-[0.65rem] font-extrabold">→</span>
+			</button>
+		{:else if selectedDevice}
 			<button
 				class="sidebar-icon"
 				title={selectedDevice.name}
@@ -227,7 +381,31 @@
 		@apply font-bold text-secondary;
 	}
 	.detail-value {
-		@apply min-w-0 break-words whitespace-normal font-bold text-primary leading-[1.35];
+		@apply min-w-0 leading-[1.35] font-bold break-words whitespace-normal text-primary;
+	}
+	.edge-route {
+		@apply grid gap-1 rounded-lg border border-panel-border bg-panel-weak p-2 text-[0.82rem] font-bold text-secondary;
+	}
+	.edge-route strong {
+		@apply text-primary;
+	}
+	.state-pill {
+		@apply shrink-0 rounded-full border border-panel-border bg-panel-weak px-2 py-[0.2rem] text-[0.68rem] font-extrabold tracking-wide text-secondary uppercase;
+	}
+	.state-pill[data-state='added'] {
+		@apply border-ok text-ok;
+	}
+	.state-pill[data-state='removed'] {
+		@apply border-danger text-danger;
+	}
+	.state-pill[data-state='changed'] {
+		@apply border-warn text-warn;
+	}
+	.lens-button {
+		@apply rounded-md border border-panel-border bg-panel-weak px-3 py-[0.55rem] text-left text-[0.8rem] font-extrabold text-primary transition-[background-color,border-color,color] duration-[140ms] ease-out hover:border-teal hover:bg-hover;
+	}
+	.lens-button.primary {
+		@apply border-panel-accent bg-panel-accent text-panel-fg hover:bg-panel-accent;
 	}
 	.dot {
 		@apply h-[0.6rem] w-[0.6rem] shrink-0 rounded-full bg-gray;

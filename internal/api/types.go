@@ -148,6 +148,45 @@ type PolicySaveResponse struct {
 	HuJSON  string `json:"hujson"`
 }
 
+type PolicyEvaluateDraftRequest struct {
+	HuJSON      string `json:"hujson"`
+	Perspective string `json:"perspective,omitempty"`
+}
+
+type PolicyEvaluateDraftResponse struct {
+	Tailnet             string               `json:"tailnet"`
+	Added               []PolicyEdgeChange   `json:"added"`
+	Removed             []PolicyEdgeChange   `json:"removed"`
+	Unchanged           []PolicyEdgeChange   `json:"unchanged"`
+	Changed             []PolicyEdgeChange   `json:"changed"`
+	BroadAccess         []Edge               `json:"broadAccess"`
+	UnresolvedSelectors []UnresolvedSelector `json:"unresolvedSelectors"`
+	UnsupportedSections []string             `json:"unsupportedSections"`
+	ApplicationGrants   []ApplicationGrant   `json:"applicationGrants"`
+}
+
+type PolicyEdgeChange struct {
+	State string `json:"state"`
+	Edge  Edge   `json:"edge"`
+	Saved *Edge  `json:"saved,omitempty"`
+	Draft *Edge  `json:"draft,omitempty"`
+}
+
+type UnresolvedSelector struct {
+	Section  string `json:"section"`
+	Index    int    `json:"index"`
+	Selector string `json:"selector"`
+	Role     string `json:"role"`
+}
+
+type ApplicationGrant struct {
+	Section      string   `json:"section"`
+	Index        int      `json:"index"`
+	Src          []string `json:"src"`
+	Dst          []string `json:"dst"`
+	Capabilities []string `json:"capabilities"`
+}
+
 type ErrorResponse struct {
 	Error string `json:"error"`
 }

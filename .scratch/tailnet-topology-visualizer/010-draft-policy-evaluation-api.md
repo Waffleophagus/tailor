@@ -1,6 +1,6 @@
 # Draft policy evaluation API
 
-Labels: ready-for-agent
+Labels: ready-for-human
 Type: AFK
 
 ## What to build
@@ -11,14 +11,14 @@ The output should explain impact in terms admins care about: added access, remov
 
 ## Acceptance criteria
 
-- [ ] The backend can evaluate effective access for both the saved policy and a draft policy in one request.
-- [ ] Grants are resolved into effective access edges alongside ACL rules, including network-level `ip` access where present.
-- [ ] Application-layer grant capabilities are preserved in the response as policy impact metadata even when they do not map cleanly to a network edge.
-- [ ] The response includes added, removed, unchanged, and changed access edges with ports, protocols, access scope, and policy references.
-- [ ] The response includes unresolved selectors and unsupported sections encountered during evaluation.
-- [ ] Draft evaluation does not save, validate, or mutate the Cloud API session.
-- [ ] Existing topology snapshots continue to return saved-policy access unless a caller explicitly asks for draft evaluation.
-- [ ] Tests cover added access, removed access, access scope changes, grants, unresolved selectors, and invalid draft input.
+- [x] The backend can evaluate effective access for both the saved policy and a draft policy in one request.
+- [x] Grants are resolved into effective access edges alongside ACL rules, including network-level `ip` access where present.
+- [x] Application-layer grant capabilities are preserved in the response as policy impact metadata even when they do not map cleanly to a network edge.
+- [x] The response includes added, removed, unchanged, and changed access edges with ports, protocols, access scope, and policy references.
+- [x] The response includes unresolved selectors and unsupported sections encountered during evaluation.
+- [x] Draft evaluation does not save, validate, or mutate the Cloud API session.
+- [x] Existing topology snapshots continue to return saved-policy access unless a caller explicitly asks for draft evaluation.
+- [x] Tests cover added access, removed access, access scope changes, grants, unresolved selectors, and invalid draft input.
 
 ## Blocked by
 
