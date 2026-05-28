@@ -24,7 +24,8 @@
 		onClose = () => {},
 		onDraft = () => {},
 		onValidate = () => {},
-		onSave = () => {}
+		onSave = () => {},
+		onViewAs = () => {}
 	}: {
 		open?: boolean;
 		policy?: PolicyResponse;
@@ -45,7 +46,15 @@
 		onDraft?: () => void;
 		onValidate?: () => void;
 		onSave?: () => void;
+		onViewAs?: (selector: string) => void;
 	} = $props();
+
+	function canSimulateEntry(sectionName: string, label: string) {
+		return (
+			(sectionName === 'groups' && label.startsWith('group:')) ||
+			(sectionName === 'tagOwners' && label.startsWith('tag:'))
+		);
+	}
 
 	const sections = $derived(policyMap?.sections ?? []);
 	const query = $derived(search.trim().toLowerCase());
@@ -159,12 +168,23 @@
 											<article
 												class="grid grid-cols-[minmax(0,1fr)] gap-[0.45rem] rounded-md border border-panel-border bg-panel-input p-[0.6rem]"
 											>
-												<div>
-													<strong class="block text-[0.84rem] text-primary">{entry.label}</strong>
-													{#if entry.summary}
-														<p class="mt-[0.2rem] text-[0.8rem] wrap-anywhere text-code">
-															{entry.summary}
-														</p>
+												<div class="flex items-start justify-between gap-2">
+													<div class="min-w-0">
+														<strong class="block text-[0.84rem] text-primary">{entry.label}</strong>
+														{#if entry.summary}
+															<p class="mt-[0.2rem] text-[0.8rem] wrap-anywhere text-code">
+																{entry.summary}
+															</p>
+														{/if}
+													</div>
+													{#if canSimulateEntry(section.name, entry.label)}
+														<button
+															type="button"
+															class="shrink-0 cursor-pointer rounded border border-panel-border bg-panel-weak px-2 py-1 text-[0.72rem] font-extrabold text-teal hover:bg-hover"
+															onclick={() => onViewAs(entry.label)}
+														>
+															View as
+														</button>
 													{/if}
 												</div>
 												{#if entry.selectors?.length}

@@ -1,26 +1,24 @@
 # Graph-seeded allow access builder
 
-Labels: ready-for-agent
+Labels: wontfix
 Type: AFK
 
-## What to build
+**Superseded by [020-general-access-rules-editor.md](020-general-access-rules-editor.md).**
 
-Replace the raw selector-first ACL form with an intent builder that starts from the graph. An admin should be able to choose a source, choose a destination, choose an access shape, and immediately preview the resulting access on the graph before validation.
+The primary ACL/grant editing path now lives in the Policy Workbench **General access rules** section (Tailscale-shaped list + Add rule form). Graph and Policy Lens still **seed** that form with pre-filled src/dst — see 020 acceptance criteria.
 
-Prefer grants where the requested access is naturally represented as a grant. Fall back to ACL rules for port-level network access that still belongs in ACLs.
+Master roadmap: [018-policy-scenario-roadmap.md](018-policy-scenario-roadmap.md).
 
-## Acceptance criteria
+## Historical intent
 
-- [ ] The builder can be opened from selected graph nodes, selected devices in the sidebar, or the policy workbench.
-- [ ] Source selection supports user, group, tag, autogroup, and raw selector entry.
-- [ ] Destination selection supports device-derived selectors, tag, host, IP, IP set, subnet, and raw selector entry.
-- [ ] Access presets include SSH, HTTP/S, custom ports, all ports, and grant-style app capability where supported.
-- [ ] Generated policy changes are added to draft state only, not saved immediately.
-- [ ] The graph preview updates from the draft evaluation API before validation.
-- [ ] Tests cover generated ACL/grant draft output and source/destination selector handling.
+Replace raw selector-first ACL form with intent builder starting from graph selection. That behavior is retained as seeding into [020](020-general-access-rules-editor.md), not a separate builder surface.
+
+## Original acceptance criteria (for reference)
+
+- Builder opened from graph nodes, sidebar devices, or policy workbench
+- Source/destination selector support
+- Access presets, draft staging, graph preview
 
 ## Blocked by
 
-- 010-draft-policy-evaluation-api.md
-- 011-graph-policy-preview-modes.md
-
+- N/A — do not implement this issue

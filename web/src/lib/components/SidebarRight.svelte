@@ -1,6 +1,8 @@
 <script lang="ts">
-	import type { Device, PolicyEvaluateDraftResponse } from '../api/schemas';
+	import type { Device, PolicyEvaluateDraftResponse, PolicyMapResponse } from '../api/schemas';
 	import type { RenderEdge } from '../graph/engine';
+	import { kindLabel, validatePerspective } from '../perspective/catalog';
+	import { isPerspectiveDevice, perspectiveSelectorFromDevice } from '../perspective/device';
 	import ResizableSidebar from './ResizableSidebar.svelte';
 
 	let {
@@ -11,11 +13,14 @@
 		visibleEdges = [],
 		colorBy = $bindable<'status' | 'tag' | 'owner' | 'os'>('status'),
 		activePerspective = '',
+		policyMap,
 		graphViewMode = 'current',
 		draftEvaluation = undefined,
 		onSeedSource = () => {},
 		onSeedDestination = () => {},
-		onOpenPolicy = () => {}
+		onOpenPolicy = () => {},
+		onViewAsOwner = () => {},
+		onViewAsTag = () => {}
 	}: {
 		open?: boolean;
 		selectedDevice?: Device;
@@ -24,12 +29,25 @@
 		visibleEdges?: RenderEdge[];
 		colorBy?: 'status' | 'tag' | 'owner' | 'os';
 		activePerspective?: string;
+		policyMap?: PolicyMapResponse;
 		graphViewMode?: 'current' | 'draft' | 'diff';
 		draftEvaluation?: PolicyEvaluateDraftResponse;
 		onSeedSource?: () => void;
 		onSeedDestination?: () => void;
 		onOpenPolicy?: () => void;
+		onViewAsOwner?: (owner: string) => void;
+		onViewAsTag?: (tag: string) => void;
 	} = $props();
+
+	const isPerspectiveSelection = $derived(
+		selectedDevice ? isPerspectiveDevice(selectedDevice) : false
+	);
+	const perspectiveSelector = $derived(perspectiveSelectorFromDevice(selectedDevice));
+	const perspectiveValidation = $derived(
+		perspectiveSelector
+			? validatePerspective(perspectiveSelector, devices, policyMap)
+			: { status: 'empty' as const }
+	);
 
 	const edgeSource = $derived(devices.find((device) => device.id === selectedEdge?.from));
 	const edgeTarget = $derived(devices.find((device) => device.id === selectedEdge?.to));
@@ -170,6 +188,39 @@
 			</button>
 			<button class="lens-button" type="button" onclick={onOpenPolicy}>Open HuJSON detail</button>
 		</div>
+	{:else if selectedDevice && isPerspectiveSelection}
+		<div class="border-base-light mb-[0.85rem] border-b pb-[0.85rem]">
+			<p class="m-0 text-[0.72rem] font-extrabold tracking-wider text-label uppercase">
+				Simulated policy subject
+			</p>
+			<h3 class="mt-1 mb-0 text-[1rem] leading-[1.2] wrap-anywhere">{perspectiveSelector}</h3>
+			<p class="mt-2 mb-0 text-[0.78rem] leading-[1.45] font-semibold text-secondary">
+				Simulation only — not real login or device impersonation. The graph shows effective access
+				this subject would have under saved policy.
+			</p>
+			{#if perspectiveValidation.status === 'valid'}
+				<p class="mt-2 mb-0 text-[0.78rem] font-bold text-primary">
+					{kindLabel(perspectiveValidation.kind)} · {perspectiveValidation.deviceCount} source device{perspectiveValidation.deviceCount ===
+					1
+						? ''
+						: 's'}
+				</p>
+			{/if}
+		</div>
+
+		<div class="border-base-light mb-[0.85rem] border-b pb-[0.85rem]">
+			<h3 class="section-title">Reachability</h3>
+			<div class="detail-row">
+				<span class="detail-label">Can reach</span><span class="detail-value"
+					>{outgoingEdges.length} visible target{outgoingEdges.length === 1 ? '' : 's'}</span
+				>
+			</div>
+			<div class="detail-row">
+				<span class="detail-label">Reachable by</span><span class="detail-value"
+					>{incomingEdges.length} visible source{incomingEdges.length === 1 ? '' : 's'}</span
+				>
+			</div>
+		</div>
 	{:else if selectedDevice}
 		<div
 			class="border-base-light mb-[0.85rem] flex items-center gap-[0.65rem] border-b pb-[0.85rem]"
@@ -214,6 +265,26 @@
 		</div>
 
 		<div class="flex min-h-0 flex-1 flex-col">
+			<div class="border-base-light mb-[0.85rem] border-b pb-[0.85rem]">
+				<h3 class="section-title">Perspective</h3>
+				<div class="grid gap-2">
+					{#if selectedDevice.owner}
+						<button
+							class="lens-button"
+							type="button"
+							onclick={() => onViewAsOwner(selectedDevice.owner)}
+						>
+							View as {selectedDevice.owner}
+						</button>
+					{/if}
+					{#each selectedDevice.tags as tag (tag)}
+						<button class="lens-button" type="button" onclick={() => onViewAsTag(tag)}>
+							View as {tag}
+						</button>
+					{/each}
+				</div>
+			</div>
+
 			<div class="border-base-light mb-[0.85rem] border-b pb-[0.85rem]">
 				<h3 class="section-title">Policy actions</h3>
 				<div class="grid gap-2">

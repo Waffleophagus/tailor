@@ -1,27 +1,34 @@
-# SSH and posture access builder
+# SSH rules editor
 
 Labels: ready-for-agent
 Type: AFK
 
 ## What to build
 
-Add a focused builder for Tailscale SSH and conditional access. Admins should be able to define who can SSH, which destinations are eligible, which login users are allowed, and what check or accept behavior applies. Where posture/device conditions, via routing, or app capabilities are available in the policy shape, the builder should expose them as advanced controls and preview the resulting graph impact.
+Implement **Tailscale SSH** as a POLICY nav item in the Policy Workbench. Admins define who can SSH, destinations, login users, check/accept behavior, and advanced fields (posture, via) where present in the policy shape.
 
-The builder must clearly distinguish network reachability from SSH permission. SSH policy alone should not imply that the network path exists.
+Reference: [`3-ssh-general.png`](../../screenshots%20of%20ACL%20in%20site/3-ssh-general.png), [`4-ssh-advanced.png`](../../screenshots%20of%20ACL%20in%20site/4-ssh-advanced.png).
+
+Master roadmap: [018-policy-scenario-roadmap.md](018-policy-scenario-roadmap.md) Phase 4.
+
+**Note:** Device posture *definitions* live under DEFINITIONS ([017](017-advanced-policy-section-coverage.md)); this issue covers SSH *rules* that reference them.
 
 ## Acceptance criteria
 
-- [ ] The builder creates and edits SSH rules with source, destination, users, action, and check mode where applicable.
-- [ ] The UI explains when SSH permission also requires network access from ACLs or grants.
-- [ ] Advanced controls can reference posture/device conditions and via routing where those fields are present in the policy.
-- [ ] Generated changes enter draft state and update graph preview before validation.
-- [ ] The Policy Lens can show SSH permission separately from network access for a selected Device or edge.
-- [ ] Unsupported SSH rule shapes remain visible and fall back to raw HuJSON editing.
-- [ ] Tests cover SSH rule generation, SSH/network distinction, and validation error surfacing.
+- [ ] SSH rule list + add/edit form inside workbench POLICY → Tailscale SSH route.
+- [ ] Fields: source, destination, users, action, check mode where applicable.
+- [ ] UI clearly distinguishes **network reachability** (ACLs/grants) from **SSH permission** — SSH alone does not imply network path on graph.
+- [ ] Advanced controls: posture reference, via routing when fields present in policy.
+- [ ] Generated changes stage to draft; graph shows network path where eval supports it; SSH permission surfaced in Policy Lens.
+- [ ] Unsupported SSH rule shapes fall back to raw HuJSON.
+- [ ] Simulation tier badge: **Graph-partial**.
+- [ ] Tests cover SSH rule generation, SSH/network distinction, validation errors.
 
 ## Blocked by
 
-- 009-structured-policy-map.md
-- 010-draft-policy-evaluation-api.md
-- 011-graph-policy-preview-modes.md
+- [019-policy-workbench-shell.md](019-policy-workbench-shell.md)
+- [010-draft-policy-evaluation-api.md](010-draft-policy-evaluation-api.md) (done)
 
+## Blocks
+
+- [013-policy-lens-provenance-editor.md](013-policy-lens-provenance-editor.md) (partial — SSH vs network in lens)

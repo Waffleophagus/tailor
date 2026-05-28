@@ -8,6 +8,7 @@ import type {
 } from 'cytoscape';
 import type { SimulationNodeDatum, SimulationLinkDatum } from 'd3-force';
 import type { Device, Edge } from '../api/schemas';
+import { PERSPECTIVE_DEVICE_OS } from '../perspective/device';
 import type { CloudAuthStatusResponse } from '../api/schemas';
 
 export type ColorBy = 'status' | 'tag' | 'owner' | 'os';
@@ -124,10 +125,15 @@ export function createEngine(opts: GraphInitOptions) {
 		return palette(value || 'unknown');
 	}
 
+	function isPerspectiveDevice(device: Device) {
+		return device.os === PERSPECTIVE_DEVICE_OS || device.id.startsWith('perspective:');
+	}
+
 	function deviceClasses(device: Device) {
 		return [
 			device.online ? 'online' : 'offline',
 			graphRootDevice()?.id === device.id ? 'root' : '',
+			isPerspectiveDevice(device) ? 'perspective-subject' : '',
 			current.selectedDevice?.id === device.id ? 'selected' : '',
 			device.subnetRouter ? 'subnet-router' : '',
 			current.showLabels ? 'with-labels' : 'hide-labels'
@@ -137,16 +143,25 @@ export function createEngine(opts: GraphInitOptions) {
 	}
 
 	function deviceData(device: Device) {
+		const perspective = isPerspectiveDevice(device);
 		return {
 			id: device.id,
 			label: device.name || device.ip || device.id,
-			color: deviceColor(device),
-			ringColor:
-				graphRootDevice()?.id === device.id ? '#163f31' : device.online ? '#1f7a52' : '#74857e'
+			color: perspective ? '#5d7f73' : deviceColor(device),
+			ringColor: perspective
+				? '#2f5f4a'
+				: graphRootDevice()?.id === device.id
+					? '#163f31'
+					: device.online
+						? '#1f7a52'
+						: '#74857e'
 		};
 	}
 
 	function graphRootDevice() {
+		if (current.rootDevice && isPerspectiveDevice(current.rootDevice)) {
+			return current.rootDevice;
+		}
 		if (current.cloudStatus.authenticated && current.graphMode === 'focused') {
 			return current.selectedDevice ?? current.rootDevice;
 		}
@@ -673,6 +688,26 @@ export function createEngine(opts: GraphInitOptions) {
 					'underlay-opacity': 0.2,
 					'underlay-padding': 14,
 					width: 58
+				}
+			},
+			{
+				selector: 'node.perspective-subject',
+				style: {
+					'background-color': '#e8f2ec',
+					'border-color': '#2f5f4a',
+					'border-style': 'dashed',
+					'border-width': 3,
+					height: 62,
+					shape: 'round-rectangle',
+					width: 62
+				}
+			},
+			{
+				selector: 'node.perspective-subject.root',
+				style: {
+					'border-width': 4,
+					'underlay-opacity': 0.24,
+					'underlay-padding': 16
 				}
 			},
 			{

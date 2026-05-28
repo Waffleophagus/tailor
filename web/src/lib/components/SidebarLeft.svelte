@@ -20,7 +20,8 @@
 		ownerOptions = [],
 		osOptions = [],
 		visibleOnlineCount = 0,
-		chooseDevice
+		chooseDevice,
+		onViewAsOwner = () => {}
 	}: {
 		open?: boolean;
 		devices: Device[];
@@ -39,6 +40,7 @@
 		osOptions: string[];
 		visibleOnlineCount?: number;
 		chooseDevice: (device: Device) => void;
+		onViewAsOwner?: (owner: string) => void;
 	} = $props();
 
 	let searchQuery = $state('');
@@ -156,7 +158,7 @@
 				</label>
 				<ul class="m-0 flex min-h-0 flex-1 list-none flex-col gap-[0.25rem] overflow-y-auto p-0">
 					{#each filteredDevices as device (device.id)}
-						<li>
+						<li class="device-row">
 							<button
 								class={['device-item', selectedDevice?.id === device.id && 'active']}
 								type="button"
@@ -167,6 +169,16 @@
 									{displayName(device.name)}
 								</span>
 							</button>
+							{#if device.owner}
+								<button
+									type="button"
+									class="view-as-btn"
+									title="View as {device.owner}"
+									onclick={() => onViewAsOwner(device.owner)}
+								>
+									View as
+								</button>
+							{/if}
 						</li>
 					{/each}
 				</ul>
@@ -217,8 +229,18 @@
 	.segment[data-active='true'] {
 		@apply border-teal bg-hover text-primary;
 	}
+	.device-row {
+		@apply flex items-center gap-1;
+	}
 	.device-item {
-		@apply flex w-full cursor-pointer items-center gap-2 rounded-md border border-transparent bg-transparent px-2 py-[0.45rem] text-left text-[0.85rem] text-primary transition-[background-color,border-color] duration-[140ms] ease-out hover:border-strong hover:bg-hover;
+		@apply flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md border border-transparent bg-transparent px-2 py-[0.45rem] text-left text-[0.85rem] text-primary transition-[background-color,border-color] duration-[140ms] ease-out hover:border-strong hover:bg-hover;
+	}
+	.view-as-btn {
+		@apply shrink-0 cursor-pointer rounded border border-transparent bg-transparent px-1 py-0.5 text-[0.65rem] font-extrabold text-teal opacity-0 transition-[opacity,background-color] duration-[140ms] ease-out hover:bg-hover hover:opacity-100;
+	}
+	.device-row:hover .view-as-btn,
+	.device-row:focus-within .view-as-btn {
+		@apply opacity-100;
 	}
 	.device-item.active {
 		@apply border-strong bg-hover;

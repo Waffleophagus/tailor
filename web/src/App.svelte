@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onDestroy, onMount } from 'svelte';
+	import { SvelteSet } from 'svelte/reactivity';
 	import {
 		authenticateCloud,
 		draftPolicyRule,
@@ -23,6 +24,10 @@
 	import { fetchTopology } from './lib/api/topology';
 	import { connectTopologySocket } from './lib/api/topologySocket';
 	import type { RenderEdge } from './lib/graph/engine';
+	import { saveRecentPerspective, validatePerspective } from './lib/perspective/catalog';
+	import { createPerspectiveDevice, isPerspectiveDevice } from './lib/perspective/device';
+	import { hiddenSubjectSourceDeviceIds, remapEdgesForPerspective } from './lib/perspective/edges';
+	import { subjectDeviceIds } from './lib/perspective/subjects';
 	import AuthDialog from './lib/components/AuthDialog.svelte';
 	import DraftTray from './lib/components/DraftTray.svelte';
 	import GraphCanvas from './lib/components/GraphCanvas.svelte';
@@ -102,16 +107,6 @@
 	const ownerOptions = $derived(unique(devices.map((device) => device.owner).filter(Boolean)));
 	const osOptions = $derived(unique(devices.map((device) => device.os).filter(Boolean)));
 	const rootDevice = $derived(devices[0]);
-	const graphRootDevice = $derived(
-		cloudStatus.authenticated && graphMode === 'focused'
-			? (selectedDevice ?? rootDevice)
-			: rootDevice
-	);
-	const visibleDeviceIDs = $derived(new Set(visibleDevices.map((device) => device.id)));
-	const visibleEdges = $derived(graphEdges());
-	const graphDevices = $derived(devicesForGraph());
-	const visibleOnlineCount = $derived(visibleDevices.filter((device) => device.online).length);
-	const graphOnlineCount = $derived(graphDevices.filter((device) => device.online).length);
 	const activePerspective = $derived(policyPerspective.trim());
 	const activePerspectiveEvaluation = $derived(
 		activePerspective && activePerspective === simulatedPerspective
@@ -124,7 +119,38 @@
 			: undefined
 	);
 	const activePolicyEvaluation = $derived(activeDraftEvaluation ?? activePerspectiveEvaluation);
-	const selectorOptions = $derived(policySelectorOptions());
+	const perspectiveDevice = $derived(
+		activePerspectiveEvaluation && activePerspective
+			? createPerspectiveDevice(activePerspective)
+			: undefined
+	);
+	const subjectIDs = $derived.by(() => {
+		if (!activePerspective) return new SvelteSet<string>();
+		return new SvelteSet(subjectDeviceIds(activePerspective, devices, policyMap));
+	});
+	const graphRootDevice = $derived(
+		perspectiveDevice ??
+			(cloudStatus.authenticated && graphMode === 'focused'
+				? (selectedDevice ?? rootDevice)
+				: rootDevice)
+	);
+	const graphVisibleDeviceIDs = $derived.by(() => {
+		const ids = new SvelteSet(visibleDevices.map((device) => device.id));
+		if (perspectiveDevice) ids.add(perspectiveDevice.id);
+		return ids;
+	});
+	const visibleEdges = $derived(graphEdges());
+	const graphDevices = $derived(devicesForGraph());
+	const perspectiveReachableCount = $derived.by(() => {
+		if (!perspectiveDevice) return 0;
+		const targets = new SvelteSet<string>();
+		for (const edge of visibleEdges) {
+			if (edge.from === perspectiveDevice.id) targets.add(edge.to);
+		}
+		return targets.size;
+	});
+	const visibleOnlineCount = $derived(visibleDevices.filter((device) => device.online).length);
+	const graphOnlineCount = $derived(graphDevices.filter((device) => device.online).length);
 
 	function unique(values: string[]) {
 		return [...new Set(values)].sort((a, b) => a.localeCompare(b));
@@ -132,8 +158,12 @@
 
 	function graphEdges(): RenderEdge[] {
 		if (cloudStatus.authenticated && edges.length > 0) {
-			const rendered = policyEdgesForGraph().filter(
-				(edge) => visibleDeviceIDs.has(edge.from) && visibleDeviceIDs.has(edge.to)
+			let rendered = policyEdgesForGraph();
+			if (perspectiveDevice && activePerspectiveEvaluation) {
+				rendered = remapEdgesForPerspective(rendered, perspectiveDevice.id, subjectIDs);
+			}
+			rendered = rendered.filter(
+				(edge) => graphVisibleDeviceIDs.has(edge.from) || graphVisibleDeviceIDs.has(edge.to)
 			);
 			if (graphMode === 'all') return rendered;
 			const focusID = graphRootDevice?.id;
@@ -141,7 +171,7 @@
 			return rendered.filter((edge) => edge.from === focusID || edge.to === focusID);
 		}
 		const root = rootDevice;
-		if (!root || !visibleDeviceIDs.has(root.id) || !root.online) return [];
+		if (!root || !graphVisibleDeviceIDs.has(root.id) || !root.online) return [];
 		return visibleDevices
 			.filter((device) => device.id !== root.id && device.online)
 			.map((device) => ({
@@ -194,24 +224,47 @@
 	}
 
 	function devicesForGraph(): Device[] {
+		let pool = visibleDevices;
+		if (perspectiveDevice && activePerspectiveEvaluation) {
+			const hidden = hiddenSubjectSourceDeviceIds(visibleEdges, subjectIDs, perspectiveDevice.id);
+			pool = pool.filter((device) => !hidden.has(device.id));
+		}
 		if (!cloudStatus.authenticated || graphMode === 'all' || edges.length === 0) {
-			return visibleDevices;
+			if (perspectiveDevice && activePerspectiveEvaluation) {
+				return pool.some((d) => d.id === perspectiveDevice.id)
+					? pool
+					: [...pool, perspectiveDevice];
+			}
+			return pool;
 		}
 		const ids = new Set<string>(); // eslint-disable-line svelte/prefer-svelte-reactivity
-		if (graphRootDevice?.id && visibleDeviceIDs.has(graphRootDevice.id)) {
+		if (graphRootDevice?.id) {
 			ids.add(graphRootDevice.id);
 		}
 		for (const edge of visibleEdges) {
 			ids.add(edge.from);
 			ids.add(edge.to);
 		}
-		return visibleDevices.filter((device) => ids.has(device.id));
+		const focused = pool.filter((device) => ids.has(device.id));
+		if (
+			perspectiveDevice &&
+			ids.has(perspectiveDevice.id) &&
+			!focused.some((d) => d.id === perspectiveDevice.id)
+		) {
+			return [...focused, perspectiveDevice];
+		}
+		return focused;
 	}
 
 	function chooseDevice(device: Device) {
 		selectedEdge = undefined;
 		selectedDevice = device;
 		graphAPI?.selectDevice(device);
+	}
+
+	async function applyPerspectiveFromSelector(selector: string) {
+		policyPerspective = selector;
+		await simulatePerspective();
 	}
 
 	function localApiErrorMessage(error: LocalAPIStatusResponse | Error | undefined) {
@@ -234,16 +287,6 @@
 			return splitSelectors(editCustomPorts);
 		}
 		return splitSelectors(editPortPreset);
-	}
-
-	function policySelectorOptions() {
-		const groupSelectors =
-			policyMap?.sections
-				.find((section) => section.name === 'groups')
-				?.entries?.map((entry) => entry.label) ?? [];
-		return unique(
-			[...ownerOptions, ...tagOptions, ...groupSelectors, 'autogroup:member'].filter(Boolean)
-		);
 	}
 
 	async function enableACLEditing(data: { tailnet: string; apiKey: string }) {
@@ -356,29 +399,41 @@
 		});
 	}
 
+	function finishPerspectiveSimulation(selector: string) {
+		simulatedPerspective = selector;
+		graphMode = 'focused';
+		const hypo = createPerspectiveDevice(selector);
+		selectedDevice = hypo;
+		selectedEdge = undefined;
+		saveRecentPerspective(selector);
+		graphAPI?.selectDevice(hypo);
+	}
+
 	async function simulatePerspective() {
-		if (editBusy || !activePerspective || !policy?.hujson) return;
+		const validation = validatePerspective(policyPerspective, devices, policyMap);
+		if (editBusy || validation.status !== 'valid' || !policy?.hujson) return;
+		const selector = validation.selector;
+		policyPerspective = selector;
 		editBusy = true;
 		cloudError = '';
 		if (draftHuJSON) {
 			await evaluateDraftImpact(draftHuJSON);
-			simulatedPerspective = activePerspective;
+			finishPerspectiveSimulation(selector);
 			policyGraphViewMode = 'draft';
-			graphMode = 'all';
 			editBusy = false;
 			return;
 		}
 		const result = await evaluatePolicyDraft({
 			hujson: policy.hujson,
-			perspective: activePerspective
+			perspective: selector
 		});
 		result.match({
 			ok: (value) => {
 				perspectiveEvaluation = value;
-				simulatedPerspective = activePerspective;
+				finishPerspectiveSimulation(selector);
 				policyGraphViewMode = draftHuJSON ? 'draft' : 'current';
-				graphMode = 'all';
-				editStatus = `${activePerspective} can reach ${value.unchanged.length} saved edges.`;
+				const edgeCount = value.unchanged.length + value.added.length + value.changed.length;
+				editStatus = `${selector} can reach ${edgeCount} saved edge${edgeCount === 1 ? '' : 's'}.`;
 			},
 			err: (error) => {
 				perspectiveEvaluation = undefined;
@@ -394,6 +449,10 @@
 		simulatedPerspective = '';
 		perspectiveEvaluation = undefined;
 		policyGraphViewMode = draftHuJSON ? 'draft' : 'current';
+		graphMode = 'focused';
+		selectedDevice = rootDevice;
+		selectedEdge = undefined;
+		if (rootDevice) graphAPI?.selectDevice(rootDevice);
 	}
 
 	function draftEvaluationSummary(value: PolicyEvaluateDraftResponse) {
@@ -669,6 +728,7 @@
 				{osOptions}
 				{visibleOnlineCount}
 				chooseDevice={(device) => chooseDevice(device)}
+				onViewAsOwner={(owner) => void applyPerspectiveFromSelector(owner)}
 			/>
 
 			<section
@@ -713,19 +773,21 @@
 							class="inline-flex min-h-8 items-baseline gap-[0.3rem] rounded-md bg-graph-dot p-[0.35rem_0.55rem] text-[0.78rem] font-bold whitespace-nowrap text-secondary"
 							><strong class="text-[0.98rem] leading-none text-graph-hud-strong"
 								>{graphRootDevice.name || graphRootDevice.ip}</strong
-							> focus</span
+							>{isPerspectiveDevice(graphRootDevice) ? ' simulated' : ' focus'}</span
 						>
 					{/if}
 				</div>
 				{#if cloudStatus.authenticated}
 					<PerspectiveBar
 						bind:perspective={policyPerspective}
-						{selectorOptions}
+						{devices}
+						{policyMap}
 						bind:graphViewMode={policyGraphViewMode}
 						hasDraft={Boolean(draftHuJSON)}
 						hasPerspectivePreview={Boolean(
 							activePerspectiveEvaluation || (activePerspective && activeDraftEvaluation)
 						)}
+						reachableCount={perspectiveReachableCount}
 						busy={editBusy}
 						onApply={simulatePerspective}
 						onClear={clearPerspective}
@@ -766,9 +828,9 @@
 				</div>
 
 				<GraphCanvas
-					{devices}
+					devices={graphDevices}
 					{edges}
-					{visibleDevices}
+					visibleDevices={graphDevices}
 					{visibleEdges}
 					{graphMode}
 					bind:selectedDevice
@@ -776,7 +838,7 @@
 					{showLabels}
 					{cloudStatus}
 					{colorBy}
-					{rootDevice}
+					rootDevice={graphRootDevice}
 					onReady={(api) => (graphAPI = api)}
 				/>
 
@@ -818,6 +880,7 @@
 					onDraft={createPolicyDraft}
 					onValidate={validateDraft}
 					onSave={saveDraft}
+					onViewAs={(selector) => void applyPerspectiveFromSelector(selector)}
 				/>
 				<DraftTray
 					{draftEvaluation}
@@ -842,9 +905,12 @@
 				{activePerspective}
 				graphViewMode={policyGraphViewMode}
 				draftEvaluation={activePolicyEvaluation}
+				{policyMap}
 				onSeedSource={() => seedBuilder('source')}
 				onSeedDestination={() => seedBuilder('destination')}
 				onOpenPolicy={openPolicyEditor}
+				onViewAsOwner={(owner) => void applyPerspectiveFromSelector(owner)}
+				onViewAsTag={(tag) => void applyPerspectiveFromSelector(tag)}
 			/>
 		</div>
 	</section>

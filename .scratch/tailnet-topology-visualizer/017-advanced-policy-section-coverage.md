@@ -5,22 +5,38 @@ Type: AFK
 
 ## What to build
 
-Round out coverage for advanced policy sections that do not fit the first builders but still need a clean non-raw-HuJSON path: tests, SSH tests, auto-approvers, node attributes, posture/device conditions, and any unknown policy sections discovered in real policy files.
+Round out Policy Workbench coverage for sections that don't fit the first rule/definition editors: **Tests**, **Auto-approvers**, **Device posture** (definitions), **Node attributes**, and any unknown policy sections.
 
-The target is a structured hybrid editor: safe known fields get real controls, complex or unknown values get typed structured JSON controls with validation, comments preserved by the HuJSON round-trip layer.
+Reference: posture [`13-device-posture-general.png`](../../screenshots%20of%20ACL%20in%20site/13-device-posture-general.png), node attrs [`15-node-attributes-general.png`](../../screenshots%20of%20ACL%20in%20site/15-node-attributes-general.png).
+
+Master roadmap: [018-policy-scenario-roadmap.md](018-policy-scenario-roadmap.md) Phase 5.
+
+Structured hybrid editor: known fields get real controls; complex values get typed JSON with validation; HuJSON comments preserved on round-trip.
+
+## Section placement
+
+| Section | Workbench nav | Simulation tier |
+|---------|---------------|-----------------|
+| Device posture | DEFINITIONS → Device posture | Edit + validate only (graph eval needs device attributes) |
+| Node attributes | DEFINITIONS → Node attributes | Edit + validate only |
+| Tests | POLICY → Tests | Non-graph (test runner future) |
+| Auto-approvers | POLICY → Auto-approvers | Non-graph |
+| Unknown sections | Inline / Advanced fallback | Edit + validate |
 
 ## Acceptance criteria
 
-- [ ] The policy workbench lists advanced sections with counts, search, empty states, and raw HuJSON fallback.
-- [ ] Tests and SSH tests can be edited with structured expected-access fields and validation feedback.
-- [ ] Auto-approvers can be edited for routes, exit nodes, and advertised tags where present.
-- [ ] Node attributes and posture/device conditions can be edited as structured key/value or JSON objects with schema-aware validation where available.
-- [ ] Unknown sections are preserved, visible, and editable through an explicit advanced raw-value editor.
-- [ ] Advanced edits enter draft state, update the staged tray, and validate before save.
-- [ ] Tests cover known advanced sections, unknown section preservation, and validation error display.
+- [ ] Each advanced route lists entries with counts, search, empty states.
+- [ ] Device posture: add/edit with attribute key/value pairs (e.g. `node:os`, `node:tsStateEncrypted`).
+- [ ] Node attributes: structured key/value or JSON object editing with validation.
+- [ ] Tests and SSH tests: structured expected-access fields where schema known.
+- [ ] Auto-approvers: routes, exit nodes, advertised tags where present.
+- [ ] Unknown sections preserved, visible, editable via explicit raw-value editor.
+- [ ] Simulation tier badges explain what the graph can and cannot preview.
+- [ ] Advanced edits stage to draft, appear in staged tray, validate before save.
+- [ ] Tests cover known sections, unknown preservation, validation errors.
 
 ## Blocked by
 
-- 009-structured-policy-map.md
-- 016-staged-commit-tray-and-hujson-diff.md
-
+- [019-policy-workbench-shell.md](019-policy-workbench-shell.md)
+- [009-structured-policy-map.md](009-structured-policy-map.md) (done)
+- [016-staged-commit-tray-and-hujson-diff.md](016-staged-commit-tray-and-hujson-diff.md)

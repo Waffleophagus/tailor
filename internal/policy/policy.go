@@ -224,13 +224,17 @@ func ResolveEffectiveAccess(p Policy, devices []api.Device, options EdgeOptions)
 		proto := normalizeProto(rule.Proto)
 		for _, src := range rule.Src {
 			srcDevices := devicesForSelector(src, p, devices)
-			if options.Perspective != "" && !selectorIncludesPerspective(src, p, options.Perspective) {
-				srcDevices = nil
+			if options.Perspective != "" {
+				if !selectorIncludesPerspective(src, p, options.Perspective) {
+					srcDevices = nil
+				} else {
+					srcDevices = intersectDevices(srcDevices, devicesForPerspective(options.Perspective, p, devices))
+				}
 			}
 			for _, dstRaw := range rule.Dst {
 				dst := parseDstSelector(dstRaw)
-				dstDevices := devicesForSelector(dst.Selector, p, devices)
 				for _, from := range srcDevices {
+					dstDevices := devicesForDstSelector(dst.Selector, from, p, devices)
 					for _, to := range dstDevices {
 						if from.ID == "" || to.ID == "" {
 							continue
@@ -272,12 +276,16 @@ func ResolveEffectiveAccess(p Policy, devices []api.Device, options EdgeOptions)
 		}
 		for _, src := range grant.Src {
 			srcDevices := devicesForSelector(src, p, devices)
-			if options.Perspective != "" && !selectorIncludesPerspective(src, p, options.Perspective) {
-				srcDevices = nil
+			if options.Perspective != "" {
+				if !selectorIncludesPerspective(src, p, options.Perspective) {
+					srcDevices = nil
+				} else {
+					srcDevices = intersectDevices(srcDevices, devicesForPerspective(options.Perspective, p, devices))
+				}
 			}
 			for _, dst := range grant.Dst {
-				dstDevices := devicesForSelector(dst, p, devices)
 				for _, from := range srcDevices {
+					dstDevices := devicesForDstSelector(dst, from, p, devices)
 					for _, to := range dstDevices {
 						if from.ID == "" || to.ID == "" {
 							continue
@@ -523,13 +531,46 @@ func sortedUnionKeys(saved, draft map[string]api.Edge) []string {
 }
 
 func selectorIncludesPerspective(selector string, p Policy, perspective string) bool {
+	if perspective == "" {
+		return true
+	}
 	if selector == perspective || selector == "*" {
 		return true
 	}
-	if selector == "autogroup:member" && perspective != "" {
+	if strings.HasPrefix(perspective, "group:") && selector == perspective {
+		return true
+	}
+	if strings.HasPrefix(perspective, "tag:") && selector == perspective {
+		return true
+	}
+	if strings.HasPrefix(perspective, "autogroup:") && selector == perspective {
+		return true
+	}
+	if strings.Contains(perspective, "@") && strings.HasPrefix(selector, "group:") {
+		for _, member := range p.Groups[selector] {
+			if member == perspective {
+				return true
+			}
+		}
+	}
+	if selector == "autogroup:member" {
+		if strings.Contains(perspective, "@") {
+			return true
+		}
+		if strings.HasPrefix(perspective, "group:") {
+			return true
+		}
+	}
+	if selector == "autogroup:tagged" && strings.HasPrefix(perspective, "tag:") {
+		return true
+	}
+	if selector == "autogroup:admin" && (perspective == "autogroup:admin" || strings.Contains(perspective, "@")) {
 		return true
 	}
 	if strings.HasPrefix(selector, "group:") {
+		if perspective == selector {
+			return true
+		}
 		for _, member := range p.Groups[selector] {
 			if member == perspective {
 				return true
@@ -537,6 +578,68 @@ func selectorIncludesPerspective(selector string, p Policy, perspective string) 
 		}
 	}
 	return false
+}
+
+func devicesForPerspective(perspective string, p Policy, devices []api.Device) []api.Device {
+	perspective = strings.TrimSpace(perspective)
+	if perspective == "" {
+		return nil
+	}
+	if strings.HasPrefix(perspective, "group:") {
+		return devicesForUsers(p.Groups[perspective], devices)
+	}
+	if strings.HasPrefix(perspective, "tag:") {
+		return devicesForTag(perspective, devices)
+	}
+	switch perspective {
+	case "autogroup:member", "autogroup:admin":
+		return devicesWithOwner(devices)
+	case "autogroup:tagged":
+		return devicesWithTags(devices)
+	}
+	if strings.Contains(perspective, "@") {
+		return devicesForUser(perspective, devices)
+	}
+	return nil
+}
+
+func intersectDevices(a, b []api.Device) []api.Device {
+	if len(a) == 0 || len(b) == 0 {
+		return nil
+	}
+	ids := map[string]bool{}
+	for _, d := range b {
+		if d.ID != "" {
+			ids[d.ID] = true
+		}
+	}
+	var out []api.Device
+	for _, d := range a {
+		if ids[d.ID] {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
+func devicesForDstSelector(selector string, from api.Device, p Policy, devices []api.Device) []api.Device {
+	selector = strings.TrimSpace(selector)
+	if selector == "autogroup:self" {
+		if from.Owner == "" {
+			return nil
+		}
+		var out []api.Device
+		for _, d := range devices {
+			if d.ID == from.ID {
+				continue
+			}
+			if d.Owner == from.Owner && len(d.Tags) == 0 {
+				out = append(out, d)
+			}
+		}
+		return out
+	}
+	return devicesForSelector(selector, p, devices)
 }
 
 func findObjectMemberValue(obj *hujson.Object, name string) *hujson.Value {
@@ -808,7 +911,13 @@ func devicesForSelector(selector string, p Policy, devices []api.Device) []api.D
 	if selector == "" {
 		return nil
 	}
-	if selector == "*" || selector == "autogroup:member" {
+	if selector == "*" || selector == "autogroup:member" || selector == "autogroup:admin" {
+		return devicesWithOwner(devices)
+	}
+	if selector == "autogroup:tagged" {
+		return devicesWithTags(devices)
+	}
+	if selector == "autogroup:self" {
 		return devicesWithOwner(devices)
 	}
 	if strings.HasPrefix(selector, "group:") {
@@ -833,6 +942,16 @@ func devicesWithOwner(devices []api.Device) []api.Device {
 	var out []api.Device
 	for _, d := range devices {
 		if d.Owner != "" {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
+func devicesWithTags(devices []api.Device) []api.Device {
+	var out []api.Device
+	for _, d := range devices {
+		if len(d.Tags) > 0 {
 			out = append(out, d)
 		}
 	}

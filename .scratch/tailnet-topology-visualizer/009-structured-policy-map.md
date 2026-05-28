@@ -25,5 +25,5 @@ The UI should present this as a policy workbench section navigator, not as the f
 ## Notes
 
 - Implemented with `GET /api/policy/map`.
-- The workbench is read-only and keeps raw HuJSON available in the existing policy panel.
+- The workbench was read-only at ship time; the **Policy Workbench shell** ([019](019-policy-workbench-shell.md)) replaces the flat panel as the structured editing surface. See [018 roadmap](018-policy-scenario-roadmap.md).
 - Unsupported sections are listed with their decoded raw value so future editors can preserve them.

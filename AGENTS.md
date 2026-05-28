@@ -11,6 +11,8 @@ The `impeccable` skill (from `skills-lock.json`) is available for UI work. Use i
 
 Issues are local markdown files under `.scratch/<feature>/`. See `docs/agents/issue-tracker.md`.
 
+Policy editing and simulation roadmap: `.scratch/tailnet-topology-visualizer/018-policy-scenario-roadmap.md` — start with [019-policy-workbench-shell.md](.scratch/tailnet-topology-visualizer/019-policy-workbench-shell.md). Reference UI screenshots: `screenshots of ACL in site/`.
+
 ### Triage labels
 
 `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.

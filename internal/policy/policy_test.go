@@ -41,6 +41,89 @@ func TestEffectiveAccessEdgesExpandSelectorsAndClassifyPorts(t *testing.T) {
 	assertEdge(t, edges, "bob-laptop", "router", api.AccessScopeHTTP, []string{"443", "80"})
 }
 
+func TestEffectiveAccessEdgesPerspectiveLimitsSourcesToSubject(t *testing.T) {
+	p := Policy{
+		ACLs: []ACLRule{
+			{Action: "accept", Src: []string{"autogroup:member"}, Dst: []string{"tag:web:443"}},
+			{Action: "accept", Src: []string{"bob@example.com"}, Dst: []string{"tag:web:22"}},
+		},
+	}
+	devices := []api.Device{
+		{ID: "alice", Owner: "alice@example.com", TailscaleIPs: []string{"100.64.0.1"}},
+		{ID: "bob", Owner: "bob@example.com", TailscaleIPs: []string{"100.64.0.2"}},
+		{ID: "web", Owner: "ops@example.com", Tags: []string{"tag:web"}, TailscaleIPs: []string{"100.64.0.3"}},
+	}
+
+	edges := ResolveEffectiveAccess(p, devices, EdgeOptions{Perspective: "alice@example.com"})
+	if len(edges) != 1 {
+		t.Fatalf("got %d edges, want 1 (alice only): %#v", len(edges), edges)
+	}
+	assertEdge(t, edges, "alice", "web", api.AccessScopeHTTP, []string{"443"})
+}
+
+func TestEffectiveAccessEdgesAutogroupSelfOwnDevices(t *testing.T) {
+	p := Policy{
+		ACLs: []ACLRule{
+			{Action: "accept", Src: []string{"autogroup:member"}, Dst: []string{"autogroup:self:22"}},
+		},
+	}
+	devices := []api.Device{
+		{ID: "alice-laptop", Owner: "alice@example.com", TailscaleIPs: []string{"100.64.0.1"}},
+		{ID: "alice-phone", Owner: "alice@example.com", TailscaleIPs: []string{"100.64.0.2"}},
+		{ID: "bob-laptop", Owner: "bob@example.com", TailscaleIPs: []string{"100.64.0.3"}},
+	}
+
+	edges := ResolveEffectiveAccess(p, devices, EdgeOptions{Perspective: "alice@example.com"})
+	assertEdge(t, edges, "alice-laptop", "alice-phone", api.AccessScopeSSH, []string{"22"})
+	assertEdge(t, edges, "alice-phone", "alice-laptop", api.AccessScopeSSH, []string{"22"})
+	for _, edge := range edges {
+		if edge.From == "bob-laptop" || edge.To == "bob-laptop" {
+			t.Fatalf("bob should not appear in alice perspective: %#v", edge)
+		}
+	}
+}
+
+func TestEffectiveAccessEdgesTagPerspective(t *testing.T) {
+	p := Policy{
+		ACLs: []ACLRule{
+			{Action: "accept", Src: []string{"tag:ci"}, Dst: []string{"tag:web:443"}},
+		},
+	}
+	devices := []api.Device{
+		{ID: "ci-runner", Owner: "ops@example.com", Tags: []string{"tag:ci"}, TailscaleIPs: []string{"100.64.0.1"}},
+		{ID: "ci-runner-2", Owner: "ops@example.com", Tags: []string{"tag:ci"}, TailscaleIPs: []string{"100.64.0.2"}},
+		{ID: "web", Owner: "ops@example.com", Tags: []string{"tag:web"}, TailscaleIPs: []string{"100.64.0.3"}},
+	}
+
+	edges := ResolveEffectiveAccess(p, devices, EdgeOptions{Perspective: "tag:ci"})
+	if len(edges) != 2 {
+		t.Fatalf("got %d edges, want 2: %#v", len(edges), edges)
+	}
+	assertEdge(t, edges, "ci-runner", "web", api.AccessScopeHTTP, []string{"443"})
+	assertEdge(t, edges, "ci-runner-2", "web", api.AccessScopeHTTP, []string{"443"})
+}
+
+func TestEffectiveAccessEdgesGroupPerspective(t *testing.T) {
+	p := Policy{
+		Groups: map[string][]string{"group:eng": {"alice@example.com", "bob@example.com"}},
+		ACLs: []ACLRule{
+			{Action: "accept", Src: []string{"group:eng"}, Dst: []string{"tag:web:443"}},
+		},
+	}
+	devices := []api.Device{
+		{ID: "alice", Owner: "alice@example.com", TailscaleIPs: []string{"100.64.0.1"}},
+		{ID: "bob", Owner: "bob@example.com", TailscaleIPs: []string{"100.64.0.2"}},
+		{ID: "web", Owner: "ops@example.com", Tags: []string{"tag:web"}, TailscaleIPs: []string{"100.64.0.3"}},
+	}
+
+	edges := ResolveEffectiveAccess(p, devices, EdgeOptions{Perspective: "group:eng"})
+	if len(edges) != 2 {
+		t.Fatalf("got %d edges, want 2: %#v", len(edges), edges)
+	}
+	assertEdge(t, edges, "alice", "web", api.AccessScopeHTTP, []string{"443"})
+	assertEdge(t, edges, "bob", "web", api.AccessScopeHTTP, []string{"443"})
+}
+
 func TestEffectiveAccessEdgesCanFilterByPerspective(t *testing.T) {
 	p := Policy{
 		Groups: map[string][]string{"group:eng": {"alice@example.com"}},
