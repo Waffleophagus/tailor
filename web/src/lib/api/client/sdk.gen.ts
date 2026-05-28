@@ -2,7 +2,7 @@
 
 import type { Client, Options as Options2, TDataShape } from './client';
 import { client } from './client.gen';
-import type { AuthenticateCloudData, AuthenticateCloudErrors, AuthenticateCloudResponses, DraftPolicyAclRuleData, DraftPolicyAclRuleErrors, DraftPolicyAclRuleResponses, GetCloudStatusData, GetCloudStatusResponses, GetHealthData, GetHealthResponses, GetPolicyData, GetPolicyErrors, GetPolicyResponses, GetStatusData, GetStatusResponses, GetTopologyData, GetTopologyErrors, GetTopologyResponses, SaveValidatedPolicyDraftData, SaveValidatedPolicyDraftErrors, SaveValidatedPolicyDraftResponses, ValidatePolicyDraftData, ValidatePolicyDraftErrors, ValidatePolicyDraftResponses } from './types.gen';
+import type { AuthenticateCloudData, AuthenticateCloudErrors, AuthenticateCloudResponses, DraftPolicyAclRuleData, DraftPolicyAclRuleErrors, DraftPolicyAclRuleResponses, GetCloudStatusData, GetCloudStatusResponses, GetHealthData, GetHealthResponses, GetPolicyData, GetPolicyErrors, GetPolicyMapData, GetPolicyMapErrors, GetPolicyMapResponses, GetPolicyResponses, GetStatusData, GetStatusResponses, GetTopologyData, GetTopologyErrors, GetTopologyResponses, SaveValidatedPolicyDraftData, SaveValidatedPolicyDraftErrors, SaveValidatedPolicyDraftResponses, ValidatePolicyDraftData, ValidatePolicyDraftErrors, ValidatePolicyDraftResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -36,6 +36,8 @@ export const authenticateCloud = <ThrowOnError extends boolean = false>(options:
 });
 
 export const getPolicy = <ThrowOnError extends boolean = false>(options?: Options<GetPolicyData, ThrowOnError>) => (options?.client ?? client).get<GetPolicyResponses, GetPolicyErrors, ThrowOnError>({ url: '/api/policy', ...options });
+
+export const getPolicyMap = <ThrowOnError extends boolean = false>(options?: Options<GetPolicyMapData, ThrowOnError>) => (options?.client ?? client).get<GetPolicyMapResponses, GetPolicyMapErrors, ThrowOnError>({ url: '/api/policy/map', ...options });
 
 export const draftPolicyAclRule = <ThrowOnError extends boolean = false>(options: Options<DraftPolicyAclRuleData, ThrowOnError>) => (options.client ?? client).post<DraftPolicyAclRuleResponses, DraftPolicyAclRuleErrors, ThrowOnError>({
     url: '/api/policy/draft',

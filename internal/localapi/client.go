@@ -50,6 +50,25 @@ func (c *Client) Status(ctx context.Context) ([]api.Device, error) {
 	return DevicesFromIPNStatus(status), nil
 }
 
+func (c *Client) TailnetName(ctx context.Context) (string, error) {
+	status, err := c.localClient.StatusWithoutPeers(ctx)
+	if err != nil {
+		return "", fmt.Errorf("%w: %v", ErrUnavailable, err)
+	}
+	// Prefer the DNS suffix (e.g. "triceratops-gecko.ts.net") — this is what
+	// Tailscale's Cloud API expects for /api/v2/tailnet/{name}/acl calls.
+	if status.CurrentTailnet != nil && status.CurrentTailnet.MagicDNSSuffix != "" {
+		return status.CurrentTailnet.MagicDNSSuffix, nil
+	}
+	if status.MagicDNSSuffix != "" {
+		return status.MagicDNSSuffix, nil
+	}
+	if status.CurrentTailnet != nil && status.CurrentTailnet.Name != "" {
+		return status.CurrentTailnet.Name, nil
+	}
+	return "", nil
+}
+
 type Status struct {
 	Self *Peer           `json:"Self"`
 	Peer map[string]Peer `json:"Peer"`

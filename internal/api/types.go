@@ -69,6 +69,7 @@ type PolicyRef struct {
 type TopologyResponse struct {
 	Devices []Device `json:"devices"`
 	Edges   []Edge   `json:"edges"`
+	Tailnet string   `json:"tailnet"`
 }
 
 type CloudAuthRequest struct {

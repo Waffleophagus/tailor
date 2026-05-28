@@ -1,216 +1,168 @@
 <script lang="ts">
-  let {
-    colorBy = $bindable<"status" | "tag" | "owner" | "os">("status"),
-    authenticated = false,
-    graphMode = $bindable<"focused" | "all">("all"),
-    tagOptions = [] as string[],
-    ownerOptions = [] as string[],
-    osOptions = [] as string[],
-  }: {
-    colorBy?: "status" | "tag" | "owner" | "os";
-    authenticated?: boolean;
-    graphMode?: "focused" | "all";
-    tagOptions?: string[];
-    ownerOptions?: string[];
-    osOptions?: string[];
-  } = $props();
+	let {
+		colorBy = $bindable<'status' | 'tag' | 'owner' | 'os'>('status'),
+		authenticated = false,
+		graphMode = $bindable<'focused' | 'all'>('all'),
+		tagOptions = [] as string[],
+		ownerOptions = [] as string[],
+		osOptions = [] as string[]
+	}: {
+		colorBy?: 'status' | 'tag' | 'owner' | 'os';
+		authenticated?: boolean;
+		graphMode?: 'focused' | 'all';
+		tagOptions?: string[];
+		ownerOptions?: string[];
+		osOptions?: string[];
+	} = $props();
 
-  const osColors: Record<string, string> = {
-    windows: "#01A6F0",
-    android: "#32DE84",
-    linux: "#F4BC00",
-    bsd: "#B5010F",
-    macOS: "#A2AAAD",
-    ios: "#FFFFFF",
-    tvos: "#FA6C1B",
-  };
+	const osColors: Record<string, string> = {
+		windows: '#01A6F0',
+		android: '#32DE84',
+		linux: '#F4BC00',
+		bsd: '#B5010F',
+		macOS: '#A2AAAD',
+		ios: '#FFFFFF',
+		tvos: '#FA6C1B'
+	};
 
-  function palette(value: string): string {
-    const osColor = osColors[value];
-    if (osColor) return osColor;
-    const colors = ["#438aa1", "#a5663f", "#7c6fb0", "#b0892f", "#5d7f73", "#b45f74", "#5973b0"];
-    let hash = 0;
-    for (let i = 0; i < value.length; i += 1) {
-      hash = (hash + value.charCodeAt(i) * (i + 1)) % colors.length;
-    }
-    return colors[hash];
-  }
+	function palette(value: string): string {
+		const osColor = osColors[value];
+		if (osColor) return osColor;
+		const colors = ['#438aa1', '#a5663f', '#7c6fb0', '#b0892f', '#5d7f73', '#b45f74', '#5973b0'];
+		let hash = 0;
+		for (let i = 0; i < value.length; i += 1) {
+			hash = (hash + value.charCodeAt(i) * (i + 1)) % colors.length;
+		}
+		return colors[hash];
+	}
 
-  interface ColorEntry {
-    color: string;
-    label: string;
-  }
+	interface ColorEntry {
+		color: string;
+		label: string;
+	}
 
-  const nodeEntries = $derived.by((): ColorEntry[] => {
-    if (colorBy === "status") {
-      return [
-        { color: "#41a86f", label: "Online" },
-        { color: "#9aa7a1", label: "Offline" },
-      ];
-    }
-    const options =
-      colorBy === "tag" ? tagOptions : colorBy === "owner" ? ownerOptions : osOptions;
-    const maxVisible = 8;
-    const visible = options.slice(0, maxVisible);
-    return visible.map((value) => ({
-      color: palette(value || "unknown"),
-      label: value || "unknown",
-    }));
-  });
+	const nodeEntries = $derived.by((): ColorEntry[] => {
+		if (colorBy === 'status') {
+			return [
+				{ color: '#41a86f', label: 'Online' },
+				{ color: '#9aa7a1', label: 'Offline' }
+			];
+		}
+		const options = colorBy === 'tag' ? tagOptions : colorBy === 'owner' ? ownerOptions : osOptions;
+		const maxVisible = 8;
+		const visible = options.slice(0, maxVisible);
+		return visible.map((value) => ({
+			color: palette(value || 'unknown'),
+			label: value || 'unknown'
+		}));
+	});
 
-  const nodeLegendTitle = $derived.by((): string => {
-    if (colorBy === "status") return "Status";
-    if (colorBy === "tag") return "Tag";
-    if (colorBy === "owner") return "Owner";
-    return "OS";
-  });
+	const nodeLegendTitle = $derived.by((): string => {
+		if (colorBy === 'status') return 'Status';
+		if (colorBy === 'tag') return 'Tag';
+		if (colorBy === 'owner') return 'Owner';
+		return 'OS';
+	});
 
-  const lineTitle = $derived.by((): string => {
-    if (!authenticated) return "Inferred relationships";
-    if (graphMode === "focused") return `ACL focus\u00a0\u2014\u00a0focused`;
-    return "ACL access scope";
-  });
+	const lineTitle = $derived.by((): string => {
+		if (!authenticated) return 'Inferred relationships';
+		if (graphMode === 'focused') return `ACL focus\u00a0\u2014\u00a0focused`;
+		return 'ACL access scope';
+	});
 </script>
 
-<div class="graph-legend" role="region" aria-label="Graph legend">
-  <div class="legend-title">{lineTitle}</div>
+<div
+	class="pointer-events-auto absolute bottom-3 left-3 z-10 max-h-[calc(100%-1.5rem)] w-48 overflow-y-auto rounded-lg border border-graph-border bg-legend-bg/95 p-2 text-[0.675rem] font-bold text-secondary shadow-[0_8px_22px_rgb(23_33_38/8%)]"
+	role="region"
+	aria-label="Graph legend"
+>
+	<div
+		class="border-base-light mb-2 border-b pb-1 text-[0.6rem] font-extrabold tracking-widest text-legend-title uppercase"
+	>
+		{lineTitle}
+	</div>
 
-  {#if !authenticated}
-    <div class="legend-section">
-      <div class="legend-row">
-        <span class="swatch-line" style="border-color: #5d7f73; border-style: solid; border-width: 2.4px;"></span>
-        <span>Owner</span>
-      </div>
-      <div class="legend-row">
-        <span class="swatch-line" style="border-color: #7c6fb0; border-style: dashed; border-width: 1.7px;"></span>
-        <span>Tag</span>
-      </div>
-      <div class="legend-row">
-        <span class="swatch-line" style="border-color: #a5663f; border-style: dotted; border-width: 1.8px;"></span>
-        <span>Subnet</span>
-      </div>
-    </div>
-  {:else}
-    <div class="legend-section">
-      <div class="legend-row">
-        <span class="swatch-line" style="border-color: #438aa1; border-style: solid; border-width: 2.2px;"></span>
-        <span>ACL (generic)</span>
-      </div>
-      <div class="legend-row">
-        <span class="swatch-line" style="border-color: #2f9f68; border-style: solid; border-width: 2.8px;"></span>
-        <span>SSH (port 22)</span>
-      </div>
-      <div class="legend-row">
-        <span class="swatch-line" style="border-color: #438aa1; border-style: solid; border-width: 2.4px;"></span>
-        <span>HTTP/S (80, 443)</span>
-      </div>
-      <div class="legend-row">
-        <span class="swatch-line" style="border-color: #b0892f; border-style: solid; border-width: 3.1px;"></span>
-        <span>Broad (all ports)</span>
-      </div>
-      <div class="legend-row">
-        <span class="swatch-line" style="border-color: #7c6fb0; border-style: dashed; border-width: 2.3px;"></span>
-        <span>Limited / Custom</span>
-      </div>
-    </div>
-  {/if}
+	{#if !authenticated}
+		<div class="flex flex-col gap-1">
+			<div class="legend-row">
+				<span
+					class="mt-px inline-block h-0 w-5 min-w-5 rounded-[0.0625rem] border-t-2 border-solid border-[#5d7f73]"
+				></span>
+				<span>Owner</span>
+			</div>
+			<div class="legend-row">
+				<span
+					class="mt-px inline-block h-0 w-5 min-w-5 rounded-[0.0625rem] border-t-[1.7px] border-dashed border-[#7c6fb0]"
+				></span>
+				<span>Tag</span>
+			</div>
+			<div class="legend-row">
+				<span
+					class="mt-px inline-block h-0 w-5 min-w-5 rounded-[0.0625rem] border-t-[1.8px] border-dotted border-[#a5663f]"
+				></span>
+				<span>Subnet</span>
+			</div>
+		</div>
+	{:else}
+		<div class="flex flex-col gap-1">
+			<div class="legend-row">
+				<span
+					class="mt-px inline-block h-0 w-5 min-w-5 rounded-[0.0625rem] border-t-[2.2px] border-solid border-[#438aa1]"
+				></span>
+				<span>ACL (generic)</span>
+			</div>
+			<div class="legend-row">
+				<span
+					class="mt-px inline-block h-0 w-5 min-w-5 rounded-[0.0625rem] border-t-[2.8px] border-solid border-[#2f9f68]"
+				></span>
+				<span>SSH (port 22)</span>
+			</div>
+			<div class="legend-row">
+				<span
+					class="mt-px inline-block h-0 w-5 min-w-5 rounded-[0.0625rem] border-t-[2.4px] border-solid border-[#438aa1]"
+				></span>
+				<span>HTTP/S (80, 443)</span>
+			</div>
+			<div class="legend-row">
+				<span
+					class="mt-px inline-block h-0 w-5 min-w-5 rounded-[0.0625rem] border-t-[3.1px] border-solid border-[#b0892f]"
+				></span>
+				<span>Broad (all ports)</span>
+			</div>
+			<div class="legend-row">
+				<span
+					class="mt-px inline-block h-0 w-5 min-w-5 rounded-[0.0625rem] border-t-[2.3px] border-dashed border-[#7c6fb0]"
+				></span>
+				<span>Limited / Custom</span>
+			</div>
+		</div>
+	{/if}
 
-  <div class="legend-divider"></div>
+	<div class="bg-border-light my-[0.35rem] h-px"></div>
 
-  <div class="legend-section">
-    <div class="legend-section-title">{nodeLegendTitle}</div>
-    {#each nodeEntries as entry (entry.label)}
-      <div class="legend-row">
-        <span class="swatch-dot" style="background-color: {entry.color};"></span>
-        <span title={entry.label}>{entry.label}</span>
-      </div>
-    {/each}
-  </div>
+	<div class="flex flex-col gap-1">
+		<div class="mb-0.5 text-[0.6rem] font-extrabold tracking-widest text-legend-title uppercase">
+			{nodeLegendTitle}
+		</div>
+		{#each nodeEntries as entry (entry.label)}
+			<div class="legend-row">
+				<span
+					class="inline-block h-2 w-2 min-w-2 rounded-full"
+					style="background-color: {entry.color}"
+				></span>
+				<span title={entry.label}>{entry.label}</span>
+			</div>
+		{/each}
+	</div>
 </div>
 
 <style>
-  .graph-legend {
-    position: absolute;
-    bottom: 0.75rem;
-    left: 0.75rem;
-    z-index: 10;
-    width: 12rem;
-    max-height: calc(100% - 1.5rem);
-    overflow-y: auto;
-    background: oklch(0.985 0.006 158 / 0.95);
-    border: 1px solid oklch(0.82 0.018 158);
-    border-radius: 8px;
-    padding: 0.5rem;
-    box-shadow: 0 8px 22px rgb(23 33 38 / 8%);
-    font-size: 0.675rem;
-    font-weight: 700;
-    color: #586761;
-    pointer-events: auto;
-  }
+	@reference "../../app.css";
+	.legend-row {
+		@apply flex items-center gap-[0.4rem] overflow-hidden leading-[1.2];
+	}
 
-  .legend-title {
-    font-size: 0.6rem;
-    font-weight: 800;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: #8a9590;
-    margin-bottom: 0.5rem;
-    padding-bottom: 0.25rem;
-    border-bottom: 1px solid #e8eeeb;
-  }
-
-  .legend-section-title {
-    font-size: 0.6rem;
-    font-weight: 800;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: #8a9590;
-    margin-bottom: 0.15rem;
-  }
-
-  .legend-section {
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-  }
-
-  .legend-divider {
-    height: 1px;
-    background-color: #e8eeeb;
-    margin: 0.35rem 0;
-  }
-
-  .legend-row {
-    display: flex;
-    align-items: center;
-    gap: 0.4rem;
-    line-height: 1.2;
-    overflow: hidden;
-  }
-
-  .legend-row > span:last-child {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    min-width: 0;
-  }
-
-  .swatch-line {
-    display: inline-block;
-    width: 1.25rem;
-    min-width: 1.25rem;
-    height: 0;
-    border-top-width: var(--line-width, 2px);
-    border-top-style: solid;
-    border-radius: 0.0625rem;
-    margin-top: 0.0625rem;
-  }
-
-  .swatch-dot {
-    display: inline-block;
-    width: 0.5rem;
-    height: 0.5rem;
-    border-radius: 50%;
-    min-width: 0.5rem;
-  }
+	.legend-row > span:last-child {
+		@apply min-w-0 overflow-hidden text-ellipsis whitespace-nowrap;
+	}
 </style>

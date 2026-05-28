@@ -1,0 +1,11 @@
+# Package Managers
+package-lock.json
+pnpm-lock.yaml
+yarn.lock
+bun.lock
+bun.lockb
+
+# Generated code
+src/lib/api/client/
+src/lib/api/topology.ts
+src/lib/api/types.generated.ts

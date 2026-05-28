@@ -272,7 +272,7 @@ func selectorIncludesPerspective(selector string, p Policy, perspective string) 
 	if selector == perspective || selector == "*" {
 		return true
 	}
-	if perspective == "autogroup:member" && selector != "" {
+	if selector == "autogroup:member" && perspective != "" {
 		return true
 	}
 	if strings.HasPrefix(selector, "group:") {

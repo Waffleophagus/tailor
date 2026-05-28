@@ -44,7 +44,7 @@ export type Edge = {
     perspectives?: Array<string>;
 };
 
-export type AccessScope = 'ssh' | 'http' | 'broad' | 'custom' | 'limited' | 'none';
+export type AccessScope = 'ssh' | 'http' | 'broad' | 'custom' | 'limited' | 'none' | '';
 
 export type PolicyRef = {
     section: string;
@@ -56,6 +56,7 @@ export type PolicyRef = {
 export type TopologyResponse = {
     devices: Array<Device>;
     edges: Array<Edge>;
+    tailnet: string;
 };
 
 export type CloudAuthRequest = {
@@ -72,6 +73,36 @@ export type CloudAuthStatusResponse = {
 export type PolicyResponse = {
     tailnet: string;
     hujson: string;
+};
+
+export type PolicyMapResponse = {
+    tailnet: string;
+    hujson: string;
+    sections: Array<PolicySection>;
+    parseError?: string;
+};
+
+export type PolicySection = {
+    name: string;
+    type: string;
+    supported: boolean;
+    count: number;
+    entries?: Array<PolicySectionEntry>;
+    /**
+     * Original decoded section value.
+     */
+    raw?: unknown;
+    description?: string;
+};
+
+export type PolicySectionEntry = {
+    label: string;
+    summary?: string;
+    selectors?: Array<string>;
+    /**
+     * Original decoded entry value.
+     */
+    value?: unknown;
 };
 
 export type PolicyDraftRequest = {
@@ -244,6 +275,35 @@ export type GetPolicyResponses = {
 };
 
 export type GetPolicyResponse = GetPolicyResponses[keyof GetPolicyResponses];
+
+export type GetPolicyMapData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/policy/map';
+};
+
+export type GetPolicyMapErrors = {
+    /**
+     * Cloud API authentication has not been enabled.
+     */
+    401: ErrorResponse;
+    /**
+     * Tailscale Cloud API request failed.
+     */
+    502: ErrorResponse;
+};
+
+export type GetPolicyMapError = GetPolicyMapErrors[keyof GetPolicyMapErrors];
+
+export type GetPolicyMapResponses = {
+    /**
+     * Read-only structured view of the current tailnet policy file.
+     */
+    200: PolicyMapResponse;
+};
+
+export type GetPolicyMapResponse = GetPolicyMapResponses[keyof GetPolicyMapResponses];
 
 export type DraftPolicyAclRuleData = {
     body: PolicyDraftRequest;

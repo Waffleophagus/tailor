@@ -308,18 +308,28 @@ func (s *Server) topologySnapshot(ctx context.Context, devices []api.Device) api
 			}
 		}
 	}
+
+	tailnet := ""
+	if tn, err := s.localAPI.TailnetName(ctx); err == nil {
+		tailnet = tn
+	}
+
 	return api.TopologyResponse{
 		Devices: devices,
 		Edges:   edges,
+		Tailnet: tailnet,
 	}
 }
 
 func writeJSON(w http.ResponseWriter, status int, payload any) {
+	buf, err := json.Marshal(payload)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	if err := json.NewEncoder(w).Encode(payload); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-	}
+	w.Write(buf)
 }
 
 func writeError(w http.ResponseWriter, status int, message string) {

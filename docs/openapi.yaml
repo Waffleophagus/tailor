@@ -284,7 +284,7 @@ components:
             type: string
     AccessScope:
       type: string
-      enum: [ssh, http, broad, custom, limited, none]
+      enum: [ssh, http, broad, custom, limited, none, ""]
     PolicyRef:
       type: object
       required: [section, index]
@@ -299,7 +299,7 @@ components:
           type: string
     TopologyResponse:
       type: object
-      required: [devices, edges]
+      required: [devices, edges, tailnet]
       properties:
         devices:
           type: array
@@ -309,6 +309,8 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Edge"
+        tailnet:
+          type: string
     CloudAuthRequest:
       type: object
       required: [tailnet, apiKey]
@@ -367,6 +369,7 @@ components:
             $ref: "#/components/schemas/PolicySectionEntry"
         raw:
           description: Original decoded section value.
+          nullable: true
         description:
           type: string
     PolicySectionEntry:
@@ -383,6 +386,7 @@ components:
             type: string
         value:
           description: Original decoded entry value.
+          nullable: true
     PolicyDraftRequest:
       type: object
       required: [sources, destinations, ports]
