@@ -9,7 +9,8 @@ permissions:
   packages: write
 
 env:
-  # OCI registry host or prefix (Forgejo/Gitea/Codeberg/ghcr.io). Image: $CONTAINER_REGISTRY/$owner/$repo
+  # Primary OCI registry host or prefix (Forgejo/Gitea/Codeberg/etc.).
+  # The release job also mirrors to ghcr.io/<owner>/<repo> when running on GitHub.
   CONTAINER_REGISTRY: ${{ vars.CONTAINER_REGISTRY || 'ghcr.io' }}
   # Demo tailnet only — never runs production ACL save E2E (see test:e2e:production).
   TAILSCALE_API_KEY: tskey-api-tailor-dev
@@ -134,27 +135,59 @@ jobs:
           echo "skip=false" >> "$GITHUB_OUTPUT"
           echo "Next release: v${version}"
 
-      - name: Compute container image
+      - name: Compute container image tags
         if: steps.version.outputs.skip != 'true'
-        id: image
+        id: image-tags
         shell: bash
-        run: |
-          image="$CONTAINER_REGISTRY/$(echo "$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]')"
-          echo "image=$image" >> "$GITHUB_OUTPUT"
-          echo "Publishing to ${image} when REGISTRY_TOKEN is set."
-
-      - name: Check registry token
-        if: steps.version.outputs.skip != 'true'
-        id: registry-token
         env:
           REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
         run: |
-          if [ -z "$REGISTRY_TOKEN" ]; then
-            echo "REGISTRY_TOKEN is not set; skipping container publish."
-            echo "publish=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "publish=true" >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+
+          version="${{ steps.version.outputs.version }}"
+          tag="${{ steps.version.outputs.tag }}"
+          repo="$(echo "$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]')"
+
+          declare -A seen=()
+          tags=()
+          primary_publish=false
+          ghcr_publish=false
+
+          add_tags() {
+            local image="$1"
+            for suffix in "$version" "$tag" latest; do
+              local full="${image}:${suffix}"
+              if [ -z "${seen[$full]+x}" ]; then
+                seen["$full"]=1
+                tags+=("$full")
+              fi
+            done
+          }
+
+          if [ "${CONTAINER_REGISTRY}" != "ghcr.io" ] && [ -n "${REGISTRY_TOKEN:-}" ]; then
+            primary_publish=true
+            add_tags "${CONTAINER_REGISTRY}/${repo}"
           fi
+
+          if [ "${GITHUB_SERVER_URL}" = "https://github.com" ]; then
+            ghcr_publish=true
+            add_tags "ghcr.io/${repo}"
+          fi
+
+          if [ "${#tags[@]}" -eq 0 ]; then
+            echo "No container registry publish target is configured."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "primary_publish=${primary_publish}" >> "$GITHUB_OUTPUT"
+          echo "ghcr_publish=${ghcr_publish}" >> "$GITHUB_OUTPUT"
+          echo "publish=true" >> "$GITHUB_OUTPUT"
+          {
+            echo "tags<<EOF"
+            printf '%s\n' "${tags[@]}"
+            echo EOF
+          } >> "$GITHUB_OUTPUT"
 
       - name: Set up Go
         if: steps.version.outputs.skip != 'true'
@@ -232,24 +265,29 @@ jobs:
 
           ls -la "$staging"
 
-      - name: Log in to container registry
-        if: steps.version.outputs.skip != 'true' && steps.registry-token.outputs.publish == 'true'
+      - name: Log in to primary container registry
+        if: steps.version.outputs.skip != 'true' && steps.image-tags.outputs.primary_publish == 'true'
         env:
           REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
           REGISTRY_USERNAME: ${{ vars.REGISTRY_USERNAME || github.actor }}
         run: |
           echo "$REGISTRY_TOKEN" | docker login "$CONTAINER_REGISTRY" -u "$REGISTRY_USERNAME" --password-stdin
 
-      - name: Build and push Docker image
-        if: steps.version.outputs.skip != 'true' && steps.registry-token.outputs.publish == 'true'
+      - name: Log in to GitHub Container Registry
+        if: steps.version.outputs.skip != 'true' && steps.image-tags.outputs.ghcr_publish == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REGISTRY_USERNAME: ${{ github.actor }}
+        run: |
+          echo "$GITHUB_TOKEN" | docker login ghcr.io -u "$REGISTRY_USERNAME" --password-stdin
+
+      - name: Build and push Docker images
+        if: steps.version.outputs.skip != 'true' && steps.image-tags.outputs.publish == 'true'
         uses: docker/build-push-action@v6
         with:
           context: .
           push: true
-          tags: |
-            ${{ steps.image.outputs.image }}:${{ steps.version.outputs.version }}
-            ${{ steps.image.outputs.image }}:${{ steps.version.outputs.tag }}
-            ${{ steps.image.outputs.image }}:latest
+          tags: ${{ steps.image-tags.outputs.tags }}
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.version=${{ steps.version.outputs.version }}
