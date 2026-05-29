@@ -5,10 +5,21 @@ export const healthResponseSchema = z.object({
 	version: z.string()
 });
 
+export const setupHintSchema = z.object({
+	id: z.string(),
+	message: z.string()
+});
+
+export const tailscaleSetupInfoSchema = z.object({
+	required: z.boolean(),
+	hints: z.array(setupHintSchema).optional()
+});
+
 export const localApiStatusResponseSchema = z.object({
 	available: z.boolean(),
 	localApiEndpoint: z.string(),
-	error: z.string().optional()
+	error: z.string().optional(),
+	setup: tailscaleSetupInfoSchema.optional()
 });
 
 export const deviceSchema = z.object({
@@ -50,7 +61,8 @@ export const edgeSchema = z.object({
 export const topologyResponseSchema = z.object({
 	devices: z.array(deviceSchema),
 	edges: z.array(edgeSchema),
-	tailnet: z.string()
+	tailnet: z.string(),
+	setup: tailscaleSetupInfoSchema.optional()
 });
 
 export const cloudAuthStatusResponseSchema = z.object({
@@ -227,6 +239,7 @@ export const socketMessageSchema = z.discriminatedUnion('type', [
 ]);
 
 export type HealthResponse = z.infer<typeof healthResponseSchema>;
+export type TailscaleSetupInfo = z.infer<typeof tailscaleSetupInfoSchema>;
 export type LocalAPIStatusResponse = z.infer<typeof localApiStatusResponseSchema>;
 export type Device = z.infer<typeof deviceSchema>;
 export type Edge = z.infer<typeof edgeSchema>;

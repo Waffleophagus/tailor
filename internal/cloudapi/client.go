@@ -7,10 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/Waffleophagus/tailor/internal/devtailnet"
 	"github.com/Waffleophagus/tailor/internal/policy"
@@ -25,6 +27,7 @@ var ErrNotAuthenticated = errors.New("cloud api is not authenticated")
 type Client struct {
 	httpClient *http.Client
 	baseURL    string
+	logger     *slog.Logger
 
 	mu      sync.Mutex
 	session *Session
@@ -66,6 +69,7 @@ func New(options ...Option) *Client {
 	c := &Client{
 		httpClient: http.DefaultClient,
 		baseURL:    DefaultBaseURL,
+		logger:     slog.New(slog.DiscardHandler),
 	}
 	for _, option := range options {
 		option(c)
@@ -87,6 +91,14 @@ func WithBaseURL(baseURL string) Option {
 	return func(c *Client) {
 		if baseURL != "" {
 			c.baseURL = strings.TrimRight(baseURL, "/")
+		}
+	}
+}
+
+func WithLogger(logger *slog.Logger) Option {
+	return func(c *Client) {
+		if logger != nil {
+			c.logger = logger
 		}
 	}
 }
@@ -279,19 +291,25 @@ func (c *Client) fetchPolicy(ctx context.Context, tailnet, apiKey string) (strin
 	req.SetBasicAuth(apiKey, "")
 	req.Header.Set("Accept", "application/hujson, application/json, text/plain")
 
+	start := time.Now()
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
+		c.logCloudAPI(http.MethodGet, tailnet, "", 0, time.Since(start), err)
 		return "", fmt.Errorf("policy fetch failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
 	if err != nil {
+		c.logCloudAPI(http.MethodGet, tailnet, "", resp.StatusCode, time.Since(start), err)
 		return "", err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", apiError(resp.StatusCode, body, "policy fetch failed")
+		apiErr := apiError(resp.StatusCode, body, "policy fetch failed")
+		c.logCloudAPI(http.MethodGet, tailnet, "", resp.StatusCode, time.Since(start), apiErr)
+		return "", apiErr
 	}
+	c.logCloudAPI(http.MethodGet, tailnet, "", resp.StatusCode, time.Since(start), nil)
 	return string(body), nil
 }
 
@@ -305,20 +323,58 @@ func (c *Client) sendPolicy(ctx context.Context, method, tailnet, apiKey, suffix
 	req.Header.Set("Content-Type", "application/hujson")
 	req.Header.Set("Accept", "application/hujson, application/json, text/plain")
 
+	start := time.Now()
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
+		c.logCloudAPI(method, tailnet, suffix, 0, time.Since(start), err)
 		return fmt.Errorf("policy request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
 	if err != nil {
+		c.logCloudAPI(method, tailnet, suffix, resp.StatusCode, time.Since(start), err)
 		return err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return apiError(resp.StatusCode, body, "policy request failed")
+		apiErr := apiError(resp.StatusCode, body, "policy request failed")
+		c.logCloudAPI(method, tailnet, suffix, resp.StatusCode, time.Since(start), apiErr)
+		return apiErr
 	}
+	c.logCloudAPI(method, tailnet, suffix, resp.StatusCode, time.Since(start), nil)
 	return nil
+}
+
+func (c *Client) logCloudAPI(method, tailnet, suffix string, status int, elapsed time.Duration, err error) {
+	operation := "policy_fetch"
+	if suffix == "/validate" {
+		operation = "policy_validate"
+	} else if method == http.MethodPost && suffix == "" {
+		operation = "policy_save"
+	}
+
+	attrs := []any{
+		"method", method,
+		"operation", operation,
+		"tailnet", tailnet,
+		"latency_ms", elapsed.Milliseconds(),
+	}
+	if suffix != "" {
+		attrs = append(attrs, "suffix", suffix)
+	}
+	if status > 0 {
+		attrs = append(attrs, "status", status)
+	}
+
+	switch {
+	case err != nil:
+		attrs = append(attrs, "error", err.Error())
+		c.logger.Warn("cloud api request failed", attrs...)
+	case method == http.MethodGet:
+		c.logger.Debug("cloud api request", attrs...)
+	default:
+		c.logger.Info("cloud api request", attrs...)
+	}
 }
 
 func apiError(statusCode int, body []byte, fallback string) error {

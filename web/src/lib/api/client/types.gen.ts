@@ -9,10 +9,21 @@ export type HealthResponse = {
     version: string;
 };
 
+export type SetupHint = {
+    id: string;
+    message: string;
+};
+
+export type TailscaleSetupInfo = {
+    required: boolean;
+    hints?: Array<SetupHint>;
+};
+
 export type LocalApiStatusResponse = {
     available: boolean;
     localApiEndpoint: string;
     error?: string;
+    setup?: TailscaleSetupInfo;
 };
 
 export type Device = {
@@ -57,6 +68,7 @@ export type TopologyResponse = {
     devices: Array<Device>;
     edges: Array<Edge>;
     tailnet: string;
+    setup?: TailscaleSetupInfo;
 };
 
 export type CloudAuthRequest = {
@@ -68,6 +80,10 @@ export type CloudAuthStatusResponse = {
     authenticated: boolean;
     tailnet?: string;
     hasPolicy: boolean;
+    /**
+     * True when authenticated with the in-memory demo tailnet key.
+     */
+    devMode?: boolean;
 };
 
 export type PolicyResponse = {
@@ -123,6 +139,50 @@ export type PolicyDraftResponse = {
     tailnet: string;
     rule: AclDraft;
     hujson: string;
+};
+
+export type PolicyEvaluateDraftRequest = {
+    hujson: string;
+    perspective?: string;
+};
+
+export type PolicyEdgeChange = {
+    state: 'added' | 'removed' | 'unchanged' | 'changed';
+    edge: Edge;
+    saved?: Edge;
+    draft?: Edge;
+};
+
+export type UnresolvedSelector = {
+    section: string;
+    index: number;
+    selector: string;
+    role: string;
+};
+
+export type ApplicationGrant = {
+    section: string;
+    index: number;
+    src: Array<string>;
+    dst: Array<string>;
+    capabilities: Array<string>;
+};
+
+export type PolicyEvaluateDraftResponse = {
+    tailnet: string;
+    added: Array<PolicyEdgeChange>;
+    removed: Array<PolicyEdgeChange>;
+    unchanged: Array<PolicyEdgeChange>;
+    changed: Array<PolicyEdgeChange>;
+    broadAccess: Array<Edge>;
+    /**
+     * Device IDs in the perspective trimmed netmap (Tailscale device visibility). When no perspective is supplied, all tailnet devices are listed.
+     *
+     */
+    visibleDeviceIds: Array<string>;
+    unresolvedSelectors: Array<UnresolvedSelector>;
+    unsupportedSections: Array<string>;
+    applicationGrants: Array<ApplicationGrant>;
 };
 
 export type PolicyValidateRequest = {
@@ -333,6 +393,39 @@ export type DraftPolicyAclRuleResponses = {
 };
 
 export type DraftPolicyAclRuleResponse = DraftPolicyAclRuleResponses[keyof DraftPolicyAclRuleResponses];
+
+export type EvaluatePolicyDraftData = {
+    body: PolicyEvaluateDraftRequest;
+    path?: never;
+    query?: never;
+    url: '/api/policy/evaluate-draft';
+};
+
+export type EvaluatePolicyDraftErrors = {
+    /**
+     * Invalid draft policy.
+     */
+    400: ErrorResponse;
+    /**
+     * Cloud API authentication has not been enabled.
+     */
+    401: ErrorResponse;
+    /**
+     * Tailscale LocalAPI is unavailable.
+     */
+    503: LocalApiStatusResponse;
+};
+
+export type EvaluatePolicyDraftError = EvaluatePolicyDraftErrors[keyof EvaluatePolicyDraftErrors];
+
+export type EvaluatePolicyDraftResponses = {
+    /**
+     * Graph-ready access impact for an unsaved draft policy.
+     */
+    200: PolicyEvaluateDraftResponse;
+};
+
+export type EvaluatePolicyDraftResponse = EvaluatePolicyDraftResponses[keyof EvaluatePolicyDraftResponses];
 
 export type ValidatePolicyDraftData = {
     body: PolicyValidateRequest;

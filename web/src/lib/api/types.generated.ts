@@ -153,6 +153,7 @@ interface LocalAPIStatusResponse {
     available: boolean;
     localApiEndpoint: string;
     error?: string;
+    setup?: TailscaleSetupInfo | null;
 }
 
 // From api/types.go
@@ -290,6 +291,12 @@ interface PolicyValidateResponse {
 }
 
 // From api/types.go
+interface SetupHint {
+    id: string;
+    message: string;
+}
+
+// From api/types.go
 interface SocketMessage {
     type: string;
     requestId?: string;
@@ -304,10 +311,17 @@ const SocketMessageLocalAPIUnavailable = "localapi.unavailable";
 const SocketMessageTopologySnapshot = "topology.snapshot";
 
 // From api/types.go
+interface TailscaleSetupInfo {
+    required: boolean;
+    hints?: SetupHint[];
+}
+
+// From api/types.go
 interface TopologyResponse {
     devices: Device[];
     edges: Edge[];
     tailnet: string;
+    setup?: TailscaleSetupInfo | null;
 }
 
 // From api/types.go

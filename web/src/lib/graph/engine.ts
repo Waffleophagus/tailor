@@ -8,6 +8,7 @@ import type {
 } from 'cytoscape';
 import type { Device, Edge } from '../api/schemas';
 import type { CloudAuthStatusResponse } from '../api/schemas';
+import { isAggregateDeviceId } from './collapse-devices';
 import { edgeClasses } from './edge-classes';
 import { installGraphDebug, uninstallGraphDebug } from './graph-debug';
 import { computeGraphLayout } from './layout';
@@ -133,6 +134,7 @@ export function createEngine(opts: GraphInitOptions) {
 			isScenarioSource(device) ? 'scenario-source' : '',
 			current.selectedDevice?.id === device.id ? 'selected' : '',
 			device.subnetRouter ? 'subnet-router' : '',
+			isAggregateDeviceId(device.id) ? 'aggregate' : '',
 			current.showLabels ? 'with-labels' : 'hide-labels'
 		]
 			.filter(Boolean)
@@ -572,6 +574,16 @@ export function createEngine(opts: GraphInitOptions) {
 			{
 				selector: 'node.subnet-router',
 				style: { shape: 'round-rectangle', width: 56 }
+			},
+			{
+				selector: 'node.aggregate',
+				style: {
+					shape: 'round-rectangle',
+					height: 48,
+					width: 52,
+					'border-width': 3,
+					'border-style': 'double'
+				}
 			},
 			{
 				selector: 'node.root',

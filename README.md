@@ -99,6 +99,12 @@ go build -o tailor ./cmd/tailor
 | `TAILOR_TAILSCALE_MODE` | `auto`, `embedded`, or `external` | `auto` |
 | `TAILSCALE_AUTHKEY` | Tailscale auth key for embedded mode | — |
 | `TAILSCALE_HOSTNAME` | Hostname when joining tailnet | `tailor` |
+| `TAILOR_LOG_LEVEL` | Log level: `debug`, `info`, `warn`, `error` | `info` |
+| `TAILOR_LOG_FORMAT` | Log format: `text`, `json`, or `auto` (JSON in containers) | `auto` |
+| `TAILOR_LOG_DIR` | Optional directory for rotated log files (`tailor.log`); stdout always logged | — |
+| `TAILOR_LOG_MAX_SIZE_MB` | Max size in MB before rotating the log file | `10` |
+| `TAILOR_LOG_MAX_BACKUPS` | Number of rotated log files to retain | `5` |
+| `TAILOR_LOG_MAX_AGE_DAYS` | Delete rotated logs older than this many days | `30` |
 
 ## Development
 

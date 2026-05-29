@@ -1,16 +1,18 @@
 <script lang="ts">
 	import type { Device } from '../api/schemas';
+	import { isAggregateDeviceId } from '../graph/collapse-devices';
 	import ResizableSidebar from './ResizableSidebar.svelte';
 	import SearchInput from './SearchInput.svelte';
 
 	let {
 		open = $bindable(true),
 		devices = [],
-		visibleDevices = [],
+		listDevices = [],
 		selectedDevice = $bindable<Device | undefined>(undefined),
 		showLabels = $bindable(true),
 		showOffline = $bindable(true),
 		showSubnetRouters = $bindable(true),
+		collapseTaggedFleets = $bindable(true),
 		showTailnet = $bindable(false),
 		selectedTag = $bindable('all'),
 		selectedOwner = $bindable('all'),
@@ -19,16 +21,17 @@
 		tagOptions = [],
 		ownerOptions = [],
 		osOptions = [],
-		visibleOnlineCount = 0,
+		listOnlineCount = 0,
 		chooseDevice
 	}: {
 		open?: boolean;
 		devices: Device[];
-		visibleDevices: Device[];
+		listDevices: Device[];
 		selectedDevice?: Device;
 		showLabels?: boolean;
 		showOffline?: boolean;
 		showSubnetRouters?: boolean;
+		collapseTaggedFleets?: boolean;
 		showTailnet?: boolean;
 		selectedTag?: string;
 		selectedOwner?: string;
@@ -37,20 +40,20 @@
 		tagOptions: string[];
 		ownerOptions: string[];
 		osOptions: string[];
-		visibleOnlineCount?: number;
+		listOnlineCount?: number;
 		chooseDevice: (device: Device) => void;
 	} = $props();
 
 	let searchQuery = $state('');
 
 	const filteredDevices = $derived(
-		visibleDevices.filter((d) => {
+		listDevices.filter((d) => {
 			if (!searchQuery.trim()) return true;
 			return d.name.toLowerCase().includes(searchQuery.toLowerCase().trim());
 		})
 	);
 
-	const visibleOfflineCount = $derived(visibleDevices.filter((d) => !d.online).length);
+	const listOfflineCount = $derived(listDevices.filter((d) => !d.online).length);
 
 	function displayName(name: string) {
 		return showTailnet ? name : name.split('.')[0];
@@ -77,6 +80,10 @@
 				<label class="label">
 					<input type="checkbox" bind:checked={showSubnetRouters} class="m-0 h-4 w-4" />
 					<span>Subnet routers</span>
+				</label>
+				<label class="label">
+					<input type="checkbox" bind:checked={collapseTaggedFleets} class="m-0 h-4 w-4" />
+					<span>Collapse tagged fleets</span>
 				</label>
 			</div>
 		</div>
@@ -133,12 +140,8 @@
 		<div class="mb-0 flex min-h-0 flex-1 shrink flex-col border-b-0 pb-0">
 			<h3 class="section-title">
 				<span>List</span>
-				<span
-					class="pill"
-					class:online={visibleOnlineCount > 0}
-					class:offline={visibleOfflineCount > 0}
-				>
-					{visibleOnlineCount}/{visibleDevices.length}
+				<span class="pill" class:online={listOnlineCount > 0} class:offline={listOfflineCount > 0}>
+					{listOnlineCount}/{listDevices.length}
 				</span>
 			</h3>
 			{#if devices.length === 0}
@@ -148,7 +151,7 @@
 					bind:value={searchQuery}
 					placeholder="Search devices..."
 					count={filteredDevices.length}
-					total={visibleDevices.length}
+					total={listDevices.length}
 				/>
 				<label class="label mt-1 mb-[0.35rem] text-[0.78rem] font-semibold text-label">
 					<input type="checkbox" bind:checked={showTailnet} class="m-0 h-4 w-4" />
@@ -158,7 +161,11 @@
 					{#each filteredDevices as device (device.id)}
 						<li>
 							<button
-								class={['device-item', selectedDevice?.id === device.id && 'active']}
+								class={[
+									'device-item',
+									selectedDevice?.id === device.id && 'active',
+									isAggregateDeviceId(device.id) && 'aggregate'
+								]}
 								type="button"
 								onclick={() => chooseDevice(device)}
 							>
@@ -181,11 +188,11 @@
 		</button>
 		<div class="bg-border h-px w-[1.2rem]"></div>
 		<div class="mt-[0.2rem] flex flex-col items-center gap-[0.3rem]">
-			<span class="mini-count" title={`${visibleOnlineCount} online`}>
+			<span class="mini-count" title={`${listOnlineCount} online`}>
 				<span class="dot mini online"></span>
-				{visibleOnlineCount}
+				{listOnlineCount}
 			</span>
-			<span class="mini-count">{devices.length}</span>
+			<span class="mini-count">{listDevices.length}</span>
 		</div>
 	{/snippet}
 </ResizableSidebar>
@@ -222,6 +229,9 @@
 	}
 	.device-item.active {
 		@apply border-strong bg-hover;
+	}
+	.device-item.aggregate {
+		@apply font-extrabold;
 	}
 	.dot {
 		@apply h-[0.6rem] w-[0.6rem] shrink-0 rounded-full bg-gray;

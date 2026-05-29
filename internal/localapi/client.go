@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/netip"
 	"runtime"
 	"sort"
@@ -24,14 +25,30 @@ var ErrUnavailable = errors.New("tailscale LocalAPI unavailable")
 type Client struct {
 	socketOverride string
 	localClient    *local.Client
+	logger         *slog.Logger
 }
 
-func New(socketPath string) *Client {
+type ClientOption func(*Client)
+
+func WithLogger(logger *slog.Logger) ClientOption {
+	return func(c *Client) {
+		if logger != nil {
+			c.logger = logger
+		}
+	}
+}
+
+func New(socketPath string, options ...ClientOption) *Client {
 	localClient := &local.Client{Socket: socketPath}
-	return &Client{
+	c := &Client{
 		socketOverride: socketPath,
 		localClient:    localClient,
+		logger:         slog.New(slog.DiscardHandler),
 	}
+	for _, option := range options {
+		option(c)
+	}
+	return c
 }
 
 func (c *Client) Endpoint() string {
@@ -48,6 +65,19 @@ func (c *Client) Status(ctx context.Context) ([]api.Device, error) {
 	}
 
 	return DevicesFromIPNStatus(status), nil
+}
+
+// StatusLogged is like Status but logs LocalAPI unavailability for HTTP handlers.
+func (c *Client) StatusLogged(ctx context.Context, operation string) ([]api.Device, error) {
+	devices, err := c.Status(ctx)
+	if err != nil && errors.Is(err, ErrUnavailable) {
+		c.logger.Warn("localapi unavailable",
+			"operation", operation,
+			"endpoint", c.Endpoint(),
+			"error", err.Error(),
+		)
+	}
+	return devices, err
 }
 
 func (c *Client) TailnetName(ctx context.Context) (string, error) {
