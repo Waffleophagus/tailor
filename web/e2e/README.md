@@ -102,12 +102,29 @@ Interactive mode:
 pnpm test:e2e:ui
 ```
 
+### Production ACL save (real tailnet)
+
+`pnpm test:e2e` **does not** run the production save test (it never writes to Tailscale Cloud). To exercise the full enable-auth → snapshot → mutate → save → revert loop against your real tailnet:
+
+```sh
+cd web
+pnpm test:e2e:production
+```
+
+Requires a real `TAILSCALE_API_KEY` in `web/.env` (not `tskey-api-tailor-dev`). The test enables ACL editing through the UI, appends a reversible probe ACL rule, saves twice (change + revert), and restores the initial policy if it fails mid-run.
+
+| Variable                        | Required | Purpose                                               |
+| ------------------------------- | -------- | ----------------------------------------------------- |
+| `TAILOR_E2E_SKIP_GLOBAL_AUTH`   | auto     | Set by `test:e2e:production` so the UI auth flow runs |
+| `TAILOR_E2E_INCLUDE_PRODUCTION` | auto     | Set by `test:e2e:production` to run only that spec    |
+
 ## What is covered
 
 - Topology + policy fetch for an authenticated tailnet
 - Workbench ACL staging, draft tray, simulate, validate (discard cleanup — no save)
 - Scenario bar focused mode + ghost denied toggle
 - `/api/policy/mutate`, evaluate-draft, and validate
+- **Production only** (`pnpm test:e2e:production`): real Cloud ACL save + revert round-trip
 
 ## Graph styling (unit tests)
 

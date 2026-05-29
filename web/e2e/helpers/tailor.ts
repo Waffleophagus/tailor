@@ -1,10 +1,69 @@
-import { expect, type Page } from '@playwright/test';
+import { expect, type APIRequestContext, type Page } from '@playwright/test';
 
-import { alternatePerspective, testDestination } from './env';
+import { alternatePerspective, baseURL, configuredTailnet, testDestination } from './env';
 
 export async function requireAclEditing(page: Page) {
 	await page.goto('/');
 	await expect(page.getByRole('button', { name: 'Edit policy' })).toBeVisible();
+}
+
+export async function resolveTailnetName(request: APIRequestContext): Promise<string> {
+	if (configuredTailnet) {
+		return configuredTailnet;
+	}
+	const topology = await request.get(`${baseURL}/api/topology`);
+	expect(topology.ok()).toBeTruthy();
+	const topo = (await topology.json()) as { tailnet?: string };
+	const tailnet = topo.tailnet?.trim();
+	expect(
+		tailnet,
+		'Could not resolve tailnet from /api/topology. Set TAILOR_TAILNET in web/.env.'
+	).toBeTruthy();
+	return tailnet!;
+}
+
+export async function enableAclEditingViaUI(
+	page: Page,
+	options: { apiKey: string; tailnet: string }
+) {
+	await page.goto('/');
+	const enableButton = page.getByRole('button', { name: 'Enable ACL Editing' });
+	if (await enableButton.isVisible()) {
+		await enableButton.click();
+		const dialog = page.getByRole('dialog', { name: 'Enable ACL Editing' });
+		await expect(dialog).toBeVisible();
+		await dialog.getByPlaceholder('tskey-api-...').fill(options.apiKey);
+		await dialog.getByPlaceholder('example.com or -').fill(options.tailnet);
+		await dialog.getByRole('button', { name: 'Fetch Policy' }).click();
+	} else if (await page.getByText(/Demo tailnet/).isVisible()) {
+		throw new Error(
+			'Tailor backend is authenticated in demo mode. Stop any running tailor process on the E2E port and re-run pnpm test:e2e:production.'
+		);
+	}
+	await expect(page.getByRole('button', { name: 'Edit policy' })).toBeVisible({
+		timeout: 90_000
+	});
+	await expect(page.getByRole('button', { name: 'Enable ACL Editing' })).toBeHidden();
+	await expect(page.getByText(/Demo tailnet/)).toBeHidden();
+}
+
+export async function setPolicyEditorText(page: Page, hujson: string) {
+	await openPolicyEditor(page);
+	const editor = page.getByRole('complementary', { name: 'Policy editor' });
+	await editor.getByRole('textbox', { name: 'Policy HuJSON' }).fill(hujson);
+}
+
+export async function saveValidatedPolicy(page: Page) {
+	const headerSave = page.getByRole('button', { name: 'Save validated policy' });
+	if (await headerSave.isVisible()) {
+		await headerSave.click();
+	} else {
+		const editor = page.getByRole('complementary', { name: 'Policy editor' });
+		await editor.getByRole('button', { name: 'Save policy' }).click();
+	}
+	await expect(page.getByRole('button', { name: 'Save validated policy' })).toBeHidden({
+		timeout: 90_000
+	});
 }
 
 export async function openPolicyEditor(page: Page) {

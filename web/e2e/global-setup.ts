@@ -23,6 +23,10 @@ export default async function globalSetup() {
 			);
 		}
 
+		if (process.env.TAILOR_E2E_SKIP_GLOBAL_AUTH === '1') {
+			return;
+		}
+
 		const statusRes = await ctx.get('/api/cloud/status');
 		if (!statusRes.ok()) {
 			throw new Error(

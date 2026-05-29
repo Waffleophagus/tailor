@@ -18,6 +18,7 @@
 		"test": "vitest run",
 		"test:watch": "vitest",
 		"test:e2e": "playwright test",
+		"test:e2e:production": "TAILOR_E2E_SKIP_GLOBAL_AUTH=1 TAILOR_E2E_INCLUDE_PRODUCTION=1 playwright test e2e/production-acl-save.spec.ts",
 		"test:e2e:ui": "playwright test --ui",
 		"backend:build": "cd .. && go build -o web/.cache/tailor ./cmd/tailor",
 		"backend:build:dev": "cd .. && go build -tags dev -o web/.cache/tailor-e2e ./cmd/tailor",
