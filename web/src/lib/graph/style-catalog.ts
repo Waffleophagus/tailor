@@ -2,11 +2,13 @@ import type { StylesheetJson } from 'cytoscape';
 
 export type LineStyle = 'solid' | 'dashed' | 'dotted';
 
+export type CurveStyle = 'bezier' | 'unbundled-bezier' | 'straight';
+
 export interface ResolvedEdgeStyle {
 	lineColor: string;
 	targetArrowColor: string;
 	lineStyle: LineStyle;
-	curveStyle: 'bezier' | 'straight';
+	curveStyle: CurveStyle;
 	width: number;
 	opacity: number;
 	targetArrowShape?: string;
@@ -28,7 +30,7 @@ export const EDGE_STYLE_RULES: EdgeStyleRule[] = [
 			opacity: 0.6,
 			width: 1.8,
 			lineStyle: 'solid',
-			curveStyle: 'bezier',
+			curveStyle: 'unbundled-bezier',
 			targetArrowColor: '#74857e'
 		}
 	},
@@ -156,8 +158,20 @@ function toCytoscapeStyle(style: EdgeStylePatch): Record<string, string | number
 }
 
 export function graphEdgeStylesheet(): StylesheetJson {
-	return EDGE_STYLE_RULES.map((rule) => ({
-		selector: rule.selector,
-		style: toCytoscapeStyle(rule.style)
-	}));
+	return EDGE_STYLE_RULES.map((rule) => {
+		const style = toCytoscapeStyle(rule.style);
+		if (rule.selector === 'edge') {
+			Object.assign(style, {
+				'control-point-distances': (ele: { data: (key: string) => unknown }) => {
+					const distances = ele.data('cpDistances') as number[] | undefined;
+					return distances ?? [40, 40];
+				},
+				'control-point-weights': (ele: { data: (key: string) => unknown }) => {
+					const weights = ele.data('cpWeights') as number[] | undefined;
+					return weights ?? [0.25, 0.75];
+				}
+			});
+		}
+		return { selector: rule.selector, style };
+	});
 }

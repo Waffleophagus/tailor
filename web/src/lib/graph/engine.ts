@@ -11,6 +11,7 @@ import type { CloudAuthStatusResponse } from '../api/schemas';
 import { edgeClasses } from './edge-classes';
 import { installGraphDebug, uninstallGraphDebug } from './graph-debug';
 import { computeGraphLayout } from './layout';
+import { computeParallelEdgeBundles, edgeElementData } from './parallel-edges';
 import { graphEdgeStylesheet } from './style-catalog';
 
 export type ColorBy = 'status' | 'tag' | 'owner' | 'os';
@@ -72,7 +73,10 @@ export function createEngine(opts: GraphInitOptions) {
 
 	let graph: Core | undefined;
 	let layoutSignature = '';
+	let layoutRootId = '';
 	let hoveredNodeID: string | undefined;
+
+	const LAYOUT_ANIMATION_MS = 420;
 
 	const lastOnlineState = new Map<string, boolean>();
 
@@ -153,10 +157,7 @@ export function createEngine(opts: GraphInitOptions) {
 
 	function graphRootDevice() {
 		if (current.rootDevice) return current.rootDevice;
-		if (current.cloudStatus.authenticated && current.graphMode === 'focused') {
-			return current.selectedDevice;
-		}
-		return undefined;
+		return current.selectedDevice;
 	}
 
 	function graphDevices() {
@@ -165,6 +166,21 @@ export function createEngine(opts: GraphInitOptions) {
 
 	function edgeClassesFor(edge: RenderEdge) {
 		return edgeClasses(edge, { selectedEdgeId: current.selectedEdge?.id });
+	}
+
+	function parallelEdgeBundles() {
+		return computeParallelEdgeBundles(current.visibleEdges);
+	}
+
+	function cytoscapeEdgeData(edge: RenderEdge, bundles = parallelEdgeBundles()) {
+		return edgeElementData(edge, bundles, edgeLabel(edge));
+	}
+
+	function graphViewportCenter() {
+		return {
+			x: (container.clientWidth || 900) / 2,
+			y: (container.clientHeight || 620) / 2
+		};
 	}
 
 	function graphPositions() {
@@ -211,6 +227,7 @@ export function createEngine(opts: GraphInitOptions) {
 	}
 
 	function graphElements(positions: Map<string, { x: number; y: number }>) {
+		const bundles = parallelEdgeBundles();
 		const elements: ElementDefinition[] = [
 			...graphDevices().map((device) => ({
 				classes: deviceClasses(device),
@@ -219,7 +236,7 @@ export function createEngine(opts: GraphInitOptions) {
 			})),
 			...current.visibleEdges.map((edge) => ({
 				classes: edgeClassesFor(edge),
-				data: { id: edge.id, source: edge.from, target: edge.to, label: edgeLabel(edge) }
+				data: cytoscapeEdgeData(edge, bundles)
 			}))
 		];
 		return elements;
@@ -336,7 +353,11 @@ export function createEngine(opts: GraphInitOptions) {
 		if (moved && !prefersReducedMotion()) {
 			node.animate(
 				{ position: targetPosition },
-				{ duration: becameOnline ? 420 : 280, easing: 'ease-out-cubic' }
+				{
+					duration: becameOnline ? LAYOUT_ANIMATION_MS : 280,
+					easing: 'ease-out-cubic',
+					queue: false
+				}
 			);
 		} else {
 			node.position(targetPosition);
@@ -410,12 +431,12 @@ export function createEngine(opts: GraphInitOptions) {
 		);
 	}
 
-	function addEdge(edge: RenderEdge) {
+	function addEdge(edge: RenderEdge, bundles = parallelEdgeBundles()) {
 		if (!graph) return;
 		const added = graph.add({
 			group: 'edges',
 			classes: edgeClassesFor(edge),
-			data: { id: edge.id, source: edge.from, target: edge.to, label: edgeLabel(edge) }
+			data: cytoscapeEdgeData(edge, bundles)
 		});
 		if (prefersReducedMotion()) return;
 		added.style({ opacity: 0, width: 0.2 });
@@ -438,6 +459,8 @@ export function createEngine(opts: GraphInitOptions) {
 		const positions = graphPositions();
 		const nextLayoutSig = graphLayoutSignature();
 		const layoutChanged = nextLayoutSig !== layoutSignature;
+		const nextRootId = graphRootDevice()?.id ?? '';
+		const rootChanged = nextRootId !== layoutRootId;
 
 		graph.edges().forEach((edge) => {
 			if (!desiredEdgeIDs.has(edge.id())) removeEdge(edge);
@@ -466,20 +489,45 @@ export function createEngine(opts: GraphInitOptions) {
 			}
 		}
 
+		const bundles = parallelEdgeBundles();
 		for (const edge of edges) {
 			const existing = graph.getElementById(edge.id);
 			if (existing.length) {
-				existing.data({ id: edge.id, source: edge.from, target: edge.to, label: edgeLabel(edge) });
+				existing.data(cytoscapeEdgeData(edge, bundles));
 				existing.classes(edgeClassesFor(edge));
 				continue;
 			}
-			addEdge(edge);
+			addEdge(edge, bundles);
 		}
 
 		layoutSignature = nextLayoutSig;
+		layoutRootId = nextRootId;
 		rememberOnlineState();
 		updateGraphSelection();
 		applyCurrentGraphFocus();
+		if (rootChanged) {
+			animatePanToLayoutHub(layoutChanged ? layoutAnimationDuration() : 0);
+		}
+	}
+
+	function layoutAnimationDuration() {
+		return prefersReducedMotion() ? 0 : LAYOUT_ANIMATION_MS;
+	}
+
+	/** Pan so the layout hub (where the root node animates to) stays in the viewport center. */
+	function animatePanToLayoutHub(duration: number) {
+		if (!graph) return;
+		const hub = graphViewportCenter();
+		const zoom = graph.zoom();
+		const targetPan = {
+			x: graph.width() / 2 - hub.x * zoom,
+			y: graph.height() / 2 - hub.y * zoom
+		};
+		if (duration <= 0) {
+			graph.pan(targetPan);
+			return;
+		}
+		graph.animate({ pan: targetPan }, { duration, easing: 'ease-out-cubic', queue: false });
 	}
 
 	function renderGraph() {
@@ -611,6 +659,7 @@ export function createEngine(opts: GraphInitOptions) {
 			style
 		});
 		layoutSignature = graphLayoutSignature();
+		layoutRootId = graphRootDevice()?.id ?? '';
 
 		graph.autoungrabify(true);
 		graph.autounselectify(true);
@@ -625,7 +674,6 @@ export function createEngine(opts: GraphInitOptions) {
 				onNodeSelect(device);
 				updateGraphSelection();
 				applyGraphFocus(node);
-				centerGraphOnNode(node);
 				pulseNode(node);
 			}
 		});
@@ -673,15 +721,6 @@ export function createEngine(opts: GraphInitOptions) {
 		});
 	}
 
-	function centerGraphOnNode(node: NodeSingular) {
-		if (!graph) return;
-		graph.animate({
-			center: { eles: node },
-			duration: 320,
-			easing: 'ease-out-cubic'
-		});
-	}
-
 	function zoomGraph(delta: number) {
 		if (!graph) return;
 		graph.zoom({
@@ -698,13 +737,12 @@ export function createEngine(opts: GraphInitOptions) {
 	function selectDevice(device: Device) {
 		if (!graph) return;
 		updateGraphSelection();
-		window.requestAnimationFrame(() => {
-			const node = graph?.getElementById(device.id);
-			if (!node?.length) return;
-			updateGraphSelection();
-			applyGraphFocus(node);
-			centerGraphOnNode(node);
-		});
+		const node = graph.getElementById(device.id);
+		if (node.length) applyGraphFocus(node);
+		// Root changes trigger pan from syncGraph; re-selecting the current root only needs pan.
+		if (device.id === layoutRootId) {
+			animatePanToLayoutHub(layoutAnimationDuration() > 0 ? 260 : 0);
+		}
 	}
 
 	function sync(opts: SyncOptions) {

@@ -1,6 +1,9 @@
 /** Minimum center-to-center spacing between nodes on the same ring. */
 export const LAYOUT_NODE_SPACING = 70;
 
+/** Angular threshold (radians) below which two nodes are treated as radially stacked. */
+const RADIAL_COLLISION_ANGLE = (8 * Math.PI) / 180;
+
 export interface Point {
 	x: number;
 	y: number;
@@ -16,28 +19,40 @@ export function maxNodesPerRing(radius: number, spacing = LAYOUT_NODE_SPACING): 
 	return Math.max(1, Math.floor((2 * Math.PI * radius) / spacing));
 }
 
-/** Place peers on concentric rings with uniform angular spacing. Returns the next free radius. */
+export interface PlacePeersResult {
+	nextRadius: number;
+	nextRingIndex: number;
+}
+
+/**
+ * Place peers on concentric rings with uniform angular spacing.
+ * Each ring is rotated so sparse cohorts do not stack on the same radial line.
+ */
 export function placePeersOnRings(
 	peerIds: readonly string[],
 	center: Point,
 	startRadius: number,
 	ringStep: number,
 	positions: Map<string, Point>,
-	spacing = LAYOUT_NODE_SPACING
-): number {
-	if (peerIds.length === 0) return startRadius;
+	spacing = LAYOUT_NODE_SPACING,
+	startRingIndex = 0
+): PlacePeersResult {
+	if (peerIds.length === 0) {
+		return { nextRadius: startRadius, nextRingIndex: startRingIndex };
+	}
 
 	const sorted = [...peerIds].sort((a, b) => a.localeCompare(b));
 	let index = 0;
-	let ringIndex = 0;
+	let ringIndex = startRingIndex;
 
 	while (index < sorted.length) {
-		const radius = startRadius + ringIndex * ringStep;
+		const radius = startRadius + (ringIndex - startRingIndex) * ringStep;
 		const capacity = maxNodesPerRing(radius, spacing);
 		const count = Math.min(capacity, sorted.length - index);
+		const startAngle = -Math.PI / 2 + (ringIndex * Math.PI) / Math.max(6, capacity);
 		for (let i = 0; i < count; i += 1) {
 			const id = sorted[index + i]!;
-			const angle = -Math.PI / 2 + (2 * Math.PI * i) / count;
+			const angle = startAngle + (2 * Math.PI * i) / count;
 			positions.set(id, {
 				x: center.x + Math.cos(angle) * radius,
 				y: center.y + Math.sin(angle) * radius
@@ -47,7 +62,10 @@ export function placePeersOnRings(
 		ringIndex += 1;
 	}
 
-	return startRadius + ringIndex * ringStep;
+	return {
+		nextRadius: startRadius + (ringIndex - startRingIndex) * ringStep,
+		nextRingIndex: ringIndex
+	};
 }
 
 export function partitionPeersByConnection(
@@ -70,6 +88,70 @@ export function partitionPeersByConnection(
 	};
 }
 
+function polarFromCenter(center: Point, point: Point): { radius: number; angle: number } {
+	const dx = point.x - center.x;
+	const dy = point.y - center.y;
+	return { radius: Math.hypot(dx, dy), angle: Math.atan2(dy, dx) };
+}
+
+function pointFromPolar(center: Point, radius: number, angle: number): Point {
+	return {
+		x: center.x + Math.cos(angle) * radius,
+		y: center.y + Math.sin(angle) * radius
+	};
+}
+
+function angularDifference(a: number, b: number): number {
+	let diff = Math.abs(a - b) % (2 * Math.PI);
+	if (diff > Math.PI) diff = 2 * Math.PI - diff;
+	return diff;
+}
+
+/** Nudge angles when nodes on different rings share a radial line. */
+export function resolveRadialCollisions(
+	positions: Map<string, Point>,
+	center: Point,
+	rootId: string | undefined,
+	spacing = LAYOUT_NODE_SPACING
+): void {
+	const peerIds = [...positions.keys()].filter((id) => id !== rootId);
+	if (peerIds.length < 2) return;
+
+	const polar = new Map(
+		peerIds.map((id) => {
+			const point = positions.get(id)!;
+			return [id, polarFromCenter(center, point)] as const;
+		})
+	);
+
+	const sorted = [...peerIds].sort(
+		(a, b) => (polar.get(a)?.radius ?? 0) - (polar.get(b)?.radius ?? 0)
+	);
+
+	const minSeparation = spacing * 0.85;
+
+	for (let i = 0; i < sorted.length; i += 1) {
+		const id = sorted[i]!;
+		const current = polar.get(id)!;
+		for (let j = 0; j < i; j += 1) {
+			const otherId = sorted[j]!;
+			const other = polar.get(otherId)!;
+			if (angularDifference(current.angle, other.angle) > RADIAL_COLLISION_ANGLE) continue;
+			const chord = Math.hypot(
+				positions.get(id)!.x - positions.get(otherId)!.x,
+				positions.get(id)!.y - positions.get(otherId)!.y
+			);
+			if (chord >= minSeparation) continue;
+
+			const nudge = (2 * Math.PI) / Math.max(8, maxNodesPerRing(current.radius, spacing));
+			const nextAngle = current.angle + nudge;
+			polar.set(id, { radius: current.radius, angle: nextAngle });
+			positions.set(id, pointFromPolar(center, current.radius, nextAngle));
+			break;
+		}
+	}
+}
+
 export function computeGraphLayout(input: {
 	width: number;
 	height: number;
@@ -88,13 +170,57 @@ export function computeGraphLayout(input: {
 	if (rootId) positions.set(rootId, { ...center });
 
 	let nextRadius = baseRadius;
+	let ringIndex = 0;
+
 	const online = partitionPeersByConnection(rootId, onlinePeerIds, edges);
-	nextRadius = placePeersOnRings(online.connected, center, nextRadius, ringStep, positions);
-	nextRadius = placePeersOnRings(online.disconnected, center, nextRadius, ringStep, positions);
+	let placed = placePeersOnRings(
+		online.connected,
+		center,
+		nextRadius,
+		ringStep,
+		positions,
+		LAYOUT_NODE_SPACING,
+		ringIndex
+	);
+	nextRadius = placed.nextRadius;
+	ringIndex = placed.nextRingIndex;
+
+	placed = placePeersOnRings(
+		online.disconnected,
+		center,
+		nextRadius,
+		ringStep,
+		positions,
+		LAYOUT_NODE_SPACING,
+		ringIndex
+	);
+	nextRadius = placed.nextRadius;
+	ringIndex = placed.nextRingIndex;
 
 	const offline = partitionPeersByConnection(rootId, offlinePeerIds, edges);
-	nextRadius = placePeersOnRings(offline.connected, center, nextRadius, ringStep, positions);
-	placePeersOnRings(offline.disconnected, center, nextRadius, ringStep, positions);
+	placed = placePeersOnRings(
+		offline.connected,
+		center,
+		nextRadius,
+		ringStep,
+		positions,
+		LAYOUT_NODE_SPACING,
+		ringIndex
+	);
+	nextRadius = placed.nextRadius;
+	ringIndex = placed.nextRingIndex;
+
+	placePeersOnRings(
+		offline.disconnected,
+		center,
+		nextRadius,
+		ringStep,
+		positions,
+		LAYOUT_NODE_SPACING,
+		ringIndex
+	);
+
+	resolveRadialCollisions(positions, center, rootId);
 
 	return positions;
 }
@@ -111,4 +237,29 @@ export function minCenterDistance(positions: Map<string, Point>, ids: readonly s
 		}
 	}
 	return min;
+}
+
+/** Smallest angular separation between two peer positions around center (radians). */
+export function angularSeparation(
+	positions: Map<string, Point>,
+	center: Point,
+	idA: string,
+	idB: string
+): number {
+	const a = positions.get(idA);
+	const b = positions.get(idB);
+	if (!a || !b) return 0;
+	const polarA = polarFromCenter(center, a);
+	const polarB = polarFromCenter(center, b);
+	return angularDifference(polarA.angle, polarB.angle);
+}
+
+/** True when two points share a radial line through center (within ~2°). */
+export function areRadiallyCollinear(
+	positions: Map<string, Point>,
+	center: Point,
+	idA: string,
+	idB: string
+): boolean {
+	return angularSeparation(positions, center, idA, idB) < (2 * Math.PI) / 180;
 }

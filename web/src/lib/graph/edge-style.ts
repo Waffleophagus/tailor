@@ -11,7 +11,7 @@ const DEFAULT_STYLE: ResolvedEdgeStyle = {
 	lineColor: '#74857e',
 	targetArrowColor: '#74857e',
 	lineStyle: 'solid',
-	curveStyle: 'bezier',
+	curveStyle: 'unbundled-bezier',
 	width: 1.8,
 	opacity: 0.6
 };

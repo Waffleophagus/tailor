@@ -20,6 +20,7 @@
 	import { fetchTopology } from './lib/api/topology';
 	import { connectTopologySocket } from './lib/api/topologySocket';
 	import type { RenderEdge } from './lib/graph/engine';
+	import { resolveGraphLayoutRoot } from './lib/graph/graph-layout-root';
 	import { evaluationEdges, renderPolicyEdge } from './lib/graph/policy-graph-edges';
 	import AuthDialog from './lib/components/AuthDialog.svelte';
 	import GraphCanvas from './lib/components/GraphCanvas.svelte';
@@ -89,11 +90,6 @@
 	const ownerOptions = $derived(unique(devices.map((device) => device.owner).filter(Boolean)));
 	const osOptions = $derived(unique(devices.map((device) => device.os).filter(Boolean)));
 	const rootDevice = $derived(devices[0]);
-	const graphRootDevice = $derived(
-		cloudStatus.authenticated && graphMode === 'focused'
-			? (selectedDevice ?? rootDevice)
-			: rootDevice
-	);
 	const activeEvaluation = $derived(previewEvaluation ?? policyEvaluation);
 	const editorDirty = $derived(Boolean(policy && editorHuJSON !== policy.hujson));
 	const hasValidatedPending = $derived(editorValid === true && validatedHuJSON !== '');
@@ -101,6 +97,9 @@
 	const visibleOnlineCount = $derived(visibleDevices.filter((device) => device.online).length);
 	const graphDevices = $derived(visibleDevices);
 	const graphVisibleDeviceIDs = $derived(new Set(graphDevices.map((device) => device.id)));
+	const graphRootDevice = $derived(
+		resolveGraphLayoutRoot(selectedDevice, rootDevice, graphVisibleDeviceIDs)
+	);
 	const visibleEdges = $derived(graphEdges());
 	const graphOnlineCount = $derived(graphDevices.filter((device) => device.online).length);
 
@@ -125,7 +124,7 @@
 			if (!focusID) return [];
 			return rendered.filter((edge) => edge.from === focusID || edge.to === focusID);
 		}
-		const root = rootDevice;
+		const root = graphRootDevice;
 		if (!root || !graphVisibleDeviceIDs.has(root.id) || !root.online) return [];
 		return visibleDevices
 			.filter((device) => device.id !== root.id && device.online)

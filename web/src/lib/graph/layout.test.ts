@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 
 import {
 	LAYOUT_NODE_SPACING,
+	angularSeparation,
+	areRadiallyCollinear,
 	computeGraphLayout,
 	maxNodesPerRing,
 	minCenterDistance,
@@ -52,6 +54,30 @@ describe('placePeersOnRings', () => {
 		placePeersOnRings(peerIds, { x: 0, y: 0 }, 160, LAYOUT_NODE_SPACING, positions);
 		expect(minCenterDistance(positions, peerIds)).toBeGreaterThanOrEqual(LAYOUT_NODE_SPACING - 0.5);
 	});
+
+	it('offsets successive rings so the first node is not always at 12 o clock', () => {
+		const positions = new Map<string, { x: number; y: number }>();
+		const center = { x: 450, y: 310 };
+		placePeersOnRings(
+			['inner'],
+			center,
+			140,
+			LAYOUT_NODE_SPACING,
+			positions,
+			LAYOUT_NODE_SPACING,
+			0
+		);
+		placePeersOnRings(
+			['outer'],
+			center,
+			210,
+			LAYOUT_NODE_SPACING,
+			positions,
+			LAYOUT_NODE_SPACING,
+			1
+		);
+		expect(areRadiallyCollinear(positions, center, 'inner', 'outer')).toBe(false);
+	});
 });
 
 describe('computeGraphLayout', () => {
@@ -98,6 +124,22 @@ describe('computeGraphLayout', () => {
 		};
 		expect(Math.max(radius('near-a'), radius('near-b'))).toBeLessThan(
 			Math.min(radius('far-a'), radius('far-b'))
+		);
+	});
+
+	it('separates one connected and one disconnected peer on different rings', () => {
+		const layout = computeGraphLayout({
+			width: 900,
+			height: 620,
+			rootId: 'root',
+			onlinePeerIds: ['connected', 'lonely'],
+			offlinePeerIds: [],
+			edges: [{ from: 'root', to: 'connected' }]
+		});
+		const center = { x: 450, y: 310 };
+		expect(areRadiallyCollinear(layout, center, 'connected', 'lonely')).toBe(false);
+		expect(angularSeparation(layout, center, 'connected', 'lonely')).toBeGreaterThan(
+			(8 * Math.PI) / 180
 		);
 	});
 
