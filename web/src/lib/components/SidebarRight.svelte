@@ -296,16 +296,18 @@
 		</div>
 	{/if}
 
-	<a
-		class="d6-credit"
-		href="https://d6software.com"
-		target="_blank"
-		rel="noreferrer"
-		aria-label="Made by D6software.com"
-	>
-		<img src="/d6-logo.svg" alt="" aria-hidden="true" />
-		<span>Made with ❤️ by D6software.com</span>
-	</a>
+	<div class="d6-credit">
+		<span>Made with ❤️ by </span>
+		<a
+			href="https://d6software.com"
+			target="_blank"
+			rel="noreferrer"
+			aria-label="Made by D6software.com"
+		>
+			<img src="/d6-logo.svg" alt="" aria-hidden="true" />
+			<span>D6software.com</span>
+		</a>
+	</div>
 	{#snippet collapsed()}
 		<button class="sidebar-icon" title="Details panel" type="button" onclick={() => (open = true)}>
 			<svg viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -402,13 +404,16 @@
 		@apply flex items-center gap-[0.45rem] text-[0.82rem] font-semibold text-secondary;
 	}
 	.d6-credit {
-		@apply mt-auto flex min-h-8 shrink-0 items-center gap-[0.45rem] border-t border-light pt-3 text-[0.68rem] leading-none font-extrabold text-muted no-underline transition-[color,opacity] duration-[140ms] ease-out hover:text-primary;
+		@apply mt-auto flex min-h-8 shrink-0 items-center gap-[0.45rem] border-t border-light pt-3 text-[0.68rem] leading-[1.2] font-extrabold text-muted;
 		font-family: 'Space Grotesk', 'Red Hat Text', 'Helvetica Neue', sans-serif;
+	}
+	.d6-credit a {
+		@apply flex items-center gap-[0.45rem] text-muted no-underline transition-[color,opacity] duration-[140ms] ease-out hover:text-primary;
 	}
 	.d6-credit img {
 		@apply h-[1.15rem] w-[1.15rem] shrink-0;
 	}
-	.d6-credit span {
+	.d6-credit a span {
 		@apply min-w-0 overflow-hidden text-ellipsis whitespace-nowrap;
 		letter-spacing: 0;
 	}
