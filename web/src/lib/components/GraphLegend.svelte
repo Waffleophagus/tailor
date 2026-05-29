@@ -72,7 +72,7 @@
 </script>
 
 <div
-	class="pointer-events-auto absolute bottom-3 left-3 z-10 max-h-[calc(100%-1.5rem)] w-48 overflow-y-auto rounded-lg border border-graph-border bg-legend-bg/95 p-2 text-[0.675rem] font-bold text-secondary shadow-[0_8px_22px_rgb(23_33_38/8%)]"
+	class="pointer-events-auto absolute bottom-3 left-3 z-[3] max-h-[calc(100%-1.5rem)] w-48 overflow-y-auto rounded-lg border border-graph-border bg-legend-bg/95 p-2 text-[0.675rem] font-bold text-secondary shadow-[0_8px_22px_rgb(23_33_38/8%)]"
 	role="region"
 	aria-label="Graph legend"
 >
@@ -138,7 +138,7 @@
 		</div>
 	{/if}
 
-	<div class="bg-border-light my-[0.35rem] h-px"></div>
+	<div class="my-[0.35rem] h-px bg-light"></div>
 
 	<div class="flex flex-col gap-1">
 		<div class="mb-0.5 text-[0.6rem] font-extrabold tracking-widest text-legend-title uppercase">

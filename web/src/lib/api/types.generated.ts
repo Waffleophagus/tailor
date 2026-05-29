@@ -20,6 +20,15 @@ enum AccessScope {
 }
 
 // From api/types.go
+interface ApplicationGrant {
+    section: string;
+    index: number;
+    src: string[];
+    dst: string[];
+    capabilities: string[];
+}
+
+// From api/types.go
 interface CloudAuthRequest {
     tailnet: string;
     apiKey: string;
@@ -30,6 +39,55 @@ interface CloudAuthStatusResponse {
     authenticated: boolean;
     tailnet?: string;
     hasPolicy: boolean;
+    devMode?: boolean;
+}
+
+// From api/types.go
+interface DevPatchDeviceSpec {
+    name: string;
+    online?: boolean | null;
+}
+
+// From api/types.go
+interface DevPatchDevicesRequest {
+    devices: DevPatchDeviceSpec[];
+}
+
+// From api/types.go
+interface DevPatchDevicesResponse {
+    tailnet: string;
+    patched: Device[];
+    devices: Device[];
+}
+
+// From api/types.go
+interface DevSpawnDeviceSpec {
+    name: string;
+    owner?: string;
+    os?: string;
+    tags?: string[];
+    online?: boolean | null;
+    subnetRouter?: boolean;
+    routedSubnets?: string[];
+}
+
+// From api/types.go
+interface DevSpawnDevicesRequest {
+    count?: number;
+    prefix?: string;
+    names?: string[];
+    specs?: DevSpawnDeviceSpec[];
+    owner?: string;
+    os?: string;
+    tags?: string[];
+    online?: boolean | null;
+}
+
+// From api/types.go
+interface DevSpawnDevicesResponse {
+    tailnet: string;
+    spawned: Device[];
+    devices: Device[];
 }
 
 // From api/types.go
@@ -75,9 +133,19 @@ interface ErrorResponse {
 }
 
 // From api/types.go
+interface GrantDraft {
+    src: string[];
+    dst: string[];
+    ip?: string[];
+    // empty interface{} type, falling back to unknown
+    app?: Record<string, unknown> | null;
+}
+
+// From api/types.go
 interface HealthResponse {
     status: string;
     version: string;
+    build?: string;
 }
 
 // From api/types.go
@@ -103,6 +171,71 @@ interface PolicyDraftResponse {
 }
 
 // From api/types.go
+interface PolicyEdgeChange {
+    state: string;
+    edge: Edge;
+    saved?: Edge | null;
+    draft?: Edge | null;
+}
+
+// From api/types.go
+interface PolicyEvaluateDraftRequest {
+    hujson: string;
+    perspective?: string;
+}
+
+// From api/types.go
+interface PolicyEvaluateDraftResponse {
+    tailnet: string;
+    added: PolicyEdgeChange[];
+    removed: PolicyEdgeChange[];
+    unchanged: PolicyEdgeChange[];
+    changed: PolicyEdgeChange[];
+    broadAccess: Edge[];
+    visibleDeviceIds: string[];
+    unresolvedSelectors: UnresolvedSelector[];
+    unsupportedSections: string[];
+    applicationGrants: ApplicationGrant[];
+}
+
+// From api/types.go
+interface PolicyMapResponse {
+    tailnet: string;
+    hujson: string;
+    sections: PolicySection[];
+    parseError?: string;
+}
+
+// From api/types.go
+interface PolicyMutation {
+    type: string;
+    section?: string;
+    key?: string;
+    index?: number;
+    rule?: ACLDraft;
+    grant?: GrantDraft;
+    host?: string;
+    ipSet?: string[];
+    members?: string[];
+    owners?: string[];
+    // this is likely an enum in an external package "encoding/json.RawMessage"
+    value?: string;
+}
+
+// From api/types.go
+interface PolicyMutationRequest {
+    hujson?: string;
+    mutation: PolicyMutation;
+}
+
+// From api/types.go
+interface PolicyMutationResponse {
+    tailnet: string;
+    hujson: string;
+    summary?: string;
+}
+
+// From api/types.go
 interface PolicyRef {
     section: string;
     index: number;
@@ -121,6 +254,27 @@ interface PolicySaveResponse {
     saved: boolean;
     tailnet: string;
     hujson: string;
+}
+
+// From api/types.go
+interface PolicySection {
+    name: string;
+    type: string;
+    supported: boolean;
+    count: number;
+    entries?: PolicySectionEntry[];
+    // empty interface{} type, falling back to unknown
+    raw?: unknown;
+    description?: string;
+}
+
+// From api/types.go
+interface PolicySectionEntry {
+    label: string;
+    summary?: string;
+    selectors?: string[];
+    // empty interface{} type, falling back to unknown
+    value?: unknown;
 }
 
 // From api/types.go
@@ -153,5 +307,14 @@ const SocketMessageTopologySnapshot = "topology.snapshot";
 interface TopologyResponse {
     devices: Device[];
     edges: Edge[];
+    tailnet: string;
+}
+
+// From api/types.go
+interface UnresolvedSelector {
+    section: string;
+    index: number;
+    selector: string;
+    role: string;
 }
 

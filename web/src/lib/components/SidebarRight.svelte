@@ -1,19 +1,35 @@
 <script lang="ts">
 	import type { Device } from '../api/schemas';
+	import type { RenderEdge } from '../graph/engine';
 	import ResizableSidebar from './ResizableSidebar.svelte';
 
 	let {
 		open = $bindable(true),
 		selectedDevice = $bindable<Device | undefined>(undefined),
+		selectedEdge = $bindable<RenderEdge | undefined>(undefined),
+		devices = [],
+		visibleEdges = [],
 		colorBy = $bindable<'status' | 'tag' | 'owner' | 'os'>('status')
 	}: {
 		open?: boolean;
 		selectedDevice?: Device;
+		selectedEdge?: RenderEdge;
+		devices?: Device[];
+		visibleEdges?: RenderEdge[];
 		colorBy?: 'status' | 'tag' | 'owner' | 'os';
 	} = $props();
 
+	const edgeSource = $derived(devices.find((device) => device.id === selectedEdge?.from));
+	const edgeTarget = $derived(devices.find((device) => device.id === selectedEdge?.to));
+	const activeDevice = $derived(selectedDevice ?? edgeSource);
 	const deviceInitials = $derived(
-		selectedDevice?.name ? selectedDevice.name.split('.')[0].slice(0, 2).toUpperCase() : '?'
+		activeDevice?.name ? activeDevice.name.split('.')[0].slice(0, 2).toUpperCase() : '?'
+	);
+	const outgoingEdges = $derived(
+		selectedDevice ? visibleEdges.filter((edge) => edge.from === selectedDevice?.id) : []
+	);
+	const incomingEdges = $derived(
+		selectedDevice ? visibleEdges.filter((edge) => edge.to === selectedDevice?.id) : []
 	);
 
 	const osColors: Record<string, string> = {
@@ -38,31 +54,94 @@
 	}
 
 	const avatarColor = $derived.by((): string | undefined => {
-		if (!selectedDevice) return undefined;
+		if (!activeDevice) return undefined;
 		if (colorBy === 'status') {
-			return selectedDevice.online ? '#41a86f' : '#9aa7a1';
+			return activeDevice.online ? '#41a86f' : '#9aa7a1';
 		}
 		const value =
 			colorBy === 'tag'
-				? (selectedDevice.tags[0] ?? 'untagged')
+				? (activeDevice.tags[0] ?? 'untagged')
 				: colorBy === 'owner'
-					? selectedDevice.owner
-					: selectedDevice.os;
+					? activeDevice.owner
+					: activeDevice.os;
 		return palette(value || 'unknown');
 	});
+
+	function edgeTitle(edge: RenderEdge) {
+		if (edge.accessScope === 'broad') return 'Broad access';
+		if (edge.accessScope === 'ssh') return 'SSH access';
+		if (edge.accessScope === 'http') return 'HTTP access';
+		return 'Custom access';
+	}
+
+	function edgePorts(edge: RenderEdge) {
+		return edge.ports?.length
+			? edge.ports.join(', ')
+			: edge.accessScope === 'broad'
+				? 'all ports'
+				: 'unspecified';
+	}
 </script>
 
 <ResizableSidebar position="right" defaultWidth={18 * 16} {open}>
 	<div class="mb-3 shrink-0">
-		<h2 class="m-0 text-[0.95rem] leading-[1.2]">Policy Lens</h2>
+		<h2 class="m-0 text-[0.95rem] leading-[1.2]">Details</h2>
+		<p class="mt-1 mb-0 text-[0.78rem] font-semibold text-secondary">
+			Select a device or access link on the graph.
+		</p>
 	</div>
 
-	{#if selectedDevice}
+	{#if selectedEdge}
+		<div class="border-base-light mb-[0.85rem] border-b pb-[0.85rem]">
+			<p class="m-0 text-[0.72rem] font-extrabold tracking-wider text-label uppercase">
+				Access relationship
+			</p>
+			<h3 class="mt-1 mb-0 text-[1rem] leading-[1.2]">{edgeTitle(selectedEdge)}</h3>
+			<div class="edge-route mt-3">
+				<strong>{edgeSource?.name ?? selectedEdge.from}</strong>
+				<span>can reach</span>
+				<strong>{edgeTarget?.name ?? selectedEdge.to}</strong>
+			</div>
+		</div>
+
+		<div class="border-base-light mb-[0.85rem] border-b pb-[0.85rem]">
+			<h3 class="section-title">Policy</h3>
+			<div class="detail-row">
+				<span class="detail-label">Scope</span><span class="detail-value"
+					>{selectedEdge.accessScope || 'limited'}</span
+				>
+			</div>
+			<div class="detail-row">
+				<span class="detail-label">Ports</span><span class="detail-value"
+					>{edgePorts(selectedEdge)}</span
+				>
+			</div>
+			<div class="detail-row">
+				<span class="detail-label">Protocols</span><span class="detail-value"
+					>{selectedEdge.protocols?.length ? selectedEdge.protocols.join(', ') : 'tcp'}</span
+				>
+			</div>
+			<div class="detail-row">
+				<span class="detail-label">Rules</span>
+				<span class="detail-value">
+					{#if selectedEdge.policyRefs?.length}
+						{#each selectedEdge.policyRefs as ref, index (ref.section + ref.index)}
+							<span class="ref-chip">{ref.section} #{ref.index + 1}</span
+							>{#if index < selectedEdge.policyRefs.length - 1},
+							{/if}
+						{/each}
+					{:else}
+						no policy reference
+					{/if}
+				</span>
+			</div>
+		</div>
+	{:else if selectedDevice}
 		<div
 			class="border-base-light mb-[0.85rem] flex items-center gap-[0.65rem] border-b pb-[0.85rem]"
 		>
 			<span
-				class="avatar grid h-9 w-9 shrink-0 place-items-center rounded-full text-[0.8rem] font-bold text-white transition-colors duration-[160ms] ease-out"
+				class="avatar grid h-9 w-9 shrink-0 place-items-center rounded-full text-[0.8rem] font-bold text-white"
 				style:background-color={avatarColor}
 				data-subnet-router={selectedDevice.subnetRouter}
 			>
@@ -77,110 +156,80 @@
 				<div
 					class="mt-[0.15rem] flex flex-wrap items-center gap-x-[0.45rem] gap-y-[0.3rem] text-[0.78rem] font-bold text-tertiary"
 				>
-					{#if colorBy !== 'status'}
-						<span class="inline-flex items-center gap-[0.35rem]">
-							<span class="dot" class:online={selectedDevice.online}></span>
-							{selectedDevice.online ? 'online' : 'offline'}
-						</span>
-					{/if}
+					<span class="inline-flex items-center gap-[0.35rem]">
+						<span class="dot" class:online={selectedDevice.online}></span>
+						{selectedDevice.online ? 'online' : 'offline'}
+					</span>
 					{#if selectedDevice.tags.length > 0}
-						<span
-							class="bg-border-light inline-flex items-center rounded-full px-[0.45rem] py-[0.15rem] text-[0.75rem] font-bold text-primary"
-							>{selectedDevice.tags[0]}</span
-						>
-						{#if selectedDevice.tags.length > 1}
-							<span
-								class="text-[0.75rem] font-bold text-muted"
-								title={selectedDevice.tags.slice(1).join(', ')}
-								>+{selectedDevice.tags.length - 1}</span
-							>
-						{/if}
+						<span class="tag-pill">{selectedDevice.tags[0]}</span>
 					{/if}
 				</div>
 			</div>
 		</div>
-	{/if}
 
-	{#if selectedDevice}
-		<div class="flex min-h-0 flex-1 flex-col">
-			<div class="border-base-light mb-[0.85rem] border-b pb-[0.85rem]">
-				<h3 class="section-title">Identity</h3>
-				<div class="detail-row">
-					<span class="detail-label">Name</span><span class="detail-value"
-						>{selectedDevice.name}</span
-					>
-				</div>
-				<div class="detail-row">
-					<span class="detail-label">Owner</span><span class="detail-value"
-						>{selectedDevice.owner || 'unknown'}</span
-					>
-				</div>
-				<div class="detail-row">
-					<span class="detail-label">OS</span><span class="detail-value"
-						>{selectedDevice.os || 'unknown'}</span
-					>
-				</div>
-				<div class="detail-row">
-					<span class="detail-label">Status</span><span class="detail-value"
-						><span class="dot" class:online={selectedDevice.online}></span
-						>{selectedDevice.online ? 'online' : 'offline'}</span
-					>
-				</div>
+		<div class="border-base-light mb-[0.85rem] border-b pb-[0.85rem]">
+			<h3 class="section-title">Reachability</h3>
+			<div class="detail-row">
+				<span class="detail-label">Can reach</span><span class="detail-value"
+					>{outgoingEdges.length} visible target{outgoingEdges.length === 1 ? '' : 's'}</span
+				>
 			</div>
-
-			<div class="border-base-light mb-[0.85rem] border-b pb-[0.85rem]">
-				<h3 class="section-title">Network</h3>
-				<div class="detail-row">
-					<span class="detail-label">IP</span><span class="detail-value"
-						>{selectedDevice.ip || 'unknown'}</span
-					>
-				</div>
-				<div class="detail-row">
-					<span class="detail-label">Tailscale IPs</span><span class="detail-value"
-						>{selectedDevice.tailscaleIps.length
-							? selectedDevice.tailscaleIps.join(', ')
-							: 'unknown'}</span
-					>
-				</div>
-				<div class="detail-row">
-					<span class="detail-label">Subnet routes</span><span class="detail-value"
-						>{selectedDevice.routedSubnets.length
-							? selectedDevice.routedSubnets.join(', ')
-							: 'none'}</span
-					>
-				</div>
+			<div class="detail-row">
+				<span class="detail-label">Reachable by</span><span class="detail-value"
+					>{incomingEdges.length} visible source{incomingEdges.length === 1 ? '' : 's'}</span
+				>
 			</div>
+		</div>
 
+		<div class="border-base-light mb-[0.85rem] border-b pb-[0.85rem]">
+			<h3 class="section-title">Identity</h3>
+			<div class="detail-row">
+				<span class="detail-label">Owner</span><span class="detail-value"
+					>{selectedDevice.owner || 'unknown'}</span
+				>
+			</div>
+			<div class="detail-row">
+				<span class="detail-label">OS</span><span class="detail-value"
+					>{selectedDevice.os || 'unknown'}</span
+				>
+			</div>
+		</div>
+
+		<div class="border-base-light mb-[0.85rem] border-b pb-[0.85rem]">
+			<h3 class="section-title">Network</h3>
+			<div class="detail-row">
+				<span class="detail-label">IP</span><span class="detail-value"
+					>{selectedDevice.ip || 'unknown'}</span
+				>
+			</div>
+			<div class="detail-row">
+				<span class="detail-label">Tailscale IPs</span><span class="detail-value"
+					>{selectedDevice.tailscaleIps.length
+						? selectedDevice.tailscaleIps.join(', ')
+						: 'unknown'}</span
+				>
+			</div>
+		</div>
+
+		{#if selectedDevice.tags.length > 0}
 			<div class="border-base-light mb-[0.85rem] border-b">
 				<h3 class="section-title">Tags</h3>
-				{#if selectedDevice.tags.length > 0}
-					<div class="flex flex-wrap gap-[0.35rem]">
-						{#each selectedDevice.tags as tag (tag)}
-							<span
-								class="bg-border-light inline-flex items-center rounded-full px-[0.55rem] py-[0.25rem] text-[0.8rem] font-bold text-primary"
-								>{tag}</span
-							>
-						{/each}
-					</div>
-				{:else}
-					<p class="text-[0.85rem] text-muted">none</p>
-				{/if}
+				<div class="flex flex-wrap gap-[0.35rem]">
+					{#each selectedDevice.tags as tag (tag)}
+						<span class="tag-pill">{tag}</span>
+					{/each}
+				</div>
 			</div>
-		</div>
+		{/if}
 	{:else}
 		<div class="flex flex-1 items-center justify-center py-8">
 			<p class="m-0 text-center text-[0.85rem] leading-[1.5] text-muted">
-				Select a node in the graph to inspect its details.
+				Select a graph node or edge to inspect it here.
 			</p>
 		</div>
 	{/if}
 	{#snippet collapsed()}
-		<button
-			class="sidebar-icon"
-			title="Policy Lens panel"
-			type="button"
-			onclick={() => (open = true)}
-		>
+		<button class="sidebar-icon" title="Details panel" type="button" onclick={() => (open = true)}>
 			<svg viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
 				<path
 					d="M10 1L1 5V10C1 15.25 4.75 19.35 10 20C15.25 19.35 19 15.25 19 10V5L10 1Z"
@@ -193,7 +242,16 @@
 			</svg>
 		</button>
 		<div class="bg-border h-px w-[1.2rem]"></div>
-		{#if selectedDevice}
+		{#if selectedEdge}
+			<button
+				class="sidebar-icon"
+				title="Selected access relationship"
+				type="button"
+				onclick={() => (open = true)}
+			>
+				<span class="text-[0.65rem] font-extrabold">→</span>
+			</button>
+		{:else if selectedDevice}
 			<button
 				class="sidebar-icon"
 				title={selectedDevice.name}
@@ -201,13 +259,13 @@
 				onclick={() => (open = true)}
 			>
 				<span
-					class="mini-avatar rounded-full text-[0.65rem] font-bold text-white transition-colors duration-[160ms]"
+					class="mini-avatar grid h-7 w-7 shrink-0 place-items-center rounded-full text-[0.65rem] font-bold text-white"
 					style:background-color={avatarColor}
 					data-subnet-router={selectedDevice.subnetRouter}>{deviceInitials}</span
 				>
 			</button>
 		{:else}
-			<span class="text-[0.75rem] font-bold text-muted" title="No device selected">—</span>
+			<span class="text-[0.75rem] font-bold text-muted" title="Nothing selected">—</span>
 		{/if}
 	{/snippet}
 </ResizableSidebar>
@@ -227,16 +285,25 @@
 		@apply font-bold text-secondary;
 	}
 	.detail-value {
-		@apply min-w-0 break-words whitespace-normal font-bold text-primary leading-[1.35];
+		@apply min-w-0 leading-[1.35] font-bold break-words whitespace-normal text-primary;
+	}
+	.edge-route {
+		@apply grid gap-1 rounded-lg border border-panel-border bg-panel-weak p-2 text-[0.82rem] font-bold text-secondary;
+	}
+	.edge-route strong {
+		@apply text-primary;
+	}
+	.ref-chip {
+		@apply text-[0.78rem] font-extrabold text-teal;
+	}
+	.tag-pill {
+		@apply inline-flex items-center rounded-full bg-light px-[0.55rem] py-[0.25rem] text-[0.8rem] font-bold text-primary;
 	}
 	.dot {
 		@apply h-[0.6rem] w-[0.6rem] shrink-0 rounded-full bg-gray;
 	}
 	.dot.online {
 		@apply bg-green;
-	}
-	.mini-avatar {
-		@apply grid h-7 w-7 shrink-0 place-items-center;
 	}
 	.mini-avatar[data-subnet-router='true'] {
 		@apply rounded-lg;

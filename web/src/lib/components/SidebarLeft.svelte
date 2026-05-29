@@ -218,7 +218,7 @@
 		@apply border-teal bg-hover text-primary;
 	}
 	.device-item {
-		@apply flex w-full cursor-pointer items-center gap-2 rounded-md border border-transparent bg-transparent px-2 py-[0.45rem] text-left text-[0.85rem] text-primary transition-[background-color,border-color] duration-[140ms] ease-out hover:border-strong hover:bg-hover;
+		@apply flex w-full min-w-0 cursor-pointer items-center gap-2 rounded-md border border-transparent bg-transparent px-2 py-[0.45rem] text-left text-[0.85rem] text-primary transition-[background-color,border-color] duration-[140ms] ease-out hover:border-strong hover:bg-hover;
 	}
 	.device-item.active {
 		@apply border-strong bg-hover;
