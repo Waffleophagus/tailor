@@ -28,3 +28,9 @@ services:
     # Only works on Linux hosts with a tailscaled Unix socket at this path.
     # volumes:
     #   - /var/run/tailscale/tailscaled.sock:/var/run/tailscale/tailscaled.sock:ro
+
+    # Optional: persist application logs on the host (stdout is always logged too).
+    # environment:
+    #   TAILOR_LOG_DIR: /var/log/tailor
+    # volumes:
+    #   - ./tailor-logs:/var/log/tailor

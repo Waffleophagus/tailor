@@ -21,22 +21,29 @@ func (s *Server) handleDevSpawnDevices(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !s.cloudAPI.Status().DevMode {
+		logAPIError(s.logger, r, http.StatusForbidden, nil, "spawn devices requires demo auth")
 		writeError(w, http.StatusForbidden, "Spawn devices requires demo tailnet auth (tskey-api-tailor-dev).")
 		return
 	}
 
 	var request api.DevSpawnDevicesRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&request); err != nil {
+		logAPIError(s.logger, r, http.StatusBadRequest, err, "invalid spawn devices JSON")
 		writeError(w, http.StatusBadRequest, "Request body must be valid JSON.")
 		return
 	}
 
 	spawned, err := devtailnet.SpawnDevices(request)
 	if err != nil {
+		logAPIError(s.logger, r, http.StatusBadRequest, err, "spawn devices failed")
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
+	s.logger.Info("dev devices spawned",
+		"count", len(spawned),
+		"request_id", RequestIDFromContext(r.Context()),
+	)
 	writeJSON(w, http.StatusOK, api.DevSpawnDevicesResponse{
 		Tailnet: devtailnet.Name,
 		Spawned: spawned,
@@ -50,22 +57,29 @@ func (s *Server) handleDevPatchDevices(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !s.cloudAPI.Status().DevMode {
+		logAPIError(s.logger, r, http.StatusForbidden, nil, "patch devices requires demo auth")
 		writeError(w, http.StatusForbidden, "Patch devices requires demo tailnet auth (tskey-api-tailor-dev).")
 		return
 	}
 
 	var request api.DevPatchDevicesRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&request); err != nil {
+		logAPIError(s.logger, r, http.StatusBadRequest, err, "invalid patch devices JSON")
 		writeError(w, http.StatusBadRequest, "Request body must be valid JSON.")
 		return
 	}
 
 	patched, err := devtailnet.PatchDevices(request)
 	if err != nil {
+		logAPIError(s.logger, r, http.StatusBadRequest, err, "patch devices failed")
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
+	s.logger.Info("dev devices patched",
+		"count", len(patched),
+		"request_id", RequestIDFromContext(r.Context()),
+	)
 	writeJSON(w, http.StatusOK, api.DevPatchDevicesResponse{
 		Tailnet: devtailnet.Name,
 		Patched: patched,
