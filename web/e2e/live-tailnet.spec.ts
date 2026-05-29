@@ -63,7 +63,6 @@ test('policy editor validates HuJSON and shows graph preview', async ({ page }) 
 	const marker = `"tailor-e2e-marker-${Date.now()}"`;
 	await textarea.fill(`${current}\n// ${marker}\n`);
 	await validatePolicyEditor(page);
-	await expect(page.getByLabel('Graph summary')).toContainText('Preview');
 	await closePolicyEditor(page);
 	await expect(page.getByRole('button', { name: 'Save validated policy' })).toBeVisible();
 	await expect(page.getByLabel('Graph summary')).toContainText('Preview');

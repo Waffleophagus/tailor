@@ -40,8 +40,12 @@
 					Edit HuJSON directly. Validate with Tailscale, then save when the graph looks right.
 				</p>
 			</div>
-			<button type="button" class="close-button" title="Close policy editor" onclick={onClose}
-				>×</button
+			<button
+				type="button"
+				class="close-button"
+				title="Close policy editor"
+				aria-label="Close policy editor"
+				onclick={onClose}>×</button
 			>
 		</header>
 

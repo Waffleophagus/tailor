@@ -96,6 +96,8 @@ cd web
 pnpm test:e2e
 ```
 
+CI runs the same demo-tailnet suite (`TAILSCALE_API_KEY=tskey-api-tailor-dev`) on every push and pull request. Production ACL save (`pnpm test:e2e:production`) is local-only and never runs in CI.
+
 Interactive mode:
 
 ```sh

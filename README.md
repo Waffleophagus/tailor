@@ -24,13 +24,26 @@ Tailor is a single Go binary with an embedded Svelte frontend. It connects to Ta
 
 ## Quick start
 
-### Docker Compose (recommended)
+### Docker (recommended)
+
+Published images are on GitHub Container Registry (free for public repos):
+
+```sh
+docker pull ghcr.io/waffleophagus/tailor:latest
+docker run --rm -p 8080:8080 ghcr.io/waffleophagus/tailor:latest
+```
+
+Pin a release: `ghcr.io/waffleophagus/tailor:0.1.0` or `ghcr.io/waffleophagus/tailor:v0.1.0`.
+
+If you use `docker compose`, point the service image at that registry reference and run:
 
 ```sh
 docker compose up
 ```
 
 Open [http://localhost:8080](http://localhost:8080).
+
+> **Note:** The first GHCR publish may create a private package until you set visibility to public under **Packages** → **tailor** → **Package settings** → **Change visibility** (one-time for public repos).
 
 **Embedded mode** (container runs its own `tailscaled`):
 ```yaml
@@ -50,9 +63,13 @@ volumes:
 
 ### Prebuilt binary
 
-Download the latest release for your platform from the [Releases](../../releases) page, extract, and run:
+Each [GitHub Release](../../releases) ships production binaries (no dev/demo tags) for Linux, macOS, and Windows, plus a `checksums.txt` file.
 
 ```sh
+# Example: Linux amd64
+curl -LO https://github.com/Waffleophagus/tailor/releases/latest/download/tailor_0.1.0_linux_amd64.tar.gz
+tar -xzf tailor_0.1.0_linux_amd64.tar.gz
+chmod +x tailor
 ./tailor
 ```
 
@@ -99,9 +116,15 @@ Dev mode compiles the backend with a built-in synthetic tailnet — a fake fleet
 
 Run tests:
 ```sh
-pnpm --dir web check && pnpm --dir web test  # frontend
-go test ./...                                 # backend
+pnpm --dir web lint && pnpm --dir web check && pnpm --dir web test
+pnpm --dir web test:e2e   # demo tailnet (see web/e2e/README.md)
+go test ./... && go test -tags dev ./...
 ```
+
+
+## Concider hiring me?
+
+If you like what you see here, I'm actively looking for my next role. Open to contract work or full time! Learn more at [d6software.com](https://d6software.com).
 
 ## License
 

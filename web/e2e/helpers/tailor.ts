@@ -72,14 +72,20 @@ export async function openPolicyEditor(page: Page) {
 }
 
 export async function closePolicyEditor(page: Page) {
+	const editor = page.getByRole('complementary', { name: 'Policy editor' });
+	if (!(await editor.isVisible())) {
+		return;
+	}
 	await page.getByRole('button', { name: 'Close policy editor' }).click();
-	await expect(page.getByRole('complementary', { name: 'Policy editor' })).toBeHidden();
+	await expect(editor).toBeHidden();
 }
 
 export async function validatePolicyEditor(page: Page) {
 	const editor = page.getByRole('complementary', { name: 'Policy editor' });
+	await expect(editor.getByText('Unsaved changes')).toBeVisible({ timeout: 15_000 });
 	await editor.getByRole('button', { name: 'Validate', exact: true }).click();
 	await expect(editor.getByText('Validated', { exact: true })).toBeVisible({ timeout: 60_000 });
+	await expect(page.getByLabel('Graph summary')).toContainText('Preview', { timeout: 60_000 });
 }
 
 export async function discardPolicyEditor(page: Page) {
