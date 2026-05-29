@@ -3,6 +3,7 @@ import { Result } from 'better-result';
 import {
 	cloudAuthStatusResponseSchema,
 	errorResponseSchema,
+	policyEvaluateDraftResponseSchema,
 	policyMapResponseSchema,
 	policyResponseSchema,
 	policyDraftResponseSchema,
@@ -12,6 +13,11 @@ import {
 	type CloudAuthStatusResponse,
 	type PolicyDraftRequest,
 	type PolicyDraftResponse,
+	type PolicyEvaluateDraftRequest,
+	type PolicyEvaluateDraftResponse,
+	policyMutationResponseSchema,
+	type PolicyMutationRequest,
+	type PolicyMutationResponse,
 	type PolicyMapResponse,
 	type PolicyResponse,
 	type PolicySaveResponse,
@@ -50,6 +56,16 @@ export async function draftPolicyRule(
 	});
 }
 
+export async function evaluatePolicyDraft(
+	request: PolicyEvaluateDraftRequest
+): Promise<Result<PolicyEvaluateDraftResponse, Error>> {
+	return fetchJSON('/api/policy/evaluate-draft', policyEvaluateDraftResponseSchema, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(request)
+	});
+}
+
 export async function validatePolicyDraft(
 	hujson: string
 ): Promise<Result<PolicyValidateResponse, Error>> {
@@ -57,6 +73,16 @@ export async function validatePolicyDraft(
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({ hujson })
+	});
+}
+
+export async function mutatePolicyDraft(
+	request: PolicyMutationRequest
+): Promise<Result<PolicyMutationResponse, Error>> {
+	return fetchJSON('/api/policy/mutate', policyMutationResponseSchema, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(request)
 	});
 }
 

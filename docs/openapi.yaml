@@ -149,6 +149,40 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/policy/evaluate-draft:
+    post:
+      operationId: evaluatePolicyDraft
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PolicyEvaluateDraftRequest"
+      responses:
+        "200":
+          description: Graph-ready access impact for an unsaved draft policy.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PolicyEvaluateDraftResponse"
+        "400":
+          description: Invalid draft policy.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Cloud API authentication has not been enabled.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: Tailscale LocalAPI is unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LocalAPIStatusResponse"
   /api/policy/validate:
     post:
       operationId: validatePolicyDraft
@@ -329,6 +363,9 @@ components:
           type: string
         hasPolicy:
           type: boolean
+        devMode:
+          type: boolean
+          description: True when authenticated with the in-memory demo tailnet key.
     PolicyResponse:
       type: object
       required: [tailnet, hujson]
@@ -431,6 +468,116 @@ components:
           $ref: "#/components/schemas/ACLDraft"
         hujson:
           type: string
+    PolicyEvaluateDraftRequest:
+      type: object
+      required: [hujson]
+      properties:
+        hujson:
+          type: string
+        perspective:
+          type: string
+    PolicyEdgeChange:
+      type: object
+      required: [state, edge]
+      properties:
+        state:
+          type: string
+          enum: [added, removed, unchanged, changed]
+        edge:
+          $ref: "#/components/schemas/Edge"
+        saved:
+          $ref: "#/components/schemas/Edge"
+        draft:
+          $ref: "#/components/schemas/Edge"
+    UnresolvedSelector:
+      type: object
+      required: [section, index, selector, role]
+      properties:
+        section:
+          type: string
+        index:
+          type: integer
+        selector:
+          type: string
+        role:
+          type: string
+    ApplicationGrant:
+      type: object
+      required: [section, index, src, dst, capabilities]
+      properties:
+        section:
+          type: string
+        index:
+          type: integer
+        src:
+          type: array
+          items:
+            type: string
+        dst:
+          type: array
+          items:
+            type: string
+        capabilities:
+          type: array
+          items:
+            type: string
+    PolicyEvaluateDraftResponse:
+      type: object
+      required:
+        [
+          tailnet,
+          added,
+          removed,
+          unchanged,
+          changed,
+          broadAccess,
+          visibleDeviceIds,
+          unresolvedSelectors,
+          unsupportedSections,
+          applicationGrants,
+        ]
+      properties:
+        tailnet:
+          type: string
+        added:
+          type: array
+          items:
+            $ref: "#/components/schemas/PolicyEdgeChange"
+        removed:
+          type: array
+          items:
+            $ref: "#/components/schemas/PolicyEdgeChange"
+        unchanged:
+          type: array
+          items:
+            $ref: "#/components/schemas/PolicyEdgeChange"
+        changed:
+          type: array
+          items:
+            $ref: "#/components/schemas/PolicyEdgeChange"
+        broadAccess:
+          type: array
+          items:
+            $ref: "#/components/schemas/Edge"
+        visibleDeviceIds:
+          type: array
+          items:
+            type: string
+          description: >
+            Device IDs in the perspective trimmed netmap (Tailscale device visibility).
+            When no perspective is supplied, all tailnet devices are listed.
+        unresolvedSelectors:
+          type: array
+          items:
+            $ref: "#/components/schemas/UnresolvedSelector"
+        unsupportedSections:
+          type: array
+          items:
+            type: string
+        applicationGrants:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApplicationGrant"
     PolicyValidateRequest:
       type: object
       required: [hujson]

@@ -1,8 +1,11 @@
 package api
 
+import "encoding/json"
+
 type HealthResponse struct {
 	Status  string `json:"status"`
 	Version string `json:"version"`
+	Build   string `json:"build,omitempty"`
 }
 
 type LocalAPIStatusResponse struct {
@@ -81,6 +84,7 @@ type CloudAuthStatusResponse struct {
 	Authenticated bool   `json:"authenticated"`
 	Tailnet       string `json:"tailnet,omitempty"`
 	HasPolicy     bool   `json:"hasPolicy"`
+	DevMode       bool   `json:"devMode,omitempty"`
 }
 
 type PolicyResponse struct {
@@ -132,6 +136,38 @@ type ACLDraft struct {
 	Proto  string   `json:"proto,omitempty"`
 }
 
+type GrantDraft struct {
+	Src []string       `json:"src"`
+	Dst []string       `json:"dst"`
+	IP  []string       `json:"ip,omitempty"`
+	App map[string]any `json:"app,omitempty"`
+}
+
+type PolicyMutation struct {
+	Type    string          `json:"type"`
+	Section string          `json:"section,omitempty"`
+	Key     string          `json:"key,omitempty"`
+	Index   int             `json:"index,omitempty"`
+	Rule    ACLDraft        `json:"rule,omitempty"`
+	Grant   GrantDraft      `json:"grant,omitempty"`
+	Host    string          `json:"host,omitempty"`
+	IPSet   []string        `json:"ipSet,omitempty"`
+	Members []string        `json:"members,omitempty"`
+	Owners  []string        `json:"owners,omitempty"`
+	Value   json.RawMessage `json:"value,omitempty"`
+}
+
+type PolicyMutationRequest struct {
+	HuJSON   string         `json:"hujson,omitempty"`
+	Mutation PolicyMutation `json:"mutation"`
+}
+
+type PolicyMutationResponse struct {
+	Tailnet string `json:"tailnet"`
+	HuJSON  string `json:"hujson"`
+	Summary string `json:"summary,omitempty"`
+}
+
 type PolicyValidateRequest struct {
 	HuJSON string `json:"hujson"`
 }
@@ -148,8 +184,91 @@ type PolicySaveResponse struct {
 	HuJSON  string `json:"hujson"`
 }
 
+type PolicyEvaluateDraftRequest struct {
+	HuJSON      string `json:"hujson"`
+	Perspective string `json:"perspective,omitempty"`
+}
+
+type PolicyEvaluateDraftResponse struct {
+	Tailnet             string               `json:"tailnet"`
+	Added               []PolicyEdgeChange   `json:"added"`
+	Removed             []PolicyEdgeChange   `json:"removed"`
+	Unchanged           []PolicyEdgeChange   `json:"unchanged"`
+	Changed             []PolicyEdgeChange   `json:"changed"`
+	BroadAccess         []Edge               `json:"broadAccess"`
+	VisibleDeviceIDs    []string             `json:"visibleDeviceIds"`
+	UnresolvedSelectors []UnresolvedSelector `json:"unresolvedSelectors"`
+	UnsupportedSections []string             `json:"unsupportedSections"`
+	ApplicationGrants   []ApplicationGrant   `json:"applicationGrants"`
+}
+
+type PolicyEdgeChange struct {
+	State string `json:"state"`
+	Edge  Edge   `json:"edge"`
+	Saved *Edge  `json:"saved,omitempty"`
+	Draft *Edge  `json:"draft,omitempty"`
+}
+
+type UnresolvedSelector struct {
+	Section  string `json:"section"`
+	Index    int    `json:"index"`
+	Selector string `json:"selector"`
+	Role     string `json:"role"`
+}
+
+type ApplicationGrant struct {
+	Section      string   `json:"section"`
+	Index        int      `json:"index"`
+	Src          []string `json:"src"`
+	Dst          []string `json:"dst"`
+	Capabilities []string `json:"capabilities"`
+}
+
 type ErrorResponse struct {
 	Error string `json:"error"`
+}
+
+// DevSpawnDeviceSpec describes one device in a demo spawn batch (per-device fields override request defaults).
+type DevSpawnDeviceSpec struct {
+	Name          string   `json:"name"`
+	Owner         string   `json:"owner,omitempty"`
+	OS            string   `json:"os,omitempty"`
+	Tags          []string `json:"tags,omitempty"`
+	Online        *bool    `json:"online,omitempty"`
+	SubnetRouter  bool     `json:"subnetRouter,omitempty"`
+	RoutedSubnets []string `json:"routedSubnets,omitempty"`
+}
+
+type DevSpawnDevicesRequest struct {
+	Count  int                  `json:"count,omitempty"`
+	Prefix string               `json:"prefix,omitempty"`
+	Names  []string             `json:"names,omitempty"`
+	Specs  []DevSpawnDeviceSpec `json:"specs,omitempty"`
+	Owner  string               `json:"owner,omitempty"`
+	OS     string               `json:"os,omitempty"`
+	Tags   []string             `json:"tags,omitempty"`
+	Online *bool                `json:"online,omitempty"`
+}
+
+type DevSpawnDevicesResponse struct {
+	Tailnet string   `json:"tailnet"`
+	Spawned []Device `json:"spawned"`
+	Devices []Device `json:"devices"`
+}
+
+type DevPatchDeviceSpec struct {
+	Name   string `json:"name"`
+	Online *bool  `json:"online,omitempty"`
+}
+
+type DevPatchDevicesRequest struct {
+	Devices []DevPatchDeviceSpec `json:"devices"`
+}
+
+type DevPatchDevicesResponse struct {
+	Tailnet string   `json:"tailnet"`
+	Patched []Device `json:"patched"`
+	Devices []Device `json:"devices"`
 }
 
 type SocketMessage struct {

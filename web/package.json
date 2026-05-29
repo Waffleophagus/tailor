@@ -1,7 +1,7 @@
 {
 	"name": "web",
 	"private": true,
-	"version": "0.0.0",
+	"version": "0.1.0",
 	"packageManager": "pnpm@11.2.2",
 	"type": "module",
 	"scripts": {
@@ -12,19 +12,34 @@
 		"generate:guts": "cd .. && go run ./tools/generate-types",
 		"generate": "pnpm generate:guts && pnpm generate:api",
 		"preview": "vite preview",
-		"check": "svelte-check --tsconfig ./tsconfig.app.json && tsc -p tsconfig.node.json",
+		"check": "svelte-check --tsconfig ./tsconfig.app.json --diagnostic-sources \"js,svelte\" && tsc -p tsconfig.node.json",
 		"lint": "prettier --check . && eslint .",
-		"format": "prettier --write ."
+		"format": "prettier --write .",
+		"test": "vitest run",
+		"test:watch": "vitest",
+		"test:e2e": "playwright test",
+		"test:e2e:production": "TAILOR_E2E_SKIP_GLOBAL_AUTH=1 TAILOR_E2E_INCLUDE_PRODUCTION=1 playwright test e2e/production-acl-save.spec.ts",
+		"test:e2e:ui": "playwright test --ui",
+		"backend:build": "cd .. && go build -o web/.cache/tailor ./cmd/tailor",
+		"backend:build:dev": "cd .. && go build -tags dev -o web/.cache/tailor-e2e ./cmd/tailor",
+		"backend:run": "cd .. && ./web/.cache/tailor",
+		"backend:run:dev": "cd .. && ./web/.cache/tailor-e2e",
+		"backend:e2e": "cd .. && go build -tags dev -o web/.cache/tailor-e2e ./cmd/tailor && exec ./web/.cache/tailor-e2e",
+		"backend:test": "cd .. && go test ./...",
+		"backend:test:dev": "cd .. && go test -tags dev ./...",
+		"dev:stack": "pnpm backend:build:dev && pnpm backend:run:dev",
+		"dev:spawn": "node --experimental-strip-types scripts/dev-spawn-fleet.ts"
 	},
 	"devDependencies": {
 		"@eslint/compat": "^2.1.0",
 		"@eslint/js": "^10.0.1",
 		"@hey-api/openapi-ts": "^0.97.3",
+		"@playwright/test": "^1.60.0",
 		"@sveltejs/vite-plugin-svelte": "^7.1.2",
 		"@tailwindcss/vite": "^4.3.0",
 		"@tsconfig/svelte": "^5.0.8",
-		"@types/d3-force": "^3.0.10",
 		"@types/node": "^24.12.3",
+		"dotenv": "^17.4.2",
 		"eslint": "^10.4.0",
 		"eslint-config-prettier": "^10.1.8",
 		"eslint-plugin-svelte": "^3.17.0",
@@ -37,13 +52,13 @@
 		"tailwindcss": "^4.3.0",
 		"typescript": "~6.0.2",
 		"typescript-eslint": "^8.60.0",
-		"vite": "^8.0.12"
+		"vite": "^8.0.12",
+		"vitest": "^4.1.7"
 	},
 	"dependencies": {
 		"@hey-api/client-fetch": "^0.13.1",
 		"better-result": "^2.9.2",
 		"cytoscape": "^3.33.4",
-		"d3-force": "^3.0.0",
 		"zod": "^4.4.3"
 	}
 }

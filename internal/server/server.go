@@ -11,6 +11,7 @@ import (
 
 	"github.com/Waffleophagus/tailor/internal/api"
 	"github.com/Waffleophagus/tailor/internal/cloudapi"
+	"github.com/Waffleophagus/tailor/internal/devtailnet"
 	"github.com/Waffleophagus/tailor/internal/frontend"
 	"github.com/Waffleophagus/tailor/internal/localapi"
 	"github.com/Waffleophagus/tailor/internal/policy"
@@ -49,8 +50,11 @@ func New(options ...Options) http.Handler {
 	mux.HandleFunc("GET /api/policy", server.handlePolicy)
 	mux.HandleFunc("GET /api/policy/map", server.handlePolicyMap)
 	mux.HandleFunc("POST /api/policy/draft", server.handlePolicyDraft)
+	mux.HandleFunc("POST /api/policy/mutate", server.handlePolicyMutate)
+	mux.HandleFunc("POST /api/policy/evaluate-draft", server.handlePolicyEvaluateDraft)
 	mux.HandleFunc("POST /api/policy/validate", server.handlePolicyValidate)
 	mux.HandleFunc("POST /api/policy/save", server.handlePolicySave)
+	server.registerDevRoutes(mux)
 
 	spa := spaHandler(http.FileServer(frontend.FileSystem()))
 	mux.Handle("/", spa)
@@ -150,6 +154,79 @@ func (s *Server) handlePolicyDraft(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, api.PolicyDraftResponse{Tailnet: status.Tailnet, Rule: rule, HuJSON: draft})
 }
 
+func (s *Server) handlePolicyMutate(w http.ResponseWriter, r *http.Request) {
+	var request api.PolicyMutationRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 10<<20)).Decode(&request); err != nil {
+		writeError(w, http.StatusBadRequest, "Request body must be valid JSON.")
+		return
+	}
+	base := strings.TrimSpace(request.HuJSON)
+	if base == "" {
+		current, err := s.cloudAPI.Policy(r.Context())
+		if err != nil {
+			if errors.Is(err, cloudapi.ErrNotAuthenticated) {
+				writeError(w, http.StatusUnauthorized, "Enable ACL editing before mutating policy.")
+				return
+			}
+			writeError(w, http.StatusBadGateway, err.Error())
+			return
+		}
+		base = current
+	}
+	draft, err := policy.ApplyMutation(base, request.Mutation)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	status := s.cloudAPI.Status()
+	writeJSON(w, http.StatusOK, api.PolicyMutationResponse{
+		Tailnet: status.Tailnet,
+		HuJSON:  draft,
+		Summary: request.Mutation.Type,
+	})
+}
+
+func (s *Server) handlePolicyEvaluateDraft(w http.ResponseWriter, r *http.Request) {
+	var request api.PolicyEvaluateDraftRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 10<<20)).Decode(&request); err != nil {
+		writeError(w, http.StatusBadRequest, "Request body must be valid JSON.")
+		return
+	}
+	if strings.TrimSpace(request.HuJSON) == "" {
+		writeError(w, http.StatusBadRequest, "Draft policy is required.")
+		return
+	}
+	current, err := s.cloudAPI.Policy(r.Context())
+	if err != nil {
+		if errors.Is(err, cloudapi.ErrNotAuthenticated) {
+			writeError(w, http.StatusUnauthorized, "Enable ACL editing before evaluating a policy draft.")
+			return
+		}
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	devices, err := s.topologyDevices(r.Context())
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, localapi.ErrUnavailable) {
+			status = http.StatusServiceUnavailable
+		}
+		writeJSON(w, status, api.LocalAPIStatusResponse{
+			Available:        false,
+			LocalAPIEndpoint: s.localAPI.Endpoint(),
+			Error:            err.Error(),
+		})
+		return
+	}
+	evaluation, err := policy.EvaluateDraft(current, request.HuJSON, devices, policy.EdgeOptions{Perspective: request.Perspective})
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	evaluation.Tailnet = s.cloudAPI.Status().Tailnet
+	writeJSON(w, http.StatusOK, evaluation)
+}
+
 func (s *Server) handlePolicyValidate(w http.ResponseWriter, r *http.Request) {
 	var request api.PolicyValidateRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 10<<20)).Decode(&request); err != nil {
@@ -189,13 +266,26 @@ func (s *Server) handlePolicySave(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleHealth(w http.ResponseWriter, r *http.Request) {
+	build := "release"
+	if devtailnet.Enabled {
+		build = "dev"
+	}
 	writeJSON(w, http.StatusOK, api.HealthResponse{
 		Status:  "ok",
 		Version: "dev",
+		Build:   build,
 	})
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
+	if s.useDevTailnet() {
+		writeJSON(w, http.StatusOK, api.LocalAPIStatusResponse{
+			Available:        true,
+			LocalAPIEndpoint: "dev tailnet (" + devtailnet.Name + ")",
+		})
+		return
+	}
+
 	_, err := s.localAPI.Status(r.Context())
 	if err != nil {
 		status := api.LocalAPIStatusResponse{
@@ -214,7 +304,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleTopology(w http.ResponseWriter, r *http.Request) {
-	devices, err := s.localAPI.Status(r.Context())
+	devices, err := s.topologyDevices(r.Context())
 	if err != nil {
 		status := http.StatusInternalServerError
 		if errors.Is(err, localapi.ErrUnavailable) {
@@ -280,7 +370,7 @@ func (s *Server) writeTopologySocketMessage(ctx context.Context, conn *websocket
 }
 
 func (s *Server) topologySocketMessage(ctx context.Context) api.SocketMessage {
-	devices, err := s.localAPI.Status(ctx)
+	devices, err := s.topologyDevices(ctx)
 	if err != nil {
 		return api.SocketMessage{
 			Type: api.SocketMessageLocalAPIUnavailable,
@@ -298,6 +388,27 @@ func (s *Server) topologySocketMessage(ctx context.Context) api.SocketMessage {
 	}
 }
 
+func (s *Server) useDevTailnet() bool {
+	return s.cloudAPI.Status().DevMode
+}
+
+func (s *Server) topologyDevices(ctx context.Context) ([]api.Device, error) {
+	if s.useDevTailnet() {
+		return devtailnet.Devices(), nil
+	}
+	return s.localAPI.Status(ctx)
+}
+
+func (s *Server) topologyTailnet(ctx context.Context) string {
+	if s.useDevTailnet() {
+		return devtailnet.Name
+	}
+	if tn, err := s.localAPI.TailnetName(ctx); err == nil {
+		return tn
+	}
+	return ""
+}
+
 func (s *Server) topologySnapshot(ctx context.Context, devices []api.Device) api.TopologyResponse {
 	edges := topology.Phase1Edges(devices)
 	if status := s.cloudAPI.Status(); status.Authenticated && status.HasPolicy {
@@ -309,10 +420,7 @@ func (s *Server) topologySnapshot(ctx context.Context, devices []api.Device) api
 		}
 	}
 
-	tailnet := ""
-	if tn, err := s.localAPI.TailnetName(ctx); err == nil {
-		tailnet = tn
-	}
+	tailnet := s.topologyTailnet(ctx)
 
 	return api.TopologyResponse{
 		Devices: devices,
@@ -341,6 +449,7 @@ func cloudAuthStatusResponse(status cloudapi.AuthStatus) api.CloudAuthStatusResp
 		Authenticated: status.Authenticated,
 		Tailnet:       status.Tailnet,
 		HasPolicy:     status.HasPolicy,
+		DevMode:       status.DevMode,
 	}
 }
 

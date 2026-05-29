@@ -2,10 +2,9 @@
 	import { onDestroy, onMount } from 'svelte';
 	import {
 		authenticateCloud,
-		draftPolicyRule,
+		evaluatePolicyDraft,
 		fetchCloudStatus,
 		fetchPolicy,
-		fetchPolicyMap,
 		saveValidatedPolicyDraft,
 		validatePolicyDraft
 	} from './lib/api/cloud';
@@ -15,16 +14,18 @@
 		Device,
 		Edge,
 		LocalAPIStatusResponse,
-		PolicyMapResponse,
+		PolicyEvaluateDraftResponse,
 		PolicyResponse
 	} from './lib/api/schemas';
 	import { fetchTopology } from './lib/api/topology';
 	import { connectTopologySocket } from './lib/api/topologySocket';
 	import type { RenderEdge } from './lib/graph/engine';
+	import { resolveGraphLayoutRoot } from './lib/graph/graph-layout-root';
+	import { filterEdgesForGraph, resolveBaseGraphEdges } from './lib/graph/resolve-graph-edges';
 	import AuthDialog from './lib/components/AuthDialog.svelte';
 	import GraphCanvas from './lib/components/GraphCanvas.svelte';
 	import GraphLegend from './lib/components/GraphLegend.svelte';
-	import PolicyPanel from './lib/components/PolicyPanel.svelte';
+	import PolicyEditorPanel from './lib/components/PolicyEditorPanel.svelte';
 	import SidebarLeft from './lib/components/SidebarLeft.svelte';
 	import SidebarRight from './lib/components/SidebarRight.svelte';
 	import SidebarToggleButton from './lib/components/SidebarToggleButton.svelte';
@@ -34,25 +35,23 @@
 	let edges = $state<Edge[]>([]);
 	let tailnetName = $state('');
 	let selectedDevice = $state<Device | undefined>();
+	let selectedEdge = $state<RenderEdge | undefined>();
 	let cloudStatus = $state<CloudAuthStatusResponse>({
 		authenticated: false,
 		hasPolicy: false
 	});
 	let cloudError = $state('');
 	let policy = $state<PolicyResponse | undefined>();
-	let policyMap = $state<PolicyMapResponse | undefined>();
-	let policySearch = $state('');
-	let draftHuJSON = $state('');
-	let draftRuleText = $state('');
-	let editSource = $state('');
-	let editDestination = $state('');
-	let editPortPreset = $state('443');
-	let editCustomPorts = $state('');
-	let editStatus = $state('');
-	let editBusy = $state(false);
-	let draftValid = $state(false);
+	let policyEvaluation = $state<PolicyEvaluateDraftResponse | undefined>();
+	let previewEvaluation = $state<PolicyEvaluateDraftResponse | undefined>();
+	let editorHuJSON = $state('');
+	let validatedHuJSON = $state('');
+	let editorOpen = $state(false);
+	let editorValid = $state<boolean | null>(null);
+	let editorBusy = $state(false);
+	let editorStatus = $state('');
+	let editorErrors = $state<string[]>([]);
 	let phase2Open = $state(false);
-	let policyOpen = $state(false);
 	let localApiError = $state<LocalAPIStatusResponse | Error | undefined>();
 	let cloudBusy = $state(false);
 	let showOffline = $state(true);
@@ -76,6 +75,7 @@
 		  }
 		| undefined;
 	let disconnectTopologySocket: (() => void) | undefined;
+	let topologyEvalTimer: number | undefined;
 
 	const visibleDevices = $derived(
 		devices.filter((device) => {
@@ -91,39 +91,44 @@
 	const ownerOptions = $derived(unique(devices.map((device) => device.owner).filter(Boolean)));
 	const osOptions = $derived(unique(devices.map((device) => device.os).filter(Boolean)));
 	const rootDevice = $derived(devices[0]);
-	const graphRootDevice = $derived(
-		cloudStatus.authenticated && graphMode === 'focused'
-			? (selectedDevice ?? rootDevice)
-			: rootDevice
+	const editorDirty = $derived(Boolean(policy && editorHuJSON !== policy.hujson));
+	const validationStale = $derived(validatedHuJSON !== '' && editorHuJSON !== validatedHuJSON);
+	const effectiveValid = $derived(validationStale ? null : editorValid);
+	const effectiveErrors = $derived(validationStale ? [] : editorErrors);
+	const effectivePreviewEvaluation = $derived(validationStale ? undefined : previewEvaluation);
+	const hasValidatedPending = $derived(
+		!validationStale && editorValid === true && validatedHuJSON !== ''
 	);
-	const visibleDeviceIDs = $derived(new Set(visibleDevices.map((device) => device.id)));
-	const visibleEdges = $derived(graphEdges());
-	const graphDevices = $derived(devicesForGraph());
+	const hasPendingDraft = $derived(editorDirty || hasValidatedPending);
 	const visibleOnlineCount = $derived(visibleDevices.filter((device) => device.online).length);
+	const graphDevices = $derived(visibleDevices);
+	const graphVisibleDeviceIDs = $derived(new Set(graphDevices.map((device) => device.id)));
+	const graphRootDevice = $derived(
+		resolveGraphLayoutRoot(selectedDevice, rootDevice, graphVisibleDeviceIDs)
+	);
+	const visibleEdges = $derived(graphEdges());
 	const graphOnlineCount = $derived(graphDevices.filter((device) => device.online).length);
 
-	function unique(values: string[]) {
-		return [...new Set(values)].sort((a, b) => a.localeCompare(b));
-	}
-
 	function graphEdges(): RenderEdge[] {
-		if (cloudStatus.authenticated && edges.length > 0) {
-			const rendered = edges
-				.filter((edge) => visibleDeviceIDs.has(edge.from) && visibleDeviceIDs.has(edge.to))
-				.map((edge) => ({
-					id: edge.id,
-					from: edge.from,
-					to: edge.to,
-					kind: edge.kind,
-					accessScope: edge.accessScope
-				}));
-			if (graphMode === 'all') return rendered;
-			const focusID = graphRootDevice?.id;
-			if (!focusID) return [];
-			return rendered.filter((edge) => edge.from === focusID || edge.to === focusID);
+		const policyRendered = resolveBaseGraphEdges({
+			cloudAuthenticated: cloudStatus.authenticated,
+			topologyEdges: edges,
+			previewEvaluation: effectivePreviewEvaluation,
+			policyEvaluation,
+			editorOpen,
+			editorDirty,
+			hasValidatedPending
+		});
+		if (policyRendered) {
+			return filterEdgesForGraph(
+				policyRendered,
+				graphVisibleDeviceIDs,
+				graphMode,
+				graphRootDevice?.id
+			);
 		}
-		const root = rootDevice;
-		if (!root || !visibleDeviceIDs.has(root.id) || !root.online) return [];
+		const root = graphRootDevice;
+		if (!root || !graphVisibleDeviceIDs.has(root.id) || !root.online) return [];
 		return visibleDevices
 			.filter((device) => device.id !== root.id && device.online)
 			.map((device) => ({
@@ -134,22 +139,26 @@
 			}));
 	}
 
-	function devicesForGraph(): Device[] {
-		if (!cloudStatus.authenticated || graphMode === 'all' || edges.length === 0) {
-			return visibleDevices;
+	function scheduleTopologyPolicySync() {
+		const savedPolicy = policy;
+		if (!cloudStatus.authenticated || !savedPolicy || editorDirty || hasValidatedPending) {
+			return;
 		}
-		const ids = new Set<string>(); // eslint-disable-line svelte/prefer-svelte-reactivity
-		if (graphRootDevice?.id && visibleDeviceIDs.has(graphRootDevice.id)) {
-			ids.add(graphRootDevice.id);
+		if (topologyEvalTimer !== undefined) {
+			window.clearTimeout(topologyEvalTimer);
 		}
-		for (const edge of visibleEdges) {
-			ids.add(edge.from);
-			ids.add(edge.to);
-		}
-		return visibleDevices.filter((device) => ids.has(device.id));
+		topologyEvalTimer = window.setTimeout(() => {
+			topologyEvalTimer = undefined;
+			void evaluatePolicy(savedPolicy.hujson);
+		}, 300);
+	}
+
+	function unique(values: string[]) {
+		return [...new Set(values)].sort((a, b) => a.localeCompare(b));
 	}
 
 	function chooseDevice(device: Device) {
+		selectedEdge = undefined;
 		selectedDevice = device;
 		graphAPI?.selectDevice(device);
 	}
@@ -162,18 +171,35 @@
 		return error.message;
 	}
 
-	function splitSelectors(value: string) {
-		return value
-			.split(',')
-			.map((part) => part.trim())
-			.filter(Boolean);
+	function resetEditorFromPolicy() {
+		if (!policy) return;
+		editorHuJSON = policy.hujson;
+		validatedHuJSON = '';
+		editorValid = null;
+		editorStatus = '';
+		editorErrors = [];
+		previewEvaluation = undefined;
 	}
 
-	function getPorts() {
-		if (editPortPreset === 'custom') {
-			return splitSelectors(editCustomPorts);
-		}
-		return splitSelectors(editPortPreset);
+	async function evaluatePolicy(hujson: string, preview = false) {
+		const result = await evaluatePolicyDraft({ hujson });
+		result.match({
+			ok: (value) => {
+				if (preview) {
+					previewEvaluation = value;
+					return;
+				}
+				policyEvaluation = value;
+				previewEvaluation = undefined;
+			},
+			err: (error) => {
+				if (preview) {
+					previewEvaluation = undefined;
+					editorStatus = 'Validated, but graph preview is unavailable.';
+				}
+				cloudError = error.message;
+			}
+		});
 	}
 
 	async function enableACLEditing(data: { tailnet: string; apiKey: string }) {
@@ -210,106 +236,94 @@
 	}
 
 	async function loadPolicy() {
-		const [rawResult, mapResult] = await Promise.all([fetchPolicy(), fetchPolicyMap()]);
-		rawResult.match({
-			ok: (value) => {
+		const result = await fetchPolicy();
+		result.match({
+			ok: async (value) => {
 				policy = value;
-				draftHuJSON = '';
-				draftRuleText = '';
-				draftValid = false;
-				policyOpen = true;
+				resetEditorFromPolicy();
 				cloudError = '';
+				await evaluatePolicy(value.hujson);
 			},
-			err: (error) => {
-				cloudError = error.message;
-			}
-		});
-		mapResult.match({
-			ok: (value) => {
-				policyMap = value;
-			},
-			err: (error) => {
+			err: async (error) => {
 				cloudError = error.message;
 			}
 		});
 	}
 
-	async function createPolicyDraft() {
-		if (editBusy) return;
-		editBusy = true;
+	function openPolicyEditor() {
+		const open = () => {
+			if (policy && !hasPendingDraft) {
+				resetEditorFromPolicy();
+			}
+			editorOpen = true;
+		};
+		if (policy) {
+			open();
+			return;
+		}
+		void loadPolicy().then(open);
+	}
+
+	function closePolicyEditor() {
+		editorOpen = false;
+		if (!hasValidatedPending) {
+			previewEvaluation = undefined;
+		}
+	}
+
+	async function validateEditor() {
+		if (editorBusy || !editorDirty) return;
+		editorBusy = true;
 		cloudError = '';
-		editStatus = '';
-		draftValid = false;
-		const result = await draftPolicyRule({
-			sources: splitSelectors(editSource),
-			destinations: splitSelectors(editDestination),
-			ports: getPorts(),
-			protocol: 'tcp'
-		});
-		result.match({
-			ok: (value) => {
-				draftHuJSON = value.hujson;
-				draftRuleText = JSON.stringify(value.rule, null, 2);
-				editStatus = 'Draft ready. Validate before saving.';
+		editorErrors = [];
+		const result = await validatePolicyDraft(editorHuJSON);
+		await result.match({
+			ok: async (value) => {
+				editorValid = value.valid;
+				if (value.valid) {
+					validatedHuJSON = editorHuJSON;
+					editorStatus = 'Policy validated. Preview updated on the graph.';
+					await evaluatePolicy(editorHuJSON, true);
+				} else {
+					validatedHuJSON = '';
+					editorStatus = 'Fix validation errors before saving.';
+					editorErrors = value.errors ?? ['Policy failed validation.'];
+					previewEvaluation = undefined;
+				}
 			},
-			err: (error) => {
-				cloudError = error.message;
+			err: async (error) => {
+				editorValid = false;
+				validatedHuJSON = '';
+				editorErrors = [error.message];
+				editorStatus = 'Validation failed.';
+				previewEvaluation = undefined;
 			}
 		});
-		editBusy = false;
+		editorBusy = false;
 	}
 
-	async function validateDraft() {
-		if (editBusy || !draftHuJSON) return;
-		editBusy = true;
-		cloudError = '';
-		const result = await validatePolicyDraft(draftHuJSON);
-		result.match({
-			ok: (value) => {
-				draftValid = value.valid;
-				editStatus = value.valid
-					? 'Draft validated. Save is enabled.'
-					: (value.errors ?? ['Draft failed validation.']).join(' ');
-			},
-			err: (error) => {
-				draftValid = false;
-				cloudError = error.message;
-			}
-		});
-		editBusy = false;
+	function discardEditorChanges() {
+		resetEditorFromPolicy();
 	}
 
-	async function saveDraft() {
-		if (editBusy || !draftValid) return;
-		editBusy = true;
+	async function saveEditorPolicy() {
+		if (editorBusy || !hasValidatedPending) return;
+		editorBusy = true;
 		cloudError = '';
 		const result = await saveValidatedPolicyDraft();
-		result.match({
-			ok: (value) => {
+		await result.match({
+			ok: async (value) => {
 				policy = { tailnet: value.tailnet, hujson: value.hujson };
-				void refreshPolicyMap();
-				draftHuJSON = '';
-				draftRuleText = '';
-				draftValid = false;
-				editStatus = 'Saved. Topology will refresh from the updated policy.';
+				resetEditorFromPolicy();
+				editorOpen = false;
+				editorStatus = 'Policy saved.';
+				await evaluatePolicy(value.hujson);
 			},
-			err: (error) => {
+			err: async (error) => {
 				cloudError = error.message;
 			}
 		});
-		editBusy = false;
-	}
-
-	async function refreshPolicyMap() {
-		const result = await fetchPolicyMap();
-		result.match({
-			ok: (value) => {
-				policyMap = value;
-			},
-			err: (error) => {
-				cloudError = error.message;
-			}
-		});
+		editorBusy = false;
 	}
 
 	function closePhase2Dialog() {
@@ -344,6 +358,10 @@
 			}
 		});
 
+		if (cloudStatus.authenticated) {
+			await loadPolicy();
+		}
+
 		disconnectTopologySocket = connectTopologySocket({
 			onSnapshot: (value) => {
 				apiStatus = 'connected';
@@ -354,6 +372,7 @@
 				selectedDevice = selectedDevice
 					? (value.devices.find((device) => device.id === selectedDevice?.id) ?? value.devices[0])
 					: value.devices[0];
+				scheduleTopologyPolicySync();
 			},
 			onUnavailable: (status) => {
 				apiStatus = 'LocalAPI unavailable';
@@ -380,6 +399,9 @@
 	});
 
 	onDestroy(() => {
+		if (topologyEvalTimer !== undefined) {
+			window.clearTimeout(topologyEvalTimer);
+		}
 		disconnectTopologySocket?.();
 	});
 </script>
@@ -392,32 +414,20 @@
 					Tailnet topology
 				</p>
 				<h1 class="m-0 text-2xl leading-[1.1]">Tailor</h1>
+				{#if cloudStatus.devMode}
+					<p class="m-0 mt-1 text-[0.78rem] font-bold text-teal">
+						Demo tailnet — {cloudStatus.tailnet ?? 'demo.tailor.ts.net'}
+					</p>
+				{/if}
 			</div>
 			<div class="flex min-w-0 items-center gap-[0.6rem]">
 				{#if cloudStatus.authenticated}
-					<div class="hidden" aria-label="Policy Lens graph mode">
-						<button
-							type="button"
-							class="min-h-[1.95rem] rounded-md border-0 bg-transparent px-[0.55rem] py-[0.35rem] text-[0.78rem] font-extrabold whitespace-nowrap text-secondary"
-							class:bg-panel-accent={graphMode === 'focused'}
-							class:text-panel-fg={graphMode === 'focused'}
-							onclick={() => (graphMode = 'focused')}
-						>
-							Focused
+					{#if hasValidatedPending}
+						<button class="btn-save" type="button" disabled={editorBusy} onclick={saveEditorPolicy}>
+							Save validated policy
 						</button>
-						<button
-							type="button"
-							class="min-h-[1.95rem] rounded-md border-0 bg-transparent px-[0.55rem] py-[0.35rem] text-[0.78rem] font-extrabold whitespace-nowrap text-secondary"
-							class:bg-panel-accent={graphMode === 'all'}
-							class:text-panel-fg={graphMode === 'all'}
-							onclick={() => (graphMode = 'all')}
-						>
-							All connections
-						</button>
-					</div>
-				{/if}
-				{#if cloudStatus.authenticated}
-					<button class="btn-secondary" type="button" onclick={loadPolicy}>Raw HuJSON</button>
+					{/if}
+					<button class="btn-primary" type="button" onclick={openPolicyEditor}>Edit policy</button>
 				{:else}
 					<button class="btn-primary" type="button" onclick={() => (phase2Open = true)}>
 						Enable ACL Editing
@@ -453,135 +463,139 @@
 				chooseDevice={(device) => chooseDevice(device)}
 			/>
 
-			<section
-				class="graph relative min-h-[32rem] min-w-0 flex-1 overflow-hidden"
-				aria-label="Topology graph"
-			>
-				<SidebarToggleButton
-					position="left"
-					open={leftOpen}
-					ontoggle={() => (leftOpen = !leftOpen)}
-				/>
-				<SidebarToggleButton
-					position="right"
-					open={rightOpen}
-					ontoggle={() => (rightOpen = !rightOpen)}
-				/>
-
-				<div
-					class="absolute top-3 left-3 z-[2] flex items-center gap-[0.4rem] rounded-lg border border-graph-border bg-graph-hud-bg p-[0.35rem] shadow-[0_10px_26px_rgb(23_33_38/8%)]"
-					aria-label="Graph summary"
+			<div class="relative flex min-h-0 min-w-0 flex-1">
+				<section
+					class="graph relative min-h-[32rem] min-w-0 flex-1 overflow-hidden"
+					aria-label="Topology graph"
 				>
-					<span
-						class="inline-flex min-h-8 items-baseline gap-[0.3rem] rounded-md bg-graph-dot p-[0.35rem_0.55rem] text-[0.78rem] font-bold whitespace-nowrap text-secondary"
-						><strong class="text-[0.98rem] leading-none text-graph-hud-strong"
-							>{graphOnlineCount}</strong
-						> online</span
-					>
-					<span
-						class="inline-flex min-h-8 items-baseline gap-[0.3rem] rounded-md bg-graph-dot p-[0.35rem_0.55rem] text-[0.78rem] font-bold whitespace-nowrap text-secondary"
-						><strong class="text-[0.98rem] leading-none text-graph-hud-strong"
-							>{visibleEdges.length}</strong
-						> links</span
-					>
-					{#if cloudStatus.authenticated && graphMode === 'focused' && graphRootDevice}
-						<span
-							class="inline-flex min-h-8 items-baseline gap-[0.3rem] rounded-md bg-graph-dot p-[0.35rem_0.55rem] text-[0.78rem] font-bold whitespace-nowrap text-secondary"
-							><strong class="text-[0.98rem] leading-none text-graph-hud-strong"
-								>{graphRootDevice.name || graphRootDevice.ip}</strong
-							> focus</span
+					<SidebarToggleButton
+						position="left"
+						open={leftOpen}
+						ontoggle={() => (leftOpen = !leftOpen)}
+					/>
+					<SidebarToggleButton
+						position="right"
+						open={rightOpen}
+						ontoggle={() => (rightOpen = !rightOpen)}
+					/>
+
+					<div class="graph-hud" aria-label="Graph summary">
+						<span class="hud-chip"
+							><strong class="hud-chip-strong">{graphOnlineCount}</strong> online</span
 						>
-					{/if}
-				</div>
-				<div
-					class="absolute top-3 right-3 z-[2] flex gap-[0.35rem] rounded-lg border border-graph-border bg-graph-hud-bg p-[0.35rem] shadow-[0_8px_22px_rgb(23_33_38/8%)]"
-					aria-label="Graph controls"
-				>
-					<button
-						type="button"
-						title="Zoom in"
-						onclick={() => graphAPI?.zoom(1.2)}
-						class="grid h-[2.1rem] w-[2.1rem] min-w-[2.1rem] place-items-center rounded-md border border-panel-border bg-panel-weak leading-none font-extrabold text-primary transition-[background-color,border-color,transform] duration-[160ms] ease-out hover:-translate-y-px hover:border-teal hover:bg-hover motion-reduce:transition-none motion-reduce:hover:transform-none"
-						>+</button
-					>
-					<button
-						type="button"
-						title="Zoom out"
-						onclick={() => graphAPI?.zoom(0.8)}
-						class="grid h-[2.1rem] w-[2.1rem] min-w-[2.1rem] place-items-center rounded-md border border-panel-border bg-panel-weak leading-none font-extrabold text-primary transition-[background-color,border-color,transform] duration-[160ms] ease-out hover:-translate-y-px hover:border-teal hover:bg-hover motion-reduce:transition-none motion-reduce:hover:transform-none"
-						>-</button
-					>
-					<button
-						type="button"
-						title="Fit to view"
-						onclick={() => graphAPI?.fit()}
-						class="grid h-[2.1rem] w-[2.1rem] min-w-[2.1rem] place-items-center rounded-md border border-panel-border bg-panel-weak leading-none font-extrabold text-primary transition-[background-color,border-color,transform] duration-[160ms] ease-out hover:-translate-y-px hover:border-teal hover:bg-hover motion-reduce:transition-none motion-reduce:hover:transform-none"
-						>⌖</button
-					>
-					<button
-						type="button"
-						title="Reflow layout"
-						onclick={() => graphAPI?.reflow()}
-						class="grid h-[2.1rem] w-[2.1rem] min-w-[2.1rem] place-items-center rounded-md border border-panel-border bg-panel-weak leading-none font-extrabold text-primary transition-[background-color,border-color,transform] duration-[160ms] ease-out hover:-translate-y-px hover:border-teal hover:bg-hover motion-reduce:transition-none motion-reduce:hover:transform-none"
-						>↻</button
-					>
-				</div>
-
-				<GraphCanvas
-					{devices}
-					{edges}
-					{visibleDevices}
-					{visibleEdges}
-					{graphMode}
-					bind:selectedDevice
-					{showLabels}
-					{cloudStatus}
-					{colorBy}
-					{rootDevice}
-					onReady={(api) => (graphAPI = api)}
-				/>
-
-				<GraphLegend
-					{colorBy}
-					authenticated={cloudStatus.authenticated}
-					{graphMode}
-					{tagOptions}
-					{ownerOptions}
-					{osOptions}
-				/>
-
-				{#if localApiError}
-					<div
-						class="w-[min(28rem,calc(100%-2rem))] absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 rounded-lg border border-base bg-surface p-4 shadow-[0_10px_30px_rgb(23_33_38/8%)]"
-					>
-						<h2 class="mb-[0.4rem] text-base">Connect to Tailscale</h2>
-						<p class="wrap-anywhere mb-0">{localApiErrorMessage(localApiError)}</p>
+						<span class="hud-chip"
+							><strong class="hud-chip-strong">{visibleEdges.length}</strong> links</span
+						>
+						{#if effectivePreviewEvaluation}
+							<span class="hud-chip hud-chip-warn">Preview</span>
+						{/if}
+						{#if cloudStatus.authenticated && graphMode === 'focused' && graphRootDevice}
+							<span class="hud-chip"
+								><strong class="hud-chip-strong"
+									>{graphRootDevice.name || graphRootDevice.ip}</strong
+								> focus</span
+							>
+						{/if}
+						{#if cloudStatus.authenticated}
+							<div class="mode-toggle">
+								{#each ['focused', 'all'] as mode (mode)}
+									<button
+										type="button"
+										class="mode-button"
+										data-active={graphMode === mode}
+										onclick={() => (graphMode = mode as 'focused' | 'all')}
+									>
+										{mode === 'focused' ? 'Focused' : 'All'}
+									</button>
+								{/each}
+							</div>
+						{/if}
+						<button
+							type="button"
+							title="Zoom in"
+							onclick={() => graphAPI?.zoom(1.2)}
+							class="graph-control">+</button
+						>
+						<button
+							type="button"
+							title="Zoom out"
+							onclick={() => graphAPI?.zoom(0.8)}
+							class="graph-control">-</button
+						>
+						<button
+							type="button"
+							title="Fit to view"
+							onclick={() => graphAPI?.fit()}
+							class="graph-control">⌖</button
+						>
+						<button
+							type="button"
+							title="Reflow layout"
+							onclick={() => graphAPI?.reflow()}
+							class="graph-control">↻</button
+						>
 					</div>
-				{/if}
 
-				<PolicyPanel
-					bind:open={policyOpen}
-					{policy}
-					{policyMap}
-					bind:search={policySearch}
-					{draftHuJSON}
-					{draftRuleText}
-					{draftValid}
-					{editBusy}
-					{editStatus}
-					bind:editSource
-					bind:editDestination
-					bind:editPortPreset
-					bind:editCustomPorts
-					{cloudError}
-					onClose={() => (policyOpen = false)}
-					onDraft={createPolicyDraft}
-					onValidate={validateDraft}
-					onSave={saveDraft}
+					<GraphCanvas
+						devices={graphDevices}
+						{edges}
+						visibleDevices={graphDevices}
+						{visibleEdges}
+						{graphMode}
+						bind:selectedDevice
+						bind:selectedEdge
+						{showLabels}
+						{cloudStatus}
+						{colorBy}
+						rootDevice={graphRootDevice}
+						onReady={(api) => (graphAPI = api)}
+					/>
+
+					<GraphLegend
+						{colorBy}
+						authenticated={cloudStatus.authenticated}
+						bind:graphMode
+						{tagOptions}
+						{ownerOptions}
+						{osOptions}
+					/>
+
+					{#if localApiError}
+						<div class="local-api-error">
+							<h2 class="mb-[0.4rem] text-base">Connect to Tailscale</h2>
+							<p class="mb-0 wrap-anywhere">{localApiErrorMessage(localApiError)}</p>
+						</div>
+					{/if}
+
+					{#if cloudError}
+						<div class="cloud-error" role="alert">{cloudError}</div>
+					{/if}
+
+					<PolicyEditorPanel
+						bind:open={editorOpen}
+						{policy}
+						bind:editorText={editorHuJSON}
+						isDirty={editorDirty}
+						valid={effectiveValid}
+						busy={editorBusy}
+						status={editorStatus}
+						errors={effectiveErrors}
+						onValidate={validateEditor}
+						onSave={saveEditorPolicy}
+						onDiscard={discardEditorChanges}
+						onClose={closePolicyEditor}
+					/>
+				</section>
+
+				<SidebarRight
+					bind:open={rightOpen}
+					bind:selectedDevice
+					bind:selectedEdge
+					{devices}
+					{visibleEdges}
+					{colorBy}
 				/>
-			</section>
-
-			<SidebarRight bind:open={rightOpen} bind:selectedDevice {colorBy} />
+			</div>
 		</div>
 	</section>
 
@@ -600,8 +614,37 @@
 	.btn-primary {
 		@apply min-h-[2.35rem] rounded-md border border-panel-accent bg-panel-accent px-3 py-[0.45rem] text-sm font-extrabold text-panel-fg transition-[background-color,border-color,color,transform] duration-[160ms] ease-out hover:-translate-y-px disabled:transform-none disabled:cursor-not-allowed disabled:opacity-[0.58];
 	}
-	.btn-secondary {
-		@apply min-h-[2.35rem] rounded-md border border-panel-border bg-panel-weak px-3 py-[0.45rem] text-sm font-extrabold text-primary transition-[background-color,border-color,color,transform] duration-[160ms] ease-out hover:-translate-y-px disabled:transform-none disabled:cursor-not-allowed disabled:opacity-[0.58];
+	.btn-save {
+		@apply min-h-[2.35rem] rounded-md border border-ok bg-ok/10 px-3 py-[0.45rem] text-sm font-extrabold text-ok transition-[background-color,border-color,color,transform] duration-[160ms] ease-out hover:-translate-y-px hover:bg-ok/15 disabled:transform-none disabled:cursor-not-allowed disabled:opacity-[0.58];
 	}
-
+	.graph-hud {
+		@apply absolute top-3 left-3 z-[2] flex w-fit max-w-[calc(100%-1.5rem)] flex-wrap items-center gap-[0.4rem] rounded-lg border border-graph-border bg-graph-hud-bg p-[0.35rem] shadow-[0_10px_26px_rgb(23_33_38/8%)];
+	}
+	.hud-chip {
+		@apply inline-flex min-h-8 items-baseline gap-[0.3rem] rounded-md bg-graph-dot px-[0.55rem] py-[0.35rem] text-[0.78rem] font-bold whitespace-nowrap text-secondary;
+	}
+	.hud-chip-strong {
+		@apply text-[0.98rem] leading-none text-graph-hud-strong;
+	}
+	.hud-chip-warn {
+		@apply items-center text-warn;
+	}
+	.mode-toggle {
+		@apply inline-flex rounded-md border border-panel-border bg-panel-input p-[0.12rem];
+	}
+	.mode-button {
+		@apply rounded-sm border-0 bg-transparent px-2 py-[0.28rem] text-[0.72rem] font-extrabold text-secondary transition-[background-color,color] duration-[140ms] ease-out;
+	}
+	.mode-button[data-active='true'] {
+		@apply bg-hover text-primary;
+	}
+	.graph-control {
+		@apply grid h-[2.1rem] w-[2.1rem] min-w-[2.1rem] place-items-center rounded-md border border-panel-border bg-panel-weak leading-none font-extrabold text-primary transition-[background-color,border-color,transform] duration-[160ms] ease-out hover:-translate-y-px hover:border-teal hover:bg-hover motion-reduce:transition-none motion-reduce:hover:transform-none;
+	}
+	.local-api-error {
+		@apply absolute top-1/2 left-1/2 w-[min(28rem,calc(100%-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-lg border border-base bg-surface p-4 shadow-[0_10px_30px_rgb(23_33_38/8%)];
+	}
+	.cloud-error {
+		@apply absolute bottom-3 left-1/2 z-[4] max-w-[min(36rem,calc(100%-2rem))] -translate-x-1/2 rounded-lg border border-danger/30 bg-panel-bg px-3 py-2 text-[0.78rem] font-semibold text-danger shadow-[0_10px_26px_rgb(23_33_38/8%)];
+	}
 </style>

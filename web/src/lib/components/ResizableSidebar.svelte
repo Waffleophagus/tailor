@@ -65,7 +65,7 @@
 </script>
 
 <div
-	class="sidebar transition-[width] relative flex shrink-0 flex-col overflow-hidden bg-sidebar duration-[220ms] ease-[cubic-bezier(0.4,0,0.2,1)]"
+	class="sidebar relative flex shrink-0 flex-col overflow-hidden bg-sidebar transition-[width] duration-[220ms] ease-[cubic-bezier(0.4,0,0.2,1)]"
 	data-position={position}
 	data-open={open}
 	data-resizing={resizing}
