@@ -5,6 +5,7 @@ services:
       - "8080:8080"
     environment:
       TAILOR_ADDR: ":8080"
+      TAILOR_LOG_DIR: /var/log/tailor
 
       # auto chooses embedded mode unless you provide an external LocalAPI socket.
       # Use "embedded" to force the container to run its own tailscaled, or
@@ -24,13 +25,10 @@ services:
       # TAILOR_TAILSCALE_MODE: "external"
       # TAILOR_LOCALAPI_SOCKET: "/var/run/tailscale/tailscaled.sock"
 
+    volumes:
+      - ./tailor-logs:/var/log/tailor
+
     # Host socket mode volume:
     # Only works on Linux hosts with a tailscaled Unix socket at this path.
     # volumes:
     #   - /var/run/tailscale/tailscaled.sock:/var/run/tailscale/tailscaled.sock:ro
-
-    # Optional: persist application logs on the host (stdout is always logged too).
-    # environment:
-    #   TAILOR_LOG_DIR: /var/log/tailor
-    # volumes:
-    #   - ./tailor-logs:/var/log/tailor

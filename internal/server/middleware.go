@@ -63,9 +63,9 @@ func (r *statusRecorder) Flush() {
 	}
 }
 
-// Unwrap exposes the underlying ResponseWriter for http.ResponseController.
+// Unwrap returns the wrapper so feature detection uses statusRecorder's methods.
 func (r *statusRecorder) Unwrap() http.ResponseWriter {
-	return r.ResponseWriter
+	return r
 }
 
 // AccessMiddleware logs API requests with method, path, status, duration, and request ID.

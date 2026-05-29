@@ -36,16 +36,7 @@ func (e Environment) NeedsTailscaleSetup(localAPIAvailable bool, deviceCount int
 	if !e.InContainer || e.HasAuthKey {
 		return false
 	}
-	if e.WantsHostSocket {
-		if !localAPIAvailable || deviceCount == 0 {
-			return true
-		}
-		return false
-	}
-	if !localAPIAvailable || deviceCount == 0 {
-		return true
-	}
-	return false
+	return !localAPIAvailable || deviceCount == 0
 }
 
 // SetupInfo returns UI-facing setup guidance when NeedsTailscaleSetup is true.
@@ -73,14 +64,37 @@ func inContainer() bool {
 	if _, err := os.Stat("/.dockerenv"); err == nil {
 		return true
 	}
+	if _, err := os.Stat("/run/.containerenv"); err == nil {
+		return true
+	}
 	data, err := os.ReadFile("/proc/1/cgroup")
+	if err != nil {
+		return hasContainerEnviron()
+	}
+	content := string(data)
+	if strings.Contains(content, "docker") ||
+		strings.Contains(content, "containerd") ||
+		strings.Contains(content, "kubelet") {
+		return true
+	}
+	if strings.Contains(content, "0::/") {
+		mountinfo, err := os.ReadFile("/proc/1/mountinfo")
+		if err == nil {
+			mi := string(mountinfo)
+			if strings.Contains(mi, "kubepods") || strings.Contains(mi, "containerd") {
+				return true
+			}
+		}
+	}
+	return hasContainerEnviron()
+}
+
+func hasContainerEnviron() bool {
+	data, err := os.ReadFile("/proc/1/environ")
 	if err != nil {
 		return false
 	}
-	content := string(data)
-	return strings.Contains(content, "docker") ||
-		strings.Contains(content, "containerd") ||
-		strings.Contains(content, "kubelet")
+	return strings.Contains(string(data), "container=")
 }
 
 func likelyDockerDesktopKernel() bool {
