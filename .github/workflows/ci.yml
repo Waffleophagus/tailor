@@ -98,58 +98,20 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          fetch-tags: true
 
-      - name: Resolve next version
+      - name: Bump version and push tag
         id: version
-        shell: bash
-        run: |
-          set -euo pipefail
-          initial="0.1.0"
-
-          # checkout's fetch-tags can be a no-op on some forges; always sync tags from origin.
-          git fetch --tags origin
-
-          if git describe --tags --exact-match >/dev/null 2>&1; then
-            echo "Commit $(git rev-parse HEAD) is already tagged as $(git describe --tags --exact-match)."
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          latest="$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -1 || true)"
-          if [ -z "$latest" ]; then
-            version="$initial"
-          else
-            base="${latest#v}"
-            IFS=. read -r major minor patch <<< "$base"
-            patch=$((patch + 1))
-            version="${major}.${minor}.${patch}"
-          fi
-
-          # If the computed tag already exists (stale tag list, race, etc.), keep bumping patch.
-          for _ in $(seq 1 100); do
-            if git rev-parse "v${version}" >/dev/null 2>&1; then
-              echo "Tag v${version} already exists; bumping patch."
-              IFS=. read -r major minor patch <<< "${version}"
-              patch=$((patch + 1))
-              version="${major}.${minor}.${patch}"
-            else
-              break
-            fi
-          done
-
-          if git rev-parse "v${version}" >/dev/null 2>&1; then
-            echo "Could not find an unused patch version after 100 attempts."
-            exit 1
-          fi
-
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "tag=v${version}" >> "$GITHUB_OUTPUT"
-          echo "skip=false" >> "$GITHUB_OUTPUT"
-          echo "Next release: v${version}"
+        uses: anothrNick/github-tag-action@1.75.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DEFAULT_BRANCH: main
+          DEFAULT_BUMP: patch
+          INITIAL_VERSION: 0.1.0
+          RELEASE_BRANCHES: main
+          TAG_PREFIX: v
 
       - name: Compute container image tags
-        if: steps.version.outputs.skip != 'true'
+        if: steps.version.outputs.part != ''
         id: image-tags
         shell: bash
         env:
@@ -157,9 +119,11 @@ jobs:
         run: |
           set -euo pipefail
 
-          version="${{ steps.version.outputs.version }}"
-          tag="${{ steps.version.outputs.tag }}"
+          tag="${{ steps.version.outputs.new_tag }}"
+          version="${tag#v}"
           repo="$(echo "$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]')"
+
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
 
           declare -A seen=()
           tags=()
@@ -203,21 +167,21 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Set up Go
-        if: steps.version.outputs.skip != 'true'
+        if: steps.version.outputs.part != ''
         uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: true
 
       - name: Set up pnpm
-        if: steps.version.outputs.skip != 'true'
+        if: steps.version.outputs.part != ''
         uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
         with:
           version: 11.2.2
           run_install: false
 
       - name: Set up Node
-        if: steps.version.outputs.skip != 'true'
+        if: steps.version.outputs.part != ''
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 24
@@ -225,20 +189,20 @@ jobs:
           cache-dependency-path: web/pnpm-lock.yaml
 
       - name: Install frontend dependencies
-        if: steps.version.outputs.skip != 'true'
+        if: steps.version.outputs.part != ''
         run: pnpm --dir web install --frozen-lockfile
 
       - name: Build frontend
-        if: steps.version.outputs.skip != 'true'
+        if: steps.version.outputs.part != ''
         run: pnpm --dir web build
 
       - name: Build release binaries
-        if: steps.version.outputs.skip != 'true'
+        if: steps.version.outputs.part != ''
         shell: bash
         run: |
           set -euo pipefail
-          version="${{ steps.version.outputs.version }}"
-          tag="${{ steps.version.outputs.tag }}"
+          tag="${{ steps.version.outputs.new_tag }}"
+          version="${tag#v}"
           staging="dist/release"
           mkdir -p "$staging"
 
@@ -279,7 +243,7 @@ jobs:
           ls -la "$staging"
 
       - name: Log in to primary container registry
-        if: steps.version.outputs.skip != 'true' && steps.image-tags.outputs.primary_publish == 'true'
+        if: steps.version.outputs.part != '' && steps.image-tags.outputs.primary_publish == 'true'
         env:
           REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
           REGISTRY_USERNAME: ${{ vars.REGISTRY_USERNAME || github.actor }}
@@ -287,7 +251,7 @@ jobs:
           echo "$REGISTRY_TOKEN" | docker login "$CONTAINER_REGISTRY" -u "$REGISTRY_USERNAME" --password-stdin
 
       - name: Log in to GitHub Container Registry
-        if: steps.version.outputs.skip != 'true' && steps.image-tags.outputs.ghcr_publish == 'true'
+        if: steps.version.outputs.part != '' && steps.image-tags.outputs.ghcr_publish == 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REGISTRY_USERNAME: ${{ github.actor }}
@@ -295,7 +259,7 @@ jobs:
           echo "$GITHUB_TOKEN" | docker login ghcr.io -u "$REGISTRY_USERNAME" --password-stdin
 
       - name: Build and push Docker images
-        if: steps.version.outputs.skip != 'true' && steps.image-tags.outputs.publish == 'true'
+        if: steps.version.outputs.part != '' && steps.image-tags.outputs.publish == 'true'
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -303,22 +267,14 @@ jobs:
           tags: ${{ steps.image-tags.outputs.tags }}
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-            org.opencontainers.image.version=${{ steps.version.outputs.version }}
-
-      - name: Create git tag
-        if: steps.version.outputs.skip != 'true'
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -a "${{ steps.version.outputs.tag }}" -m "Release ${{ steps.version.outputs.tag }}"
-          git push origin "${{ steps.version.outputs.tag }}"
+            org.opencontainers.image.version=${{ steps.image-tags.outputs.version }}
 
       - name: Publish GitHub release
-        if: steps.version.outputs.skip != 'true'
+        if: steps.version.outputs.part != ''
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.version.outputs.tag }}
-          name: ${{ steps.version.outputs.tag }}
+          tag_name: ${{ steps.version.outputs.new_tag }}
+          name: ${{ steps.version.outputs.new_tag }}
           generate_release_notes: true
           files: |
             dist/release/*
