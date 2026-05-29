@@ -26,7 +26,9 @@ type Config struct {
 }
 
 // Setup configures the process-wide default logger and returns it with the resolved config.
-func Setup() (*slog.Logger, Config, error) {
+// The cleanup function closes any open log file; call it before removing the log directory
+// (required on Windows). Process exit does not need cleanup.
+func Setup() (*slog.Logger, Config, func(), error) {
 	cfg := Config{
 		Level:      parseLevel(envOr("TAILOR_LOG_LEVEL", "info")),
 		Format:     strings.ToLower(strings.TrimSpace(envOr("TAILOR_LOG_FORMAT", "auto"))),
@@ -45,9 +47,13 @@ func Setup() (*slog.Logger, Config, error) {
 		}
 	}
 
-	writer, fileEnabled, err := logWriter(cfg)
+	writer, fileEnabled, fileLogger, err := logWriter(cfg)
 	if err != nil {
-		return nil, cfg, err
+		return nil, cfg, nil, err
+	}
+	cleanup := func() {}
+	if fileLogger != nil {
+		cleanup = func() { _ = fileLogger.Close() }
 	}
 
 	var handler slog.Handler
@@ -58,7 +64,7 @@ func Setup() (*slog.Logger, Config, error) {
 	case "text":
 		handler = slog.NewTextHandler(writer, opts)
 	default:
-		return nil, cfg, fmt.Errorf("unknown TAILOR_LOG_FORMAT %q (want text, json, or auto)", cfg.Format)
+		return nil, cfg, nil, fmt.Errorf("unknown TAILOR_LOG_FORMAT %q (want text, json, or auto)", cfg.Format)
 	}
 
 	logger := slog.New(handler)
@@ -70,17 +76,17 @@ func Setup() (*slog.Logger, Config, error) {
 		logger.Info("file logging enabled", "log_dir", cfg.LogDir, "file", defaultLogFile)
 	}
 
-	return logger, cfg, nil
+	return logger, cfg, cleanup, nil
 }
 
-func logWriter(cfg Config) (io.Writer, bool, error) {
+func logWriter(cfg Config) (io.Writer, bool, *timberjack.Logger, error) {
 	if cfg.LogDir == "" {
-		return os.Stdout, false, nil
+		return os.Stdout, false, nil, nil
 	}
 
 	if err := os.MkdirAll(cfg.LogDir, 0o755); err != nil {
 		fmt.Fprintf(os.Stderr, "tailor: create log dir %q: %v (continuing with stdout only)\n", cfg.LogDir, err)
-		return os.Stdout, false, nil
+		return os.Stdout, false, nil, nil
 	}
 
 	fileLogger := &timberjack.Logger{
@@ -90,7 +96,7 @@ func logWriter(cfg Config) (io.Writer, bool, error) {
 		MaxAge:     cfg.MaxAgeDays,
 	}
 
-	return io.MultiWriter(os.Stdout, fileLogger), true, nil
+	return io.MultiWriter(os.Stdout, fileLogger), true, fileLogger, nil
 }
 
 func parseLevel(raw string) slog.Level {

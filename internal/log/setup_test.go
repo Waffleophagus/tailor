@@ -31,7 +31,8 @@ func TestSetupStdoutOnly(t *testing.T) {
 	t.Setenv("TAILOR_LOG_FORMAT", "text")
 	t.Setenv("TAILOR_LOG_LEVEL", "info")
 
-	logger, cfg, err := Setup()
+	logger, cfg, cleanup, err := Setup()
+	t.Cleanup(cleanup)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +50,8 @@ func TestSetupFileLogging(t *testing.T) {
 	t.Setenv("TAILOR_LOG_FORMAT", "json")
 	t.Setenv("TAILOR_LOG_LEVEL", "debug")
 
-	logger, cfg, err := Setup()
+	logger, cfg, cleanup, err := Setup()
+	t.Cleanup(cleanup)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +75,10 @@ func TestSetupInvalidFormat(t *testing.T) {
 	t.Setenv("TAILOR_LOG_DIR", "")
 	t.Setenv("TAILOR_LOG_FORMAT", "xml")
 
-	_, _, err := Setup()
+	_, _, cleanup, err := Setup()
+	if cleanup != nil {
+		t.Cleanup(cleanup)
+	}
 	if err == nil {
 		t.Fatal("expected error for invalid format")
 	}
@@ -89,7 +94,8 @@ func TestSetupLogDirFallback(t *testing.T) {
 	t.Setenv("TAILOR_LOG_FORMAT", "text")
 	t.Setenv("TAILOR_LOG_LEVEL", "info")
 
-	logger, _, err := Setup()
+	logger, _, cleanup, err := Setup()
+	t.Cleanup(cleanup)
 	if err != nil {
 		t.Fatal(err)
 	}

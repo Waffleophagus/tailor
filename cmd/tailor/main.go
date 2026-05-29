@@ -15,7 +15,7 @@ import (
 )
 
 func main() {
-	logger, logCfg, err := tailorlog.Setup()
+	logger, logCfg, _, err := tailorlog.Setup()
 	if err != nil {
 		slog.Error("logging setup failed", "error", err)
 		os.Exit(1)
