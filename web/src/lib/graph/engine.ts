@@ -6,11 +6,11 @@ import type {
 	StylesheetJson,
 	EventObject as CyEventObject
 } from 'cytoscape';
-import type { SimulationNodeDatum, SimulationLinkDatum } from 'd3-force';
 import type { Device, Edge } from '../api/schemas';
 import type { CloudAuthStatusResponse } from '../api/schemas';
 import { edgeClasses } from './edge-classes';
 import { installGraphDebug, uninstallGraphDebug } from './graph-debug';
+import { computeGraphLayout } from './layout';
 import { graphEdgeStylesheet } from './style-catalog';
 
 export type ColorBy = 'status' | 'tag' | 'owner' | 'os';
@@ -53,7 +53,6 @@ export interface RenderEdge {
 }
 
 let cytoscapeMod: typeof import('cytoscape') | undefined;
-let d3Mod: typeof import('d3-force') | undefined;
 
 export async function loadLibs() {
 	if (!cytoscapeMod) {
@@ -61,35 +60,20 @@ export async function loadLibs() {
 			(await import('cytoscape')).default ||
 			((await import('cytoscape')) as unknown as typeof import('cytoscape'));
 	}
-	if (!d3Mod) {
-		d3Mod = await import('d3-force');
-	}
-}
-
-interface PhysicsNode extends SimulationNodeDatum {
-	id: string;
 }
 
 export function createEngine(opts: GraphInitOptions) {
 	const { container, onNodeSelect, onEdgeSelect } = opts;
 
-	if (!cytoscapeMod || !d3Mod) {
+	if (!cytoscapeMod) {
 		throw new Error('loadLibs() must be called first');
 	}
 	const cytoscape = cytoscapeMod;
-	const { forceSimulation, forceLink, forceManyBody } = d3Mod;
 
 	let graph: Core | undefined;
-	let cleanupPhysics: (() => void) | undefined;
-	let physicsSignature = '';
 	let layoutSignature = '';
-	let graphDragActive = false;
-	let graphDragMoved = false;
-	let lastGraphDragEndAt = 0;
-	let pendingLayoutSync = false;
 	let hoveredNodeID: string | undefined;
 
-	const deviceAngles = new Map<string, number>();
 	const lastOnlineState = new Map<string, boolean>();
 
 	let current = opts;
@@ -168,10 +152,11 @@ export function createEngine(opts: GraphInitOptions) {
 	}
 
 	function graphRootDevice() {
+		if (current.rootDevice) return current.rootDevice;
 		if (current.cloudStatus.authenticated && current.graphMode === 'focused') {
-			return current.selectedDevice ?? current.rootDevice;
+			return current.selectedDevice;
 		}
-		return current.rootDevice;
+		return undefined;
 	}
 
 	function graphDevices() {
@@ -182,142 +167,32 @@ export function createEngine(opts: GraphInitOptions) {
 		return edgeClasses(edge, { selectedEdgeId: current.selectedEdge?.id });
 	}
 
-	function clamp(value: number, min: number, max: number) {
-		return Math.min(Math.max(value, min), max);
-	}
-
-	function normalizeAngle(angle: number) {
-		const fullCircle = Math.PI * 2;
-		return ((angle % fullCircle) + fullCircle) % fullCircle;
-	}
-
-	function wheelAngle(id: string) {
-		const existing = deviceAngles.get(id);
-		if (existing !== undefined) return existing;
-		const angles = Array.from(deviceAngles.values())
-			.map(normalizeAngle)
-			.sort((a, b) => a - b);
-		let angle = -Math.PI / 2;
-		if (angles.length === 1) {
-			angle = angles[0] + Math.PI;
-		} else if (angles.length > 1) {
-			let bestStart = angles[angles.length - 1];
-			let bestGap = angles[0] + Math.PI * 2 - bestStart;
-			for (let i = 0; i < angles.length - 1; i += 1) {
-				const gap = angles[i + 1] - angles[i];
-				if (gap > bestGap) {
-					bestGap = gap;
-					bestStart = angles[i];
-				}
-			}
-			angle = bestStart + bestGap / 2;
-		}
-		deviceAngles.set(id, angle);
-		return angle;
-	}
-
-	function placeOnRing(
-		positions: Map<string, { x: number; y: number }>,
-		ringDevices: Device[],
-		center: { x: number; y: number },
-		radius: number
-	) {
-		ringDevices.forEach((device) => {
-			const angle = wheelAngle(device.id);
-			positions.set(device.id, {
-				x: center.x + Math.cos(angle) * radius,
-				y: center.y + Math.sin(angle) * radius
-			});
-		});
-	}
-
 	function graphPositions() {
 		const width = container.clientWidth || 900;
 		const height = container.clientHeight || 620;
-		const center = { x: width / 2, y: height / 2 };
-		const positions = new Map<string, { x: number; y: number }>();
 		const devices = graphDevices();
-		const rootID =
+		const root =
 			graphRootDevice() && devices.some((d) => d.id === graphRootDevice()!.id)
-				? graphRootDevice()!.id
+				? graphRootDevice()!
 				: undefined;
-		const onlinePeers = devices.filter((d) => d.id !== rootID && d.online);
-		const offlinePeers = devices.filter((d) => d.id !== rootID && !d.online);
-		const minDim = Math.min(width, height);
-		const onlineRadius = clamp(onlinePeers.length * 18, 150, Math.max(170, minDim * 0.34));
-		const offlineRadius = clamp(
-			onlineRadius + 92,
-			onlineRadius + 72,
-			Math.max(onlineRadius + 96, minDim * 0.47)
-		);
-		if (rootID) positions.set(rootID, center);
-		placeOnRing(positions, onlinePeers, center, onlineRadius);
-		placeOnRing(positions, offlinePeers, center, offlineRadius);
-		return positions;
-	}
-
-	function graphSpreadPositionsAfterDrag(draggedID: string) {
-		const positions = graphPositions();
-		const rootID =
-			graphRootDevice() && graphDevices().some((d) => d.id === graphRootDevice()!.id)
-				? graphRootDevice()!.id
-				: undefined;
-		if (draggedID === rootID && rootID) {
-			const dropped = graph?.getElementById(rootID).position();
-			const planned = positions.get(rootID);
-			if (dropped && planned) {
-				const offset = { x: dropped.x - planned.x, y: dropped.y - planned.y };
-				positions.forEach((pos, id) => {
-					if (id !== draggedID) {
-						positions.set(id, { x: pos.x + offset.x, y: pos.y + offset.y });
-					}
-				});
-			}
-		}
-		const draggedPos = graph?.getElementById(draggedID).position();
-		if (!draggedPos) return positions;
-		positions.forEach((pos, id) => {
-			if (id !== draggedID) {
-				positions.set(id, separatePosition(pos, draggedPos, minNodeSpacing(id, draggedID)));
-			}
+		const rootID = root?.id;
+		const onlinePeerIds = devices.filter((d) => d.id !== rootID && d.online).map((d) => d.id);
+		const offlinePeerIds = devices.filter((d) => d.id !== rootID && !d.online).map((d) => d.id);
+		return computeGraphLayout({
+			width,
+			height,
+			rootId: rootID,
+			onlinePeerIds,
+			offlinePeerIds,
+			edges: current.visibleEdges.map((edge) => ({ from: edge.from, to: edge.to }))
 		});
-		return positions;
-	}
-
-	function separatePosition(
-		position: { x: number; y: number },
-		avoided: { x: number; y: number },
-		minDistance: number
-	) {
-		const dx = position.x - avoided.x;
-		const dy = position.y - avoided.y;
-		const distance = Math.hypot(dx, dy);
-		if (distance >= minDistance) return position;
-		const angle = distance > 0.1 ? Math.atan2(dy, dx) : -Math.PI / 2;
-		return {
-			x: avoided.x + Math.cos(angle) * minDistance,
-			y: avoided.y + Math.sin(angle) * minDistance
-		};
-	}
-
-	function nodeRadius(node: NodeSingular | undefined) {
-		if (!node?.length) return 28;
-		const w = Number(node.style('width'));
-		const h = Number(node.style('height'));
-		return Math.max(Number.isFinite(w) ? w : 56, Number.isFinite(h) ? h : 56) / 2;
-	}
-
-	function minNodeSpacing(nodeID: string, avoidedID: string) {
-		return (
-			nodeRadius(graph?.getElementById(nodeID)) + nodeRadius(graph?.getElementById(avoidedID)) + 24
-		);
 	}
 
 	function graphLayoutSignature() {
 		return [
 			graphRootDevice()?.id ?? '',
 			graphDevices()
-				.map((d) => d.id)
+				.map((d) => `${d.id}:${d.online ? '1' : '0'}`)
 				.sort()
 				.join(','),
 			current.visibleEdges
@@ -509,35 +384,27 @@ export function createEngine(opts: GraphInitOptions) {
 
 	function addNode(device: Device, targetPosition: { x: number; y: number }) {
 		if (!graph) return;
-		const rootPosition = graphRootDevice()
-			? graph.getElementById(graphRootDevice()!.id).position()
-			: undefined;
-		const startPosition =
-			device.online && graphRootDevice()?.id !== device.id && rootPosition?.x !== undefined
-				? rootPosition
-				: targetPosition;
 		const node = graph.add({
 			group: 'nodes',
 			classes: `${deviceClasses(device)} entering`,
 			data: deviceData(device),
-			position: startPosition
+			position: targetPosition
 		});
-		if (prefersReducedMotion() || graphDragActive) {
+		if (prefersReducedMotion()) {
 			node.removeClass('entering');
-			node.position(targetPosition);
 			return;
 		}
+		node.style({ opacity: 0, 'underlay-opacity': 0.26, 'underlay-padding': 18 });
 		node.animate(
 			{
-				position: targetPosition,
-				style: { opacity: device.online ? 1 : 0.68, 'underlay-padding': 8 }
+				style: { opacity: device.online ? 1 : 0.68, 'underlay-opacity': 0, 'underlay-padding': 8 }
 			},
 			{
 				duration: 360,
 				easing: 'ease-out-cubic',
 				complete: () => {
 					node.removeClass('entering');
-					node.removeStyle('opacity underlay-padding');
+					node.removeStyle('opacity underlay-opacity underlay-padding');
 				}
 			}
 		);
@@ -571,9 +438,6 @@ export function createEngine(opts: GraphInitOptions) {
 		const positions = graphPositions();
 		const nextLayoutSig = graphLayoutSignature();
 		const layoutChanged = nextLayoutSig !== layoutSignature;
-		if (layoutChanged && graphDragActive) {
-			pendingLayoutSync = true;
-		}
 
 		graph.edges().forEach((edge) => {
 			if (!desiredEdgeIDs.has(edge.id())) removeEdge(edge);
@@ -593,7 +457,11 @@ export function createEngine(opts: GraphInitOptions) {
 			}
 			node.data(deviceData(device));
 			node.classes(deviceClasses(device));
-			if (layoutChanged && !graphDragActive && !node.grabbed()) {
+			const currentPosition = node.position();
+			const needsMove =
+				Math.abs(currentPosition.x - targetPosition.x) > 1 ||
+				Math.abs(currentPosition.y - targetPosition.y) > 1;
+			if (layoutChanged || needsMove) {
 				animateNodeTo(node, targetPosition, wasOnline === false && device.online);
 			}
 		}
@@ -608,11 +476,8 @@ export function createEngine(opts: GraphInitOptions) {
 			addEdge(edge);
 		}
 
-		if (!graphDragActive) {
-			layoutSignature = nextLayoutSig;
-		}
+		layoutSignature = nextLayoutSig;
 		rememberOnlineState();
-		refreshPhysics(graph);
 		updateGraphSelection();
 		applyCurrentGraphFocus();
 	}
@@ -747,14 +612,12 @@ export function createEngine(opts: GraphInitOptions) {
 		});
 		layoutSignature = graphLayoutSignature();
 
-		graph.autoungrabify(false);
+		graph.autoungrabify(true);
 		graph.autounselectify(true);
 		graph.userPanningEnabled(true);
 		graph.userZoomingEnabled(true);
-		refreshPhysics(graph);
 
 		graph.on('tap', 'node', (event: CyEventObject) => {
-			if (graphDragMoved || Date.now() - lastGraphDragEndAt < 120) return;
 			const node = event.target as NodeSingular;
 			const device = current.devices.find((d) => d.id === node.id());
 			if (device) {
@@ -762,6 +625,7 @@ export function createEngine(opts: GraphInitOptions) {
 				onNodeSelect(device);
 				updateGraphSelection();
 				applyGraphFocus(node);
+				centerGraphOnNode(node);
 				pulseNode(node);
 			}
 		});
@@ -801,190 +665,19 @@ export function createEngine(opts: GraphInitOptions) {
 		window.requestAnimationFrame(() => fitGraph());
 	}
 
-	function refreshPhysics(cy: Core) {
-		const signature = [
-			cy
-				.nodes()
-				.map((n) => n.id())
-				.sort()
-				.join(','),
-			cy
-				.edges()
-				.map((e) => e.id())
-				.sort()
-				.join(',')
-		].join('|');
-		if (signature === physicsSignature) return;
-		cleanupPhysics?.();
-		cleanupPhysics = setupPhysics(cy);
-		physicsSignature = signature;
-	}
-
-	function setupPhysics(cy: Core) {
-		const whitelistedNodes = new Set<string>();
-		cy.edges().forEach((edge) => {
-			whitelistedNodes.add(edge.source().id());
-			whitelistedNodes.add(edge.target().id());
-		});
-
-		const physicsNodesMap = new Map<string, PhysicsNode>();
-		cy.nodes().forEach((node) => {
-			if (!whitelistedNodes.has(node.id())) return;
-			const pos = node.position();
-			const pn: PhysicsNode = { id: node.id(), x: pos.x, y: pos.y };
-			physicsNodesMap.set(node.id(), pn);
-		});
-
-		const nodes = Array.from(physicsNodesMap.values());
-		const links: SimulationLinkDatum<PhysicsNode>[] = [];
-		cy.edges().forEach((edge) => {
-			links.push({ source: edge.source().id(), target: edge.target().id() });
-		});
-
-		const sim = forceSimulation(nodes)
-			.force(
-				'link',
-				forceLink(links)
-					.id((d) => (d as PhysicsNode).id)
-					.distance(180)
-					.strength(0.5)
-			)
-			.force('charge', forceManyBody().strength(-300))
-			.alphaDecay(0.02)
-			.velocityDecay(0.4);
-
-		let isDragging = false;
-
-		const syncSimulationNodesFromGraph = () => {
-			for (const [id, simNode] of physicsNodesMap) {
-				const node = cy.getElementById(id);
-				if (!node.length) continue;
-				const pos = node.position();
-				simNode.x = pos.x;
-				simNode.y = pos.y;
-				simNode.vx = 0;
-				simNode.vy = 0;
-			}
-		};
-
-		const onGrab = (event: CyEventObject) => {
-			const node = event.target as NodeSingular;
-			const simNode = physicsNodesMap.get(node.id());
-			cy.elements().stop(true, false);
-			graphDragActive = true;
-			graphDragMoved = false;
-			syncSimulationNodesFromGraph();
-			if (simNode) {
-				const pos = node.position();
-				simNode.fx = pos.x;
-				simNode.fy = pos.y;
-			}
-			isDragging = true;
-			sim.alphaDecay(0.02);
-			sim.alpha(0.8).restart();
-		};
-
-		const onFree = (event: CyEventObject) => {
-			const node = event.target as NodeSingular;
-			const simNode = physicsNodesMap.get(node.id());
-			const didMove = graphDragMoved;
-			if (simNode) {
-				const pos = node.position();
-				simNode.x = pos.x;
-				simNode.y = pos.y;
-				simNode.fx = undefined;
-				simNode.fy = undefined;
-			}
-			isDragging = false;
-			graphDragActive = false;
-			if (didMove) lastGraphDragEndAt = Date.now();
-			sim.alphaDecay(0.1);
-			sim.stop();
-			window.setTimeout(() => {
-				graphDragMoved = false;
-			}, 120);
-			if (pendingLayoutSync) {
-				pendingLayoutSync = false;
-				syncGraph();
-			} else if (didMove) {
-				spreadGraphAfterDrag(node.id(), syncSimulationNodesFromGraph);
-			}
-		};
-
-		const onDrag = (event: CyEventObject) => {
-			const node = event.target as NodeSingular;
-			const simNode = physicsNodesMap.get(node.id());
-			if (!simNode) return;
-			graphDragMoved = true;
-			const pos = node.position();
-			simNode.x = pos.x;
-			simNode.y = pos.y;
-			simNode.fx = pos.x;
-			simNode.fy = pos.y;
-			sim.nodes(nodes).alpha(0.8).restart();
-		};
-
-		const tickCallback = () => {
-			if (!isDragging) return;
-			for (const n of nodes) {
-				const node = cy.getElementById(n.id);
-				if (node.grabbed()) continue;
-				if (n.x !== undefined && n.y !== undefined) {
-					node.position({ x: n.x, y: n.y });
-				}
-			}
-		};
-
-		sim.on('tick', tickCallback);
-		cy.on('grab', 'node', onGrab);
-		cy.on('free', 'node', onFree);
-		cy.on('drag', 'node', onDrag);
-
-		return () => {
-			cy.off('grab', 'node', onGrab);
-			cy.off('free', 'node', onFree);
-			cy.off('drag', 'node', onDrag);
-			graphDragActive = false;
-			sim.stop();
-		};
-	}
-
-	function spreadGraphAfterDrag(draggedID: string, onComplete?: () => void) {
-		if (!graph) {
-			onComplete?.();
-			return;
-		}
-		const positions = graphSpreadPositionsAfterDrag(draggedID);
-		let pendingAnimations = 0;
-		const finishAnimation = () => {
-			pendingAnimations -= 1;
-			if (pendingAnimations === 0) onComplete?.();
-		};
-
-		graph.nodes().forEach((node) => {
-			if (node.id() === draggedID) return;
-			const position = positions.get(node.id());
-			if (!position) return;
-			node.stop(true, false);
-			if (prefersReducedMotion()) {
-				node.position(position);
-				return;
-			}
-			pendingAnimations += 1;
-			node.animate(
-				{ position },
-				{ duration: 380, easing: 'ease-out-cubic', complete: finishAnimation }
-			);
-		});
-
-		layoutSignature = graphLayoutSignature();
-		if (pendingAnimations === 0) onComplete?.();
-	}
-
 	function fitGraph() {
 		graph?.animate({
 			fit: { eles: graph.elements(), padding: 64 },
 			duration: 260,
+			easing: 'ease-out-cubic'
+		});
+	}
+
+	function centerGraphOnNode(node: NodeSingular) {
+		if (!graph) return;
+		graph.animate({
+			center: { eles: node },
+			duration: 320,
 			easing: 'ease-out-cubic'
 		});
 	}
@@ -1010,11 +703,7 @@ export function createEngine(opts: GraphInitOptions) {
 			if (!node?.length) return;
 			updateGraphSelection();
 			applyGraphFocus(node);
-			graph?.animate({
-				center: { eles: node },
-				duration: 320,
-				easing: 'ease-out-cubic'
-			});
+			centerGraphOnNode(node);
 		});
 	}
 
@@ -1029,7 +718,6 @@ export function createEngine(opts: GraphInitOptions) {
 
 	function destroy() {
 		uninstallGraphDebug();
-		cleanupPhysics?.();
 		graph?.destroy();
 		graph = undefined;
 	}
