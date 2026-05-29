@@ -228,19 +228,46 @@ type ErrorResponse struct {
 	Error string `json:"error"`
 }
 
+// DevSpawnDeviceSpec describes one device in a demo spawn batch (per-device fields override request defaults).
+type DevSpawnDeviceSpec struct {
+	Name          string   `json:"name"`
+	Owner         string   `json:"owner,omitempty"`
+	OS            string   `json:"os,omitempty"`
+	Tags          []string `json:"tags,omitempty"`
+	Online        *bool    `json:"online,omitempty"`
+	SubnetRouter  bool     `json:"subnetRouter,omitempty"`
+	RoutedSubnets []string `json:"routedSubnets,omitempty"`
+}
+
 type DevSpawnDevicesRequest struct {
-	Count  int      `json:"count,omitempty"`
-	Prefix string   `json:"prefix,omitempty"`
-	Names  []string `json:"names,omitempty"`
-	Owner  string   `json:"owner,omitempty"`
-	OS     string   `json:"os,omitempty"`
-	Tags   []string `json:"tags,omitempty"`
-	Online *bool    `json:"online,omitempty"`
+	Count  int                  `json:"count,omitempty"`
+	Prefix string               `json:"prefix,omitempty"`
+	Names  []string             `json:"names,omitempty"`
+	Specs  []DevSpawnDeviceSpec `json:"specs,omitempty"`
+	Owner  string               `json:"owner,omitempty"`
+	OS     string               `json:"os,omitempty"`
+	Tags   []string             `json:"tags,omitempty"`
+	Online *bool                `json:"online,omitempty"`
 }
 
 type DevSpawnDevicesResponse struct {
 	Tailnet string   `json:"tailnet"`
 	Spawned []Device `json:"spawned"`
+	Devices []Device `json:"devices"`
+}
+
+type DevPatchDeviceSpec struct {
+	Name   string `json:"name"`
+	Online *bool  `json:"online,omitempty"`
+}
+
+type DevPatchDevicesRequest struct {
+	Devices []DevPatchDeviceSpec `json:"devices"`
+}
+
+type DevPatchDevicesResponse struct {
+	Tailnet string   `json:"tailnet"`
+	Patched []Device `json:"patched"`
 	Devices []Device `json:"devices"`
 }
 

@@ -55,7 +55,7 @@ func TestDevSpawnDevicesRequiresDemoAuth(t *testing.T) {
 	if len(payload.Spawned) != 2 {
 		t.Fatalf("spawned = %d, want 2", len(payload.Spawned))
 	}
-	if len(payload.Devices) < 16 {
-		t.Fatalf("devices = %d, want at least 16", len(payload.Devices))
+	if len(payload.Devices) < 25 {
+		t.Fatalf("devices = %d, want at least 25", len(payload.Devices))
 	}
 }

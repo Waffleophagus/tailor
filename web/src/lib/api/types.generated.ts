@@ -43,10 +43,40 @@ interface CloudAuthStatusResponse {
 }
 
 // From api/types.go
+interface DevPatchDeviceSpec {
+    name: string;
+    online?: boolean | null;
+}
+
+// From api/types.go
+interface DevPatchDevicesRequest {
+    devices: DevPatchDeviceSpec[];
+}
+
+// From api/types.go
+interface DevPatchDevicesResponse {
+    tailnet: string;
+    patched: Device[];
+    devices: Device[];
+}
+
+// From api/types.go
+interface DevSpawnDeviceSpec {
+    name: string;
+    owner?: string;
+    os?: string;
+    tags?: string[];
+    online?: boolean | null;
+    subnetRouter?: boolean;
+    routedSubnets?: string[];
+}
+
+// From api/types.go
 interface DevSpawnDevicesRequest {
     count?: number;
     prefix?: string;
     names?: string[];
+    specs?: DevSpawnDeviceSpec[];
     owner?: string;
     os?: string;
     tags?: string[];
@@ -162,6 +192,7 @@ interface PolicyEvaluateDraftResponse {
     unchanged: PolicyEdgeChange[];
     changed: PolicyEdgeChange[];
     broadAccess: Edge[];
+    visibleDeviceIds: string[];
     unresolvedSelectors: UnresolvedSelector[];
     unsupportedSections: string[];
     applicationGrants: ApplicationGrant[];

@@ -27,4 +27,11 @@ func TestProductionBuildExcludesDevTailnet(t *testing.T) {
 	if !errors.Is(err, devtailnet.ErrUnavailable) {
 		t.Fatalf("SpawnDevices err = %v, want ErrUnavailable", err)
 	}
+	online := true
+	_, err = devtailnet.PatchDevices(api.DevPatchDevicesRequest{
+		Devices: []api.DevPatchDeviceSpec{{Name: "x", Online: &online}},
+	})
+	if !errors.Is(err, devtailnet.ErrUnavailable) {
+		t.Fatalf("PatchDevices err = %v, want ErrUnavailable", err)
+	}
 }

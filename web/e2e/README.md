@@ -63,6 +63,20 @@ Content-Type: application/json
 {"count": 4, "prefix": "worker", "owner": "spawn@demo.tailor.ts.net", "os": "linux", "tags": ["tag:ci"]}
 ```
 
+Per-device spawn (varied owners, tags, subnet routers, offline provisioning):
+
+```http
+POST /api/dev/spawn-devices
+{"specs": [{"name": "k8s-prod-worker-04", "owner": "platform-ops@demo.tailor.ts.net", "tags": ["tag:k8s-prod"]}]}
+```
+
+Bring provisioned nodes online after spawn:
+
+```http
+POST /api/dev/patch-devices
+{"devices": [{"name": "compliance-archive-primary", "online": true}]}
+```
+
 Returns the spawned devices plus the full demo fleet. New nodes appear on the topology websocket within ~2 seconds. This route is **not compiled into production builds** (`go build` without tags → 404).
 
 Production vs dev backend builds (from `web/`):
@@ -72,7 +86,7 @@ pnpm backend:build      # release — no demo key, no /api/dev/*
 pnpm backend:build:dev  # local dev, E2E, and demo tailnet
 pnpm backend:run:dev    # run the dev binary (after build:dev)
 pnpm dev:stack          # build:dev + run:dev (backend only; pair with pnpm dev)
-pnpm dev:spawn          # spawn 10 seriously-named demo machines (dev build only)
+pnpm dev:spawn          # staggered demo fleet rollout (~16 nodes, k8s waves, offline→online)
 ```
 
 ## Run

@@ -28,3 +28,7 @@ func Policy() string { return "" }
 func SpawnDevices(api.DevSpawnDevicesRequest) ([]api.Device, error) {
 	return nil, ErrUnavailable
 }
+
+func PatchDevices(api.DevPatchDevicesRequest) ([]api.Device, error) {
+	return nil, ErrUnavailable
+}

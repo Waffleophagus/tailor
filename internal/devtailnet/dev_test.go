@@ -14,7 +14,7 @@ func TestDevTailnetPolicyProducesVariedAccessScopes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(edges) < 8 {
+	if len(edges) < 12 {
 		t.Fatalf("expected a rich edge set, got %d: %#v", len(edges), edges)
 	}
 
@@ -131,6 +131,57 @@ func TestSpawnDevicesUsesExplicitNames(t *testing.T) {
 		t.Fatalf("unexpected names: %#v", spawned)
 	}
 }
+
+func TestSpawnDevicesUsesSpecs(t *testing.T) {
+	ResetStore()
+	spawned, err := SpawnDevices(api.DevSpawnDevicesRequest{
+		Specs: []api.DevSpawnDeviceSpec{
+			{
+				Name:          "k8s-prod-worker-99",
+				Owner:         "platform-ops@demo.tailor.ts.net",
+				Tags:          []string{"tag:k8s-prod"},
+				SubnetRouter:  true,
+				RoutedSubnets: []string{"10.30.99.0/24"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(spawned) != 1 {
+		t.Fatalf("spawned = %d, want 1", len(spawned))
+	}
+	if !spawned[0].SubnetRouter || len(spawned[0].RoutedSubnets) != 1 {
+		t.Fatalf("expected subnet router, got %#v", spawned[0])
+	}
+}
+
+func TestPatchDevicesTogglesOnline(t *testing.T) {
+	ResetStore()
+	spawned, err := SpawnDevices(api.DevSpawnDevicesRequest{
+		Specs: []api.DevSpawnDeviceSpec{
+			{Name: "provision-test", Online: boolPtr(false)},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spawned[0].Online {
+		t.Fatal("expected offline spawn")
+	}
+
+	patched, err := PatchDevices(api.DevPatchDevicesRequest{
+		Devices: []api.DevPatchDeviceSpec{{Name: "provision-test", Online: boolPtr(true)}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !patched[0].Online || patched[0].LastSeen != "" {
+		t.Fatalf("expected online with cleared lastSeen, got %#v", patched[0])
+	}
+}
+
+func boolPtr(v bool) *bool { return &v }
 
 func mustParsePolicy(t *testing.T) policy.Policy {
 	t.Helper()
