@@ -120,7 +120,7 @@ go test ./... && go test -tags dev ./...
 ```
 
 
-## Concider hiring me?
+## Consider hiring me?
 
 If you like what you see here, I'm actively looking for my next role. Open to contract work or full time! Learn more at [d6software.com](https://d6software.com).
 
