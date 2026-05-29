@@ -124,6 +124,45 @@ test('focused device view shows policy links for the selected node', async ({ pa
 	expect(allLinks).toBeGreaterThanOrEqual(focusedLinks);
 });
 
+test('spawned device shows policy links without page reload', async ({ page, request }) => {
+	const health = await request.get(`${baseURL}/api/health`);
+	expect(health.ok()).toBeTruthy();
+	const meta = (await health.json()) as { build?: string };
+	test.skip(meta.build !== 'dev', 'requires tailor built with -tags dev');
+
+	await chooseDevice(page, 'k8s-staging-worker-01');
+
+	const spawnName = `playwright-spawn-${Date.now()}`;
+	const spawn = await request.post(`${baseURL}/api/dev/spawn-devices`, {
+		data: {
+			specs: [
+				{
+					name: spawnName,
+					owner: 'ops@demo.tailor.ts.net',
+					os: 'linux',
+					tags: ['tag:k8s-staging', 'tag:ci'],
+					online: true
+				}
+			]
+		}
+	});
+	expect(spawn.ok()).toBeTruthy();
+
+	await expect
+		.poll(
+			async () => {
+				const button = page.getByRole('button', { name: spawnName, exact: true }).first();
+				if (!(await button.isVisible())) {
+					return false;
+				}
+				await button.click();
+				return (await graphSummaryLinkCount(page)) > 0;
+			},
+			{ timeout: 15_000, message: 'spawned node should appear with policy links' }
+		)
+		.toBe(true);
+});
+
 test('dev spawn endpoint adds devices to the demo tailnet', async ({ request }) => {
 	const health = await request.get(`${baseURL}/api/health`);
 	expect(health.ok()).toBeTruthy();

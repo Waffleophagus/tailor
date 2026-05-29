@@ -69,6 +69,12 @@ describe('evaluationEdges', () => {
 		expect(edges.find((edge) => edge.id === 'changed')?.state).toBe('changed');
 		expect(edges.find((edge) => edge.id === 'changed')?.accessScope).toBe('http');
 	});
+
+	it('current mode without draft includes added edges for new tailnet members', () => {
+		const edges = evaluationEdges(evaluation, 'current', false);
+		expect(edges.find((edge) => edge.id === 'added')?.state).toBe('unchanged');
+		expect(edges.map((edge) => edge.id)).toContain('added');
+	});
 });
 
 describe('ghostDeniedEdges', () => {

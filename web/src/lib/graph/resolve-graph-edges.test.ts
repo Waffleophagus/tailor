@@ -1,0 +1,150 @@
+import { describe, expect, it } from 'vitest';
+
+import type { Edge, PolicyEvaluateDraftResponse } from '../api/schemas';
+import {
+	filterEdgesForGraph,
+	resolveBaseGraphEdges,
+	resolveGraphEdgeSource
+} from './resolve-graph-edges';
+
+const sampleEdge = (overrides: Partial<Edge> = {}): Edge => ({
+	id: 'alice:web',
+	from: 'alice',
+	to: 'web',
+	kind: 'acl',
+	accessScope: 'http',
+	...overrides
+});
+
+const emptyEvaluation = (): PolicyEvaluateDraftResponse => ({
+	tailnet: 'demo.tailor.ts.net',
+	added: [],
+	removed: [],
+	changed: [],
+	unchanged: [{ edge: sampleEdge({ id: 'eval-only' }), state: 'unchanged' }],
+	broadAccess: [],
+	visibleDeviceIds: [],
+	unresolvedSelectors: [],
+	unsupportedSections: [],
+	applicationGrants: []
+});
+
+const evaluationWithAdded = (): PolicyEvaluateDraftResponse => ({
+	...emptyEvaluation(),
+	unchanged: [],
+	added: [
+		{ edge: sampleEdge({ id: 'spawn:link', from: 'dev-spawn-1', to: 'web' }), state: 'added' }
+	]
+});
+
+describe('resolveGraphEdgeSource', () => {
+	it('prefers topology over stale policy evaluation in steady state', () => {
+		expect(
+			resolveGraphEdgeSource({
+				cloudAuthenticated: true,
+				topologyEdges: [sampleEdge({ id: 'live', from: 'a', to: 'b' })],
+				policyEvaluation: emptyEvaluation(),
+				editorOpen: false,
+				editorDirty: false,
+				hasValidatedPending: false
+			})
+		).toBe('topology');
+	});
+
+	it('prefers topology over stale preview when the editor is closed', () => {
+		expect(
+			resolveGraphEdgeSource({
+				cloudAuthenticated: true,
+				topologyEdges: [sampleEdge()],
+				previewEvaluation: emptyEvaluation(),
+				policyEvaluation: emptyEvaluation(),
+				editorOpen: false,
+				editorDirty: false,
+				hasValidatedPending: true
+			})
+		).toBe('topology');
+	});
+
+	it('uses preview evaluation only while the policy editor is open', () => {
+		expect(
+			resolveGraphEdgeSource({
+				cloudAuthenticated: true,
+				topologyEdges: [sampleEdge()],
+				previewEvaluation: emptyEvaluation(),
+				policyEvaluation: emptyEvaluation(),
+				editorOpen: true,
+				editorDirty: true,
+				hasValidatedPending: false
+			})
+		).toBe('preview');
+	});
+
+	it('uses saved evaluation while editing without preview', () => {
+		expect(
+			resolveGraphEdgeSource({
+				cloudAuthenticated: true,
+				topologyEdges: [sampleEdge()],
+				policyEvaluation: emptyEvaluation(),
+				editorOpen: true,
+				editorDirty: true,
+				hasValidatedPending: false
+			})
+		).toBe('saved-evaluation');
+	});
+
+	it('falls back to saved evaluation before first topology snapshot', () => {
+		expect(
+			resolveGraphEdgeSource({
+				cloudAuthenticated: true,
+				topologyEdges: [],
+				policyEvaluation: emptyEvaluation(),
+				editorOpen: false,
+				editorDirty: false,
+				hasValidatedPending: false
+			})
+		).toBe('saved-evaluation');
+	});
+});
+
+describe('resolveBaseGraphEdges', () => {
+	it('returns topology edges in steady state even when policyEvaluation exists', () => {
+		const topology = [
+			sampleEdge({ id: 'fresh', from: 'spawn', to: 'web' }),
+			sampleEdge({ id: 'fresh2', from: 'spawn', to: 'db' })
+		];
+		const rendered = resolveBaseGraphEdges({
+			cloudAuthenticated: true,
+			topologyEdges: topology,
+			policyEvaluation: emptyEvaluation(),
+			editorOpen: false,
+			editorDirty: false,
+			hasValidatedPending: false
+		});
+		expect(rendered?.map((e) => e.id)).toEqual(['fresh', 'fresh2']);
+	});
+
+	it('includes added edges from evaluation when topology is empty', () => {
+		const rendered = resolveBaseGraphEdges({
+			cloudAuthenticated: true,
+			topologyEdges: [],
+			policyEvaluation: evaluationWithAdded(),
+			editorOpen: false,
+			editorDirty: false,
+			hasValidatedPending: false
+		});
+		expect(rendered?.some((e) => e.id === 'spawn:link')).toBe(true);
+	});
+});
+
+describe('filterEdgesForGraph', () => {
+	const edges = [
+		sampleEdge({ id: '1', from: 'focus', to: 'other' }),
+		sampleEdge({ id: '2', from: 'x', to: 'y' })
+	].map((e) => ({ ...e }));
+
+	it('keeps only focus spokes in focused mode', () => {
+		const visible = new Set(['focus', 'other', 'x', 'y']);
+		const filtered = filterEdgesForGraph(edges, visible, 'focused', 'focus');
+		expect(filtered.map((e) => e.id)).toEqual(['1']);
+	});
+});

@@ -28,8 +28,12 @@ export function evaluationEdges(
 			)
 		];
 	}
+	const added = evaluation.added.map((change) =>
+		renderPolicyEdge(change.edge, hasDraft ? 'added' : 'unchanged')
+	);
 	return [
 		...evaluation.unchanged.map((change) => renderPolicyEdge(change.edge, 'unchanged')),
+		...added,
 		...evaluation.removed.map((change) =>
 			renderPolicyEdge(change.edge, hasDraft ? 'removed' : 'unchanged')
 		),

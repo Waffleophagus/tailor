@@ -21,7 +21,7 @@
 	import { connectTopologySocket } from './lib/api/topologySocket';
 	import type { RenderEdge } from './lib/graph/engine';
 	import { resolveGraphLayoutRoot } from './lib/graph/graph-layout-root';
-	import { evaluationEdges, renderPolicyEdge } from './lib/graph/policy-graph-edges';
+	import { filterEdgesForGraph, resolveBaseGraphEdges } from './lib/graph/resolve-graph-edges';
 	import AuthDialog from './lib/components/AuthDialog.svelte';
 	import GraphCanvas from './lib/components/GraphCanvas.svelte';
 	import GraphLegend from './lib/components/GraphLegend.svelte';
@@ -75,6 +75,7 @@
 		  }
 		| undefined;
 	let disconnectTopologySocket: (() => void) | undefined;
+	let topologyEvalTimer: number | undefined;
 
 	const visibleDevices = $derived(
 		devices.filter((device) => {
@@ -90,7 +91,6 @@
 	const ownerOptions = $derived(unique(devices.map((device) => device.owner).filter(Boolean)));
 	const osOptions = $derived(unique(devices.map((device) => device.os).filter(Boolean)));
 	const rootDevice = $derived(devices[0]);
-	const activeEvaluation = $derived(previewEvaluation ?? policyEvaluation);
 	const editorDirty = $derived(Boolean(policy && editorHuJSON !== policy.hujson));
 	const hasValidatedPending = $derived(editorValid === true && validatedHuJSON !== '');
 	const hasPendingDraft = $derived(editorDirty || hasValidatedPending);
@@ -104,25 +104,22 @@
 	const graphOnlineCount = $derived(graphDevices.filter((device) => device.online).length);
 
 	function graphEdges(): RenderEdge[] {
-		if (cloudStatus.authenticated && activeEvaluation) {
-			let rendered = evaluationEdges(activeEvaluation, 'current', false);
-			rendered = rendered.filter(
-				(edge) => graphVisibleDeviceIDs.has(edge.from) || graphVisibleDeviceIDs.has(edge.to)
+		const policyRendered = resolveBaseGraphEdges({
+			cloudAuthenticated: cloudStatus.authenticated,
+			topologyEdges: edges,
+			previewEvaluation,
+			policyEvaluation,
+			editorOpen,
+			editorDirty,
+			hasValidatedPending
+		});
+		if (policyRendered) {
+			return filterEdgesForGraph(
+				policyRendered,
+				graphVisibleDeviceIDs,
+				graphMode,
+				graphRootDevice?.id
 			);
-			if (graphMode === 'all') return rendered;
-			const focusID = graphRootDevice?.id;
-			if (!focusID) return [];
-			return rendered.filter((edge) => edge.from === focusID || edge.to === focusID);
-		}
-		if (cloudStatus.authenticated && edges.length > 0) {
-			let rendered = edges.map((edge) => renderPolicyEdge(edge));
-			rendered = rendered.filter(
-				(edge) => graphVisibleDeviceIDs.has(edge.from) || graphVisibleDeviceIDs.has(edge.to)
-			);
-			if (graphMode === 'all') return rendered;
-			const focusID = graphRootDevice?.id;
-			if (!focusID) return [];
-			return rendered.filter((edge) => edge.from === focusID || edge.to === focusID);
 		}
 		const root = graphRootDevice;
 		if (!root || !graphVisibleDeviceIDs.has(root.id) || !root.online) return [];
@@ -134,6 +131,20 @@
 				to: device.id,
 				kind: 'local'
 			}));
+	}
+
+	function scheduleTopologyPolicySync() {
+		const savedPolicy = policy;
+		if (!cloudStatus.authenticated || !savedPolicy || editorDirty || hasValidatedPending) {
+			return;
+		}
+		if (topologyEvalTimer !== undefined) {
+			window.clearTimeout(topologyEvalTimer);
+		}
+		topologyEvalTimer = window.setTimeout(() => {
+			topologyEvalTimer = undefined;
+			void evaluatePolicy(savedPolicy.hujson);
+		}, 300);
 	}
 
 	function unique(values: string[]) {
@@ -249,6 +260,9 @@
 
 	function closePolicyEditor() {
 		editorOpen = false;
+		if (!hasValidatedPending) {
+			previewEvaluation = undefined;
+		}
 	}
 
 	async function validateEditor() {
@@ -362,6 +376,7 @@
 				selectedDevice = selectedDevice
 					? (value.devices.find((device) => device.id === selectedDevice?.id) ?? value.devices[0])
 					: value.devices[0];
+				scheduleTopologyPolicySync();
 			},
 			onUnavailable: (status) => {
 				apiStatus = 'LocalAPI unavailable';
@@ -388,6 +403,9 @@
 	});
 
 	onDestroy(() => {
+		if (topologyEvalTimer !== undefined) {
+			window.clearTimeout(topologyEvalTimer);
+		}
 		disconnectTopologySocket?.();
 	});
 </script>

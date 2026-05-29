@@ -183,6 +183,62 @@ func TestPatchDevicesTogglesOnline(t *testing.T) {
 
 func boolPtr(v bool) *bool { return &v }
 
+func TestAuditTrailIngestConnectivity(t *testing.T) {
+	ResetStore()
+	_, err := SpawnDevices(api.DevSpawnDevicesRequest{
+		Specs: []api.DevSpawnDeviceSpec{{
+			Name:  "audit-trail-ingest",
+			Owner: "platform-ops@demo.tailor.ts.net",
+			Tags:  []string{"tag:prod", "tag:platform"},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	devices := Devices()
+	var targetID string
+	for _, d := range devices {
+		if d.Name == "audit-trail-ingest" {
+			targetID = d.ID
+			break
+		}
+	}
+	if targetID == "" {
+		t.Fatal("audit-trail-ingest not found")
+	}
+
+	edges, err := policy.EffectiveAccessEdges(Policy(), devices, policy.EdgeOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var incoming, outgoing int
+	incomingPeers := map[string]int{}
+	outgoingPeers := map[string]int{}
+	nameByID := map[string]string{}
+	for _, d := range devices {
+		nameByID[d.ID] = d.Name
+	}
+	for _, edge := range edges {
+		if edge.To == targetID {
+			incoming++
+			incomingPeers[nameByID[edge.From]]++
+		}
+		if edge.From == targetID {
+			outgoing++
+			outgoingPeers[nameByID[edge.To]]++
+		}
+	}
+	t.Logf("audit-trail-ingest id=%s incoming=%d outgoing=%d", targetID, incoming, outgoing)
+	if incoming+outgoing == 0 {
+		t.Fatal("expected policy edges involving audit-trail-ingest")
+	}
+	if incoming < 5 {
+		t.Logf("warning: only %d incoming edges (expected many from group:platform → tag:prod/platform)", incoming)
+	}
+}
+
 func mustParsePolicy(t *testing.T) policy.Policy {
 	t.Helper()
 	p, err := policy.Parse(Policy())
