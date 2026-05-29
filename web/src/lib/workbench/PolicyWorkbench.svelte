@@ -68,8 +68,12 @@
 						<p class="mt-1 mb-0 truncate text-[0.76rem] text-teal">{activeScenarioLabel}</p>
 					{/if}
 				</div>
-				<button type="button" class="close-button" title="Close access controls" onclick={onClose}
-					>×</button
+				<button
+					type="button"
+					class="close-button"
+					title="Close access controls"
+					aria-label="Close access controls"
+					onclick={onClose}>×</button
 				>
 			</header>
 

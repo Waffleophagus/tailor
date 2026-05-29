@@ -1,3 +1,6 @@
 internal/frontend/dist/
 docs/PRD.md
 /tailor
+web/playwright-report/
+web/test-results/
+web/blob-report/

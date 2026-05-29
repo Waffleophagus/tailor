@@ -11,6 +11,7 @@ import (
 
 	"github.com/Waffleophagus/tailor/internal/api"
 	"github.com/Waffleophagus/tailor/internal/cloudapi"
+	"github.com/Waffleophagus/tailor/internal/devtailnet"
 	"github.com/Waffleophagus/tailor/internal/frontend"
 	"github.com/Waffleophagus/tailor/internal/localapi"
 	"github.com/Waffleophagus/tailor/internal/policy"
@@ -203,7 +204,7 @@ func (s *Server) handlePolicyEvaluateDraft(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
-	devices, err := s.localAPI.Status(r.Context())
+	devices, err := s.topologyDevices(r.Context())
 	if err != nil {
 		status := http.StatusInternalServerError
 		if errors.Is(err, localapi.ErrUnavailable) {
@@ -271,6 +272,14 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
+	if s.useDevTailnet() {
+		writeJSON(w, http.StatusOK, api.LocalAPIStatusResponse{
+			Available:        true,
+			LocalAPIEndpoint: "dev tailnet (" + devtailnet.Name + ")",
+		})
+		return
+	}
+
 	_, err := s.localAPI.Status(r.Context())
 	if err != nil {
 		status := api.LocalAPIStatusResponse{
@@ -289,7 +298,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleTopology(w http.ResponseWriter, r *http.Request) {
-	devices, err := s.localAPI.Status(r.Context())
+	devices, err := s.topologyDevices(r.Context())
 	if err != nil {
 		status := http.StatusInternalServerError
 		if errors.Is(err, localapi.ErrUnavailable) {
@@ -355,7 +364,7 @@ func (s *Server) writeTopologySocketMessage(ctx context.Context, conn *websocket
 }
 
 func (s *Server) topologySocketMessage(ctx context.Context) api.SocketMessage {
-	devices, err := s.localAPI.Status(ctx)
+	devices, err := s.topologyDevices(ctx)
 	if err != nil {
 		return api.SocketMessage{
 			Type: api.SocketMessageLocalAPIUnavailable,
@@ -373,6 +382,27 @@ func (s *Server) topologySocketMessage(ctx context.Context) api.SocketMessage {
 	}
 }
 
+func (s *Server) useDevTailnet() bool {
+	return s.cloudAPI.Status().DevMode
+}
+
+func (s *Server) topologyDevices(ctx context.Context) ([]api.Device, error) {
+	if s.useDevTailnet() {
+		return devtailnet.Devices(), nil
+	}
+	return s.localAPI.Status(ctx)
+}
+
+func (s *Server) topologyTailnet(ctx context.Context) string {
+	if s.useDevTailnet() {
+		return devtailnet.Name
+	}
+	if tn, err := s.localAPI.TailnetName(ctx); err == nil {
+		return tn
+	}
+	return ""
+}
+
 func (s *Server) topologySnapshot(ctx context.Context, devices []api.Device) api.TopologyResponse {
 	edges := topology.Phase1Edges(devices)
 	if status := s.cloudAPI.Status(); status.Authenticated && status.HasPolicy {
@@ -384,10 +414,7 @@ func (s *Server) topologySnapshot(ctx context.Context, devices []api.Device) api
 		}
 	}
 
-	tailnet := ""
-	if tn, err := s.localAPI.TailnetName(ctx); err == nil {
-		tailnet = tn
-	}
+	tailnet := s.topologyTailnet(ctx)
 
 	return api.TopologyResponse{
 		Devices: devices,
@@ -416,6 +443,7 @@ func cloudAuthStatusResponse(status cloudapi.AuthStatus) api.CloudAuthStatusResp
 		Authenticated: status.Authenticated,
 		Tailnet:       status.Tailnet,
 		HasPolicy:     status.HasPolicy,
+		DevMode:       status.DevMode,
 	}
 }
 

@@ -1,0 +1,134 @@
+import { expect, test } from '@playwright/test';
+
+import { baseURL } from './helpers/env';
+import {
+	addGeneralAccessRule,
+	alternatePerspective,
+	clearScenario,
+	closeAccessControls,
+	discardDraft,
+	requireAclEditing,
+	scenarioBar,
+	scenarioDiffButton,
+	scenarioDraftButton,
+	simulatePerspective,
+	testDestination,
+	validateDraft
+} from './helpers/tailor';
+
+test.describe.configure({ mode: 'serial' });
+
+test.beforeAll(async ({ request }) => {
+	const health = await request.get(`${baseURL}/api/health`);
+	expect(health.ok()).toBeTruthy();
+
+	const cloud = await request.get(`${baseURL}/api/cloud/status`);
+	expect(cloud.ok()).toBeTruthy();
+	const status = (await cloud.json()) as { authenticated?: boolean };
+	expect(
+		status.authenticated,
+		'ACL editing should be enabled by globalSetup via TAILSCALE_API_KEY in web/.env'
+	).toBe(true);
+});
+
+test.beforeEach(async ({ page }) => {
+	await requireAclEditing(page);
+	await discardDraft(page);
+	await clearScenario(page);
+});
+
+test.afterEach(async ({ page }) => {
+	await discardDraft(page);
+	await clearScenario(page);
+});
+
+test('loads topology and policy for an authenticated tailnet', async ({ request, page }) => {
+	const topology = await request.get(`${baseURL}/api/topology`);
+	expect(topology.ok()).toBeTruthy();
+	const topo = (await topology.json()) as { devices?: unknown[]; tailnet?: string };
+	expect(topo.devices?.length ?? 0).toBeGreaterThan(0);
+	expect(topo.tailnet).toBeTruthy();
+
+	const policy = await request.get(`${baseURL}/api/policy`);
+	expect(policy.ok()).toBeTruthy();
+	const raw = (await policy.json()) as { hujson?: string };
+	expect(raw.hujson?.length ?? 0).toBeGreaterThan(10);
+
+	await page.goto('/');
+	await expect(page.getByRole('region', { name: 'Topology graph' })).toBeVisible();
+	await expect(page.getByRole('button', { name: 'Access controls' })).toBeVisible();
+});
+
+test('policy workbench stages an ACL mutation and evaluates draft impact', async ({ page }) => {
+	await addGeneralAccessRule(page, {
+		sources: alternatePerspective,
+		destinations: testDestination,
+		port: '443'
+	});
+
+	await expect(page.getByText('General access rules — ACL rule added')).toBeVisible();
+	await expect(scenarioDraftButton(page)).toBeEnabled();
+
+	await simulatePerspective(page, alternatePerspective);
+	await closeAccessControls(page);
+
+	const bar = scenarioBar(page);
+	await bar.getByRole('button', { name: 'Focused', exact: true }).click();
+	const ghostToggle = bar.getByRole('checkbox', { name: 'Show denied links' });
+	await expect(ghostToggle).toBeVisible();
+	await ghostToggle.uncheck();
+	await ghostToggle.check();
+	await bar.getByRole('button', { name: 'All connections', exact: true }).click();
+	await expect(ghostToggle).toBeHidden();
+
+	await scenarioDraftButton(page).click();
+	await scenarioDiffButton(page).click();
+
+	await expect(
+		page
+			.getByRole('region', { name: 'Staged policy change' })
+			.getByText(/Draft impact:|Impact preview unavailable/)
+	).toBeVisible({ timeout: 60_000 });
+	await validateDraft(page);
+});
+
+test('mutate API appends and evaluates a reversible ACL draft', async ({ request }) => {
+	const policyRes = await request.get(`${baseURL}/api/policy`);
+	expect(policyRes.ok()).toBeTruthy();
+	const saved = (await policyRes.json()) as { hujson: string };
+
+	const mutate = await request.post(`${baseURL}/api/policy/mutate`, {
+		data: {
+			hujson: saved.hujson,
+			mutation: {
+				type: 'append-acl',
+				rule: {
+					action: 'accept',
+					src: [alternatePerspective],
+					dst: [`${testDestination}:19999`]
+				}
+			}
+		}
+	});
+	expect(mutate.ok()).toBeTruthy();
+	const draft = (await mutate.json()) as { hujson: string };
+	expect(draft.hujson).toContain('19999');
+	expect(draft.hujson).toContain(alternatePerspective);
+
+	const evaluate = await request.post(`${baseURL}/api/policy/evaluate-draft`, {
+		data: {
+			hujson: draft.hujson,
+			perspective: alternatePerspective
+		}
+	});
+	expect(evaluate.ok()).toBeTruthy();
+	const impact = (await evaluate.json()) as { added?: unknown[]; unchanged?: unknown[] };
+	expect((impact.added?.length ?? 0) + (impact.unchanged?.length ?? 0)).toBeGreaterThan(0);
+
+	const validate = await request.post(`${baseURL}/api/policy/validate`, {
+		data: { hujson: draft.hujson }
+	});
+	expect(validate.ok()).toBeTruthy();
+	const validation = (await validate.json()) as { valid?: boolean };
+	expect(validation.valid).toBe(true);
+});

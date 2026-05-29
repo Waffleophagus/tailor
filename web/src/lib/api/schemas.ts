@@ -56,7 +56,8 @@ export const topologyResponseSchema = z.object({
 export const cloudAuthStatusResponseSchema = z.object({
 	authenticated: z.boolean(),
 	tailnet: z.string().optional(),
-	hasPolicy: z.boolean()
+	hasPolicy: z.boolean(),
+	devMode: z.boolean().optional()
 });
 
 export const cloudAuthRequestSchema = z.object({

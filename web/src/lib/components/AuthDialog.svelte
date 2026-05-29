@@ -86,6 +86,10 @@
 				<p class="m-0 text-[0.84rem] text-tertiary">
 					The backend uses this key to fetch the policy file and keeps it in memory only.
 				</p>
+				<p class="m-0 text-[0.84rem] text-tertiary">
+					Dev demo tailnet: use <code class="text-primary">tskey-api-tailor-dev</code> (any tailnet field)
+					for a fully interactive sample fleet with no Cloud API calls.
+				</p>
 				{#if cloudError}
 					<p
 						class="border-base-error m-0 rounded-md border bg-error p-[0.6rem_0.7rem] text-[0.84rem] font-bold text-error-text"

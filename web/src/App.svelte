@@ -24,6 +24,11 @@
 	import { fetchTopology } from './lib/api/topology';
 	import { connectTopologySocket } from './lib/api/topologySocket';
 	import type { RenderEdge } from './lib/graph/engine';
+	import {
+		evaluationEdges,
+		ghostDeniedEdges,
+		renderPolicyEdge
+	} from './lib/graph/policy-graph-edges';
 	import { saveRecentPerspective, validatePerspective } from './lib/perspective/catalog';
 	import { subjectDeviceIds } from './lib/perspective/subjects';
 	import { focusedScenarioNodeIds, scenarioReachableCount } from './lib/scenario/graph';
@@ -170,31 +175,42 @@
 	const visibleOnlineCount = $derived(visibleDevices.filter((device) => device.online).length);
 	const graphOnlineCount = $derived(graphDevices.filter((device) => device.online).length);
 
-	function ghostDeniedEdges(allowed: RenderEdge[], sourceIds: ReadonlySet<string>): RenderEdge[] {
-		const allowedPairs = new Set(allowed.map((edge) => `${edge.from}\0${edge.to}`));
-		const reachable = new Set<string>(); // eslint-disable-line svelte/prefer-svelte-reactivity
-		for (const edge of allowed) {
-			if (sourceIds.has(edge.from)) reachable.add(edge.to);
-		}
-		const ghosts: RenderEdge[] = [];
-		let count = 0;
-		for (const sourceId of sourceIds) {
-			for (const device of visibleDevices) {
-				if (sourceIds.has(device.id) || reachable.has(device.id)) continue;
-				const key = `${sourceId}\0${device.id}`;
-				if (allowedPairs.has(key)) continue;
-				ghosts.push({
-					id: `ghost:${sourceId}:${device.id}`,
-					from: sourceId,
-					to: device.id,
-					kind: 'acl',
-					state: 'ghost-denied'
-				});
-				count += 1;
-				if (count >= 24) return ghosts;
+	function graphEdges(): RenderEdge[] {
+		if (cloudStatus.authenticated && edges.length > 0) {
+			let rendered = policyEdgesForGraph();
+			rendered = rendered.filter(
+				(edge) => graphVisibleDeviceIDs.has(edge.from) || graphVisibleDeviceIDs.has(edge.to)
+			);
+			if (graphMode === 'all') return rendered;
+			if (activeScenario && subjectIDs.size > 0) {
+				const nodeIds = focusedScenarioNodeIds(rendered, subjectIDs);
+				rendered = rendered.filter((edge) => nodeIds.has(edge.from) && nodeIds.has(edge.to));
+				if (showGhostEdges && graphMode === 'focused') {
+					rendered = [...rendered, ...ghostDeniedEdges(rendered, subjectIDs, visibleDevices)];
+				}
+				return rendered;
 			}
+			const focusID = graphRootDevice?.id;
+			if (!focusID) return [];
+			return rendered.filter((edge) => edge.from === focusID || edge.to === focusID);
 		}
-		return ghosts;
+		const root = rootDevice;
+		if (!root || !graphVisibleDeviceIDs.has(root.id) || !root.online) return [];
+		return visibleDevices
+			.filter((device) => device.id !== root.id && device.online)
+			.map((device) => ({
+				id: `local:${root.id}:${device.id}`,
+				from: root.id,
+				to: device.id,
+				kind: 'local'
+			}));
+	}
+
+	function policyEdgesForGraph(): RenderEdge[] {
+		if (!activePolicyEvaluation || (!draftHuJSON && !activePerspectiveEvaluation)) {
+			return edges.map((edge) => renderPolicyEdge(edge));
+		}
+		return evaluationEdges(activePolicyEvaluation, policyGraphViewMode, Boolean(draftHuJSON));
 	}
 
 	function syncScenarioModes() {
@@ -235,78 +251,6 @@
 
 	function unique(values: string[]) {
 		return [...new Set(values)].sort((a, b) => a.localeCompare(b));
-	}
-
-	function graphEdges(): RenderEdge[] {
-		if (cloudStatus.authenticated && edges.length > 0) {
-			let rendered = policyEdgesForGraph();
-			rendered = rendered.filter(
-				(edge) => graphVisibleDeviceIDs.has(edge.from) || graphVisibleDeviceIDs.has(edge.to)
-			);
-			if (graphMode === 'all') return rendered;
-			if (activeScenario && subjectIDs.size > 0) {
-				const nodeIds = focusedScenarioNodeIds(rendered, subjectIDs);
-				rendered = rendered.filter((edge) => nodeIds.has(edge.from) && nodeIds.has(edge.to));
-				if (showGhostEdges && graphMode === 'focused') {
-					rendered = [...rendered, ...ghostDeniedEdges(rendered, subjectIDs)];
-				}
-				return rendered;
-			}
-			const focusID = graphRootDevice?.id;
-			if (!focusID) return [];
-			return rendered.filter((edge) => edge.from === focusID || edge.to === focusID);
-		}
-		const root = rootDevice;
-		if (!root || !graphVisibleDeviceIDs.has(root.id) || !root.online) return [];
-		return visibleDevices
-			.filter((device) => device.id !== root.id && device.online)
-			.map((device) => ({
-				id: `local:${root.id}:${device.id}`,
-				from: root.id,
-				to: device.id,
-				kind: 'local'
-			}));
-	}
-
-	function policyEdgesForGraph(): RenderEdge[] {
-		if (!activePolicyEvaluation || (!draftHuJSON && !activePerspectiveEvaluation)) {
-			return edges.map((edge) => renderEdge(edge));
-		}
-		return evaluationEdges(activePolicyEvaluation, policyGraphViewMode, Boolean(draftHuJSON));
-	}
-
-	function evaluationEdges(
-		evaluation: PolicyEvaluateDraftResponse,
-		mode: 'current' | 'draft' | 'diff',
-		hasDraft: boolean
-	): RenderEdge[] {
-		if (mode === 'diff' && hasDraft) {
-			return [
-				...evaluation.added.map((change) => renderEdge(change.edge, 'added')),
-				...evaluation.removed.map((change) => renderEdge(change.edge, 'removed')),
-				...evaluation.changed.map((change) => renderEdge(change.draft ?? change.edge, 'changed'))
-			];
-		}
-		if (mode === 'draft') {
-			return [
-				...evaluation.unchanged.map((change) => renderEdge(change.edge, 'unchanged')),
-				...evaluation.added.map((change) => renderEdge(change.edge, 'added')),
-				...evaluation.changed.map((change) => renderEdge(change.draft ?? change.edge, 'changed'))
-			];
-		}
-		return [
-			...evaluation.unchanged.map((change) => renderEdge(change.edge, 'unchanged')),
-			...evaluation.removed.map((change) =>
-				renderEdge(change.edge, hasDraft ? 'removed' : 'unchanged')
-			),
-			...evaluation.changed.map((change) =>
-				renderEdge(change.saved ?? change.edge, hasDraft ? 'changed' : 'unchanged')
-			)
-		];
-	}
-
-	function renderEdge(edge: Edge, state?: RenderEdge['state']): RenderEdge {
-		return { ...edge, state };
 	}
 
 	function devicesForGraph(): Device[] {
@@ -786,6 +730,11 @@
 					Tailnet topology
 				</p>
 				<h1 class="m-0 text-2xl leading-[1.1]">Tailor</h1>
+				{#if cloudStatus.devMode}
+					<p class="m-0 mt-1 text-[0.78rem] font-bold text-teal">
+						Demo tailnet — {cloudStatus.tailnet ?? 'demo.tailor.ts.net'}
+					</p>
+				{/if}
 			</div>
 			<div class="flex min-w-0 items-center gap-[0.6rem]">
 				{#if cloudStatus.authenticated}

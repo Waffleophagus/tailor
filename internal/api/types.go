@@ -83,6 +83,7 @@ type CloudAuthStatusResponse struct {
 	Authenticated bool   `json:"authenticated"`
 	Tailnet       string `json:"tailnet,omitempty"`
 	HasPolicy     bool   `json:"hasPolicy"`
+	DevMode       bool   `json:"devMode,omitempty"`
 }
 
 type PolicyResponse struct {

@@ -363,6 +363,9 @@ components:
           type: string
         hasPolicy:
           type: boolean
+        devMode:
+          type: boolean
+          description: True when authenticated with the in-memory demo tailnet key.
     PolicyResponse:
       type: object
       required: [tailnet, hujson]

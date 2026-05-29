@@ -9,6 +9,9 @@ import type {
 import type { SimulationNodeDatum, SimulationLinkDatum } from 'd3-force';
 import type { Device, Edge } from '../api/schemas';
 import type { CloudAuthStatusResponse } from '../api/schemas';
+import { edgeClasses } from './edge-classes';
+import { installGraphDebug, uninstallGraphDebug } from './graph-debug';
+import { graphEdgeStylesheet } from './style-catalog';
 
 export type ColorBy = 'status' | 'tag' | 'owner' | 'os';
 
@@ -90,6 +93,12 @@ export function createEngine(opts: GraphInitOptions) {
 	const lastOnlineState = new Map<string, boolean>();
 
 	let current = opts;
+
+	installGraphDebug(() => ({
+		cy: graph,
+		visibleEdges: current.visibleEdges,
+		selectedEdgeId: current.selectedEdge?.id
+	}));
 
 	const osColors: Record<string, string> = {
 		windows: '#01A6F0',
@@ -184,15 +193,8 @@ export function createEngine(opts: GraphInitOptions) {
 		return visibleDevices.filter((d) => ids.has(d.id));
 	}
 
-	function edgeClasses(edge: RenderEdge) {
-		return [
-			edge.kind,
-			edge.accessScope ? `scope-${edge.accessScope}` : '',
-			edge.state ? `state-${edge.state}` : '',
-			current.selectedEdge?.id === edge.id ? 'selected' : ''
-		]
-			.filter(Boolean)
-			.join(' ');
+	function edgeClassesFor(edge: RenderEdge) {
+		return edgeClasses(edge, { selectedEdgeId: current.selectedEdge?.id });
 	}
 
 	function clamp(value: number, min: number, max: number) {
@@ -360,7 +362,7 @@ export function createEngine(opts: GraphInitOptions) {
 				position: positions.get(device.id)
 			})),
 			...current.visibleEdges.map((edge) => ({
-				classes: edgeClasses(edge),
+				classes: edgeClassesFor(edge),
 				data: { id: edge.id, source: edge.from, target: edge.to, label: edgeLabel(edge) }
 			}))
 		];
@@ -402,7 +404,7 @@ export function createEngine(opts: GraphInitOptions) {
 		const selectedEdgeID = current.selectedEdge?.id;
 		graph.edges().forEach((edge) => {
 			const renderEdge = current.visibleEdges.find((candidate) => candidate.id === edge.id());
-			if (renderEdge) edge.classes(edgeClasses(renderEdge));
+			if (renderEdge) edge.classes(edgeClassesFor(renderEdge));
 			edge.toggleClass('selected', selectedEdgeID === edge.id());
 		});
 	}
@@ -564,7 +566,7 @@ export function createEngine(opts: GraphInitOptions) {
 		if (!graph) return;
 		const added = graph.add({
 			group: 'edges',
-			classes: edgeClasses(edge),
+			classes: edgeClassesFor(edge),
 			data: { id: edge.id, source: edge.from, target: edge.to, label: edgeLabel(edge) }
 		});
 		if (prefersReducedMotion()) return;
@@ -619,7 +621,7 @@ export function createEngine(opts: GraphInitOptions) {
 			const existing = graph.getElementById(edge.id);
 			if (existing.length) {
 				existing.data({ id: edge.id, source: edge.from, target: edge.to, label: edgeLabel(edge) });
-				existing.classes(edgeClasses(edge));
+				existing.classes(edgeClassesFor(edge));
 				continue;
 			}
 			addEdge(edge);
@@ -705,16 +707,21 @@ export function createEngine(opts: GraphInitOptions) {
 					'underlay-padding': 14
 				}
 			},
+			...graphEdgeStylesheet(),
 			{
 				selector: 'edge',
 				style: {
-					'curve-style': 'bezier',
-					'line-color': '#74857e',
-					opacity: 0.6,
 					'overlay-opacity': 0,
 					'transition-duration': 180,
-					'transition-property': 'line-color, opacity, width',
-					width: 1.8
+					'transition-property': 'line-color, opacity, width'
+				}
+			},
+			{
+				selector: 'edge.selected',
+				style: {
+					'underlay-color': '#163f31',
+					'underlay-opacity': 0.18,
+					'underlay-padding': 6
 				}
 			},
 			{
@@ -731,118 +738,7 @@ export function createEngine(opts: GraphInitOptions) {
 					'text-rotation': 'autorotate'
 				}
 			},
-			{ selector: 'edge.owner', style: { 'line-color': '#5d7f73', width: 2.4 } },
-			{
-				selector: 'edge.tag',
-				style: {
-					'line-color': '#7c6fb0',
-					'target-arrow-color': '#7c6fb0',
-					'line-style': 'dashed',
-					width: 1.7
-				}
-			},
-			{
-				selector: 'edge.subnet',
-				style: {
-					'line-color': '#a5663f',
-					'target-arrow-color': '#a5663f',
-					'line-style': 'dotted'
-				}
-			},
-			{
-				selector: 'edge.acl',
-				style: {
-					'line-color': '#438aa1',
-					'target-arrow-color': '#438aa1',
-					'target-arrow-shape': 'triangle',
-					width: 2.2
-				}
-			},
-			{
-				selector: 'edge.scope-ssh',
-				style: { 'line-color': '#2f9f68', 'target-arrow-color': '#2f9f68', width: 2.8 }
-			},
-			{
-				selector: 'edge.scope-http',
-				style: { 'line-color': '#438aa1', 'target-arrow-color': '#438aa1', width: 2.4 }
-			},
-			{
-				selector: 'edge.scope-broad',
-				style: { 'line-color': '#b0892f', 'target-arrow-color': '#b0892f', width: 3.1 }
-			},
-			{
-				selector: 'edge.scope-custom, edge.scope-limited',
-				style: {
-					'line-color': '#7c6fb0',
-					'target-arrow-color': '#7c6fb0',
-					'line-style': 'dashed',
-					width: 2.3
-				}
-			},
-			{
-				selector: 'edge.local',
-				style: {
-					'curve-style': 'straight',
-					'line-color': '#2f9f68',
-					opacity: 0.66,
-					width: 2.2
-				}
-			},
-			{
-				selector: 'edge.state-added',
-				style: {
-					'line-color': '#2f9f68',
-					'target-arrow-color': '#2f9f68',
-					'line-style': 'dashed',
-					opacity: 0.94,
-					width: 3.3
-				}
-			},
-			{
-				selector: 'edge.state-removed',
-				style: {
-					'line-color': '#b94c4c',
-					'target-arrow-color': '#b94c4c',
-					'line-style': 'dotted',
-					opacity: 0.78,
-					width: 2.8
-				}
-			},
-			{
-				selector: 'edge.state-changed',
-				style: {
-					'line-color': '#b0892f',
-					'target-arrow-color': '#b0892f',
-					'line-style': 'dashed',
-					opacity: 0.9,
-					width: 3
-				}
-			},
-			{
-				selector: 'edge.state-ghost-denied',
-				style: {
-					'line-color': '#9aa7a1',
-					'target-arrow-color': '#9aa7a1',
-					'line-style': 'dotted',
-					opacity: 0.42,
-					width: 1.8
-				}
-			},
 			{ selector: '.dim', style: { opacity: 0.16 } },
-			{
-				selector: 'edge.focused',
-				style: { opacity: 0.96, width: 3.3 }
-			},
-			{
-				selector: 'edge.selected',
-				style: {
-					opacity: 1,
-					width: 4.4,
-					'underlay-color': '#163f31',
-					'underlay-opacity': 0.18,
-					'underlay-padding': 6
-				}
-			},
 			{
 				selector: 'node.focused',
 				style: { opacity: 1, 'underlay-opacity': 0.16, 'underlay-padding': 10 }
@@ -1151,6 +1047,7 @@ export function createEngine(opts: GraphInitOptions) {
 	}
 
 	function destroy() {
+		uninstallGraphDebug();
 		cleanupPhysics?.();
 		graph?.destroy();
 		graph = undefined;

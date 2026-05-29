@@ -25,6 +25,14 @@ pnpm format && pnpm lint
 ```
 then fix issues, and then run
 ```
-pnpm check
+pnpm check && pnpm test
 ```
 and make sure you have not introduced issues.
+
+Graph edge styling is covered by Vitest (`pnpm --dir web test`) — see `web/src/lib/graph/style-cases.ts`.
+
+Live tailnet E2E tests (Playwright starts `./cmd/tailor` + Vite when not already running; set `TAILSCALE_API_KEY` in `web/.env` — see `web/.env.example`; use `tskey-api-tailor-dev` for the built-in demo tailnet):
+```
+pnpm --dir web test:e2e
+```
+See `web/e2e/README.md`.

@@ -11,6 +11,9 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+
+	"github.com/Waffleophagus/tailor/internal/devtailnet"
+	"github.com/Waffleophagus/tailor/internal/policy"
 )
 
 const (
@@ -32,6 +35,7 @@ type Session struct {
 	APIKey         string
 	Policy         string
 	ValidatedDraft string
+	DevMode        bool
 }
 
 type AuthRequest struct {
@@ -43,6 +47,7 @@ type AuthStatus struct {
 	Authenticated bool
 	Tailnet       string
 	HasPolicy     bool
+	DevMode       bool
 }
 
 type Error struct {
@@ -99,6 +104,23 @@ func (c *Client) Authenticate(ctx context.Context, request AuthRequest) (AuthSta
 		return AuthStatus{}, errors.New("Tailscale API key must start with tskey-api-")
 	}
 
+	if devtailnet.IsDevAPIKey(request.APIKey) {
+		tailnet := request.Tailnet
+		if tailnet == "" || tailnet == "-" {
+			tailnet = devtailnet.Name
+		}
+		c.mu.Lock()
+		c.session = &Session{
+			Tailnet: tailnet,
+			APIKey:  request.APIKey,
+			Policy:  devtailnet.Policy(),
+			DevMode: true,
+		}
+		status := c.statusLocked()
+		c.mu.Unlock()
+		return status, nil
+	}
+
 	policy, err := c.fetchPolicy(ctx, request.Tailnet, request.APIKey)
 	if err != nil {
 		return AuthStatus{}, err
@@ -146,6 +168,9 @@ func (c *Client) RefreshPolicy(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if session.DevMode {
+		return session.Policy, nil
+	}
 	policy, err := c.fetchPolicy(ctx, session.Tailnet, session.APIKey)
 	if err != nil {
 		return "", err
@@ -166,6 +191,17 @@ func (c *Client) ValidatePolicy(ctx context.Context, draft string) error {
 	if strings.TrimSpace(draft) == "" {
 		return errors.New("draft policy is required")
 	}
+	if session.DevMode {
+		if _, err := policy.Parse(draft); err != nil {
+			return err
+		}
+		c.mu.Lock()
+		if c.session != nil {
+			c.session.ValidatedDraft = draft
+		}
+		c.mu.Unlock()
+		return nil
+	}
 	if err := c.sendPolicy(ctx, http.MethodPost, session.Tailnet, session.APIKey, "/validate", draft); err != nil {
 		return err
 	}
@@ -184,6 +220,16 @@ func (c *Client) SaveValidatedPolicy(ctx context.Context) (string, error) {
 	}
 	if strings.TrimSpace(session.ValidatedDraft) == "" {
 		return "", errors.New("validate a draft policy before saving")
+	}
+	if session.DevMode {
+		c.mu.Lock()
+		if c.session != nil {
+			c.session.Policy = c.session.ValidatedDraft
+			c.session.ValidatedDraft = ""
+		}
+		saved := c.session.Policy
+		c.mu.Unlock()
+		return saved, nil
 	}
 	if err := c.sendPolicy(ctx, http.MethodPost, session.Tailnet, session.APIKey, "", session.ValidatedDraft); err != nil {
 		return "", err
@@ -220,6 +266,7 @@ func (c *Client) statusLocked() AuthStatus {
 		Authenticated: true,
 		Tailnet:       c.session.Tailnet,
 		HasPolicy:     c.session.Policy != "",
+		DevMode:       c.session.DevMode,
 	}
 }
 
