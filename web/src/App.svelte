@@ -1,13 +1,10 @@
 <script lang="ts">
 	import { onDestroy, onMount } from 'svelte';
-	import { SvelteSet } from 'svelte/reactivity';
 	import {
 		authenticateCloud,
 		evaluatePolicyDraft,
 		fetchCloudStatus,
 		fetchPolicy,
-		fetchPolicyMap,
-		mutatePolicyDraft,
 		saveValidatedPolicyDraft,
 		validatePolicyDraft
 	} from './lib/api/cloud';
@@ -18,41 +15,16 @@
 		Edge,
 		LocalAPIStatusResponse,
 		PolicyEvaluateDraftResponse,
-		PolicyMapResponse,
 		PolicyResponse
 	} from './lib/api/schemas';
 	import { fetchTopology } from './lib/api/topology';
 	import { connectTopologySocket } from './lib/api/topologySocket';
 	import type { RenderEdge } from './lib/graph/engine';
-	import {
-		evaluationEdges,
-		ghostDeniedEdges,
-		renderPolicyEdge
-	} from './lib/graph/policy-graph-edges';
-	import { saveRecentPerspective, validatePerspective } from './lib/perspective/catalog';
-	import { subjectDeviceIds } from './lib/perspective/subjects';
-	import { focusedScenarioNodeIds, scenarioReachableCount } from './lib/scenario/graph';
-	import {
-		createScenario,
-		loadScenario,
-		saveScenario,
-		scenarioLabel,
-		type PolicyScenario
-	} from './lib/scenario/state';
-	import {
-		createChange,
-		diffLines,
-		type DraftChange,
-		type PolicyMutation
-	} from './lib/draft/types';
+	import { evaluationEdges, renderPolicyEdge } from './lib/graph/policy-graph-edges';
 	import AuthDialog from './lib/components/AuthDialog.svelte';
-	import DraftTray from './lib/components/DraftTray.svelte';
 	import GraphCanvas from './lib/components/GraphCanvas.svelte';
 	import GraphLegend from './lib/components/GraphLegend.svelte';
-	import PerspectiveBar from './lib/components/PerspectiveBar.svelte';
-	import PolicyWorkbench from './lib/workbench/PolicyWorkbench.svelte';
-	import { defaultWorkbenchRoute, type WorkbenchRoute } from './lib/workbench/nav';
-	import RawPolicyPanel from './lib/components/RawPolicyPanel.svelte';
+	import PolicyEditorPanel from './lib/components/PolicyEditorPanel.svelte';
 	import SidebarLeft from './lib/components/SidebarLeft.svelte';
 	import SidebarRight from './lib/components/SidebarRight.svelte';
 	import SidebarToggleButton from './lib/components/SidebarToggleButton.svelte';
@@ -69,28 +41,16 @@
 	});
 	let cloudError = $state('');
 	let policy = $state<PolicyResponse | undefined>();
-	let policyMap = $state<PolicyMapResponse | undefined>();
-	let policySearch = $state('');
-	let draftHuJSON = $state('');
-	let draftRuleText = $state('');
-	let draftChanges = $state<DraftChange[]>([]);
-	let draftEvaluation = $state<PolicyEvaluateDraftResponse | undefined>();
-	let draftEvaluationPerspective = $state('');
-	let editSeed = $state({ sources: '', destinations: '', ports: '443' });
-	let editStatus = $state('');
-	let editBusy = $state(false);
-	let draftValid = $state<boolean | null>(null);
-	let scenario = $state<PolicyScenario | null>(null);
-	let showGhostEdges = $state(true);
-	let policyPerspective = $state('');
-	let simulatedPerspective = $state('');
-	let perspectiveEvaluation = $state<PolicyEvaluateDraftResponse | undefined>();
-	let policyGraphViewMode = $state<'current' | 'draft' | 'diff'>('current');
+	let policyEvaluation = $state<PolicyEvaluateDraftResponse | undefined>();
+	let previewEvaluation = $state<PolicyEvaluateDraftResponse | undefined>();
+	let editorHuJSON = $state('');
+	let validatedHuJSON = $state('');
+	let editorOpen = $state(false);
+	let editorValid = $state<boolean | null>(null);
+	let editorBusy = $state(false);
+	let editorStatus = $state('');
+	let editorErrors = $state<string[]>([]);
 	let phase2Open = $state(false);
-	let workbenchOpen = $state(false);
-	let workbenchRoute = $state<WorkbenchRoute>(defaultWorkbenchRoute());
-	let rawPolicyOpen = $state(false);
-	let sidebarSnapshot = $state<{ left: boolean; right: boolean } | null>(null);
 	let localApiError = $state<LocalAPIStatusResponse | Error | undefined>();
 	let cloudBusy = $state(false);
 	let showOffline = $state(true);
@@ -129,74 +89,38 @@
 	const ownerOptions = $derived(unique(devices.map((device) => device.owner).filter(Boolean)));
 	const osOptions = $derived(unique(devices.map((device) => device.os).filter(Boolean)));
 	const rootDevice = $derived(devices[0]);
-	const activePerspective = $derived(policyPerspective.trim());
-	const activePerspectiveEvaluation = $derived(
-		activePerspective && activePerspective === simulatedPerspective
-			? perspectiveEvaluation
-			: undefined
+	const graphRootDevice = $derived(
+		cloudStatus.authenticated && graphMode === 'focused'
+			? (selectedDevice ?? rootDevice)
+			: rootDevice
 	);
-	const activeDraftEvaluation = $derived(
-		draftEvaluation && activePerspective === draftEvaluationPerspective
-			? draftEvaluation
-			: undefined
-	);
-	const activePolicyEvaluation = $derived(activeDraftEvaluation ?? activePerspectiveEvaluation);
-	const activeScenario = $derived(
-		Boolean(scenario && activePerspective && activePerspective === simulatedPerspective)
-	);
-	const subjectIDs = $derived.by(() => {
-		if (!activePerspective) return new SvelteSet<string>();
-		return new SvelteSet(subjectDeviceIds(activePerspective, devices, policyMap));
-	});
-	const scenarioSourceIDs = $derived(activeScenario ? subjectIDs : new SvelteSet<string>());
-	const graphRootDevice = $derived.by(() => {
-		if (activeScenario && subjectIDs.size > 0) {
-			if (selectedDevice && subjectIDs.has(selectedDevice.id)) return selectedDevice;
-			return visibleDevices.find((device) => subjectIDs.has(device.id)) ?? rootDevice;
-		}
-		if (cloudStatus.authenticated && graphMode === 'focused') {
-			return selectedDevice ?? rootDevice;
-		}
-		return rootDevice;
-	});
-	const policyVisibleDeviceIDs = $derived.by(() => {
-		if (!activeScenario) return undefined;
-		const ids = activePolicyEvaluation?.visibleDeviceIds;
-		if (ids && ids.length > 0) return new SvelteSet(ids);
-		if (subjectIDs.size > 0) return subjectIDs;
-		return undefined;
-	});
-	const graphDevices = $derived(devicesForGraph());
-	const graphVisibleDeviceIDs = $derived(new SvelteSet(graphDevices.map((device) => device.id)));
-	const visibleEdges = $derived(graphEdges());
-	const scenarioSourceCount = $derived(activeScenario ? subjectIDs.size : 0);
-	const perspectiveReachableCount = $derived(
-		activeScenario ? scenarioReachableCount(visibleEdges, subjectIDs) : 0
-	);
-	const activeScenarioLabel = $derived(
-		activeScenario && scenario ? scenarioLabel(scenario, scenarioSourceCount) : ''
-	);
-	const draftDiffLines = $derived(
-		policy?.hujson && draftHuJSON ? diffLines(policy.hujson, draftHuJSON) : []
-	);
+	const activeEvaluation = $derived(previewEvaluation ?? policyEvaluation);
+	const editorDirty = $derived(Boolean(policy && editorHuJSON !== policy.hujson));
+	const hasValidatedPending = $derived(editorValid === true && validatedHuJSON !== '');
+	const hasPendingDraft = $derived(editorDirty || hasValidatedPending);
 	const visibleOnlineCount = $derived(visibleDevices.filter((device) => device.online).length);
+	const graphDevices = $derived(visibleDevices);
+	const graphVisibleDeviceIDs = $derived(new Set(graphDevices.map((device) => device.id)));
+	const visibleEdges = $derived(graphEdges());
 	const graphOnlineCount = $derived(graphDevices.filter((device) => device.online).length);
 
 	function graphEdges(): RenderEdge[] {
-		if (cloudStatus.authenticated && edges.length > 0) {
-			let rendered = policyEdgesForGraph();
+		if (cloudStatus.authenticated && activeEvaluation) {
+			let rendered = evaluationEdges(activeEvaluation, 'current', false);
 			rendered = rendered.filter(
 				(edge) => graphVisibleDeviceIDs.has(edge.from) || graphVisibleDeviceIDs.has(edge.to)
 			);
 			if (graphMode === 'all') return rendered;
-			if (activeScenario && subjectIDs.size > 0) {
-				const nodeIds = focusedScenarioNodeIds(rendered, subjectIDs);
-				rendered = rendered.filter((edge) => nodeIds.has(edge.from) && nodeIds.has(edge.to));
-				if (showGhostEdges && graphMode === 'focused') {
-					rendered = [...rendered, ...ghostDeniedEdges(rendered, subjectIDs, graphDevices)];
-				}
-				return rendered;
-			}
+			const focusID = graphRootDevice?.id;
+			if (!focusID) return [];
+			return rendered.filter((edge) => edge.from === focusID || edge.to === focusID);
+		}
+		if (cloudStatus.authenticated && edges.length > 0) {
+			let rendered = edges.map((edge) => renderPolicyEdge(edge));
+			rendered = rendered.filter(
+				(edge) => graphVisibleDeviceIDs.has(edge.from) || graphVisibleDeviceIDs.has(edge.to)
+			);
+			if (graphMode === 'all') return rendered;
 			const focusID = graphRootDevice?.id;
 			if (!focusID) return [];
 			return rendered.filter((edge) => edge.from === focusID || edge.to === focusID);
@@ -213,56 +137,8 @@
 			}));
 	}
 
-	function policyEdgesForGraph(): RenderEdge[] {
-		if (!activePolicyEvaluation || (!draftHuJSON && !activePerspectiveEvaluation)) {
-			return edges.map((edge) => renderPolicyEdge(edge));
-		}
-		return evaluationEdges(activePolicyEvaluation, policyGraphViewMode, Boolean(draftHuJSON));
-	}
-
-	function syncScenarioModes() {
-		if (!scenario) return;
-		scenario = {
-			...scenario,
-			policyMode: policyGraphViewMode,
-			graphMode
-		};
-		saveScenario(scenario);
-	}
-
-	async function applyDraftMutation(mutation: PolicyMutation, label: string) {
-		if (editBusy) return;
-		editBusy = true;
-		cloudError = '';
-		draftValid = null;
-		editStatus = '';
-		const result = await mutatePolicyDraft({
-			hujson: draftHuJSON || undefined,
-			mutation
-		});
-		await result.match({
-			ok: async (value) => {
-				draftHuJSON = value.hujson;
-				draftRuleText = label;
-				draftChanges = [...draftChanges, createChange(label)];
-				policyGraphViewMode = 'draft';
-				syncScenarioModes();
-				await evaluateDraftImpact(value.hujson);
-			},
-			err: async (error) => {
-				cloudError = error.message;
-			}
-		});
-		editBusy = false;
-	}
-
 	function unique(values: string[]) {
 		return [...new Set(values)].sort((a, b) => a.localeCompare(b));
-	}
-
-	function devicesForGraph(): Device[] {
-		if (!policyVisibleDeviceIDs) return visibleDevices;
-		return visibleDevices.filter((device) => policyVisibleDeviceIDs.has(device.id));
 	}
 
 	function chooseDevice(device: Device) {
@@ -271,17 +147,43 @@
 		graphAPI?.selectDevice(device);
 	}
 
-	async function applyPerspectiveFromSelector(selector: string) {
-		policyPerspective = selector;
-		await simulatePerspective();
-	}
-
 	function localApiErrorMessage(error: LocalAPIStatusResponse | Error | undefined) {
 		if (!error) return '';
 		if ('available' in error) {
 			return error.error ?? `Unable to reach ${error.localApiEndpoint}`;
 		}
 		return error.message;
+	}
+
+	function resetEditorFromPolicy() {
+		if (!policy) return;
+		editorHuJSON = policy.hujson;
+		validatedHuJSON = '';
+		editorValid = null;
+		editorStatus = '';
+		editorErrors = [];
+		previewEvaluation = undefined;
+	}
+
+	async function evaluatePolicy(hujson: string, preview = false) {
+		const result = await evaluatePolicyDraft({ hujson });
+		result.match({
+			ok: (value) => {
+				if (preview) {
+					previewEvaluation = value;
+					return;
+				}
+				policyEvaluation = value;
+				previewEvaluation = undefined;
+			},
+			err: (error) => {
+				if (preview) {
+					previewEvaluation = undefined;
+					editorStatus = 'Validated, but graph preview is unavailable.';
+				}
+				cloudError = error.message;
+			}
+		});
 	}
 
 	async function enableACLEditing(data: { tailnet: string; apiKey: string }) {
@@ -318,250 +220,91 @@
 	}
 
 	async function loadPolicy() {
-		const [rawResult, mapResult] = await Promise.all([fetchPolicy(), fetchPolicyMap()]);
-		rawResult.match({
-			ok: (value) => {
-				policy = value;
-				draftHuJSON = '';
-				draftRuleText = '';
-				draftChanges = [];
-				draftEvaluation = undefined;
-				draftEvaluationPerspective = '';
-				draftValid = null;
-				perspectiveEvaluation = undefined;
-				simulatedPerspective = '';
-				scenario = null;
-				saveScenario(null);
-				cloudError = '';
-			},
-			err: (error) => {
-				cloudError = error.message;
-			}
-		});
-		mapResult.match({
-			ok: (value) => {
-				policyMap = value;
-			},
-			err: (error) => {
-				cloudError = error.message;
-			}
-		});
-	}
-
-	async function evaluateDraftImpact(hujson: string) {
-		const result = await evaluatePolicyDraft({
-			hujson,
-			perspective: activePerspective || undefined
-		});
+		const result = await fetchPolicy();
 		result.match({
-			ok: (value) => {
-				draftEvaluation = value;
-				draftEvaluationPerspective = activePerspective;
-				editStatus = draftEvaluationSummary(value);
+			ok: async (value) => {
+				policy = value;
+				resetEditorFromPolicy();
+				cloudError = '';
+				await evaluatePolicy(value.hujson);
 			},
-			err: (error) => {
-				draftEvaluation = undefined;
-				draftEvaluationPerspective = '';
-				editStatus = 'Draft ready. Impact preview unavailable; validate before saving.';
+			err: async (error) => {
 				cloudError = error.message;
 			}
 		});
 	}
 
-	function finishPerspectiveSimulation(selector: string) {
-		simulatedPerspective = selector;
-		graphMode = 'focused';
-		scenario = createScenario(selector);
-		scenario.policyMode = policyGraphViewMode;
-		scenario.graphMode = graphMode;
-		saveScenario(scenario);
-		const sources = subjectDeviceIds(selector, devices, policyMap);
-		const firstSource = visibleDevices.find((device) => sources.has(device.id));
-		selectedDevice = firstSource ?? rootDevice;
-		selectedEdge = undefined;
-		saveRecentPerspective(selector);
-		if (selectedDevice) graphAPI?.selectDevice(selectedDevice);
-	}
-
-	function openWorkbench(options: { ensurePolicy?: boolean; route?: WorkbenchRoute } = {}) {
-		const openPanel = () => {
-			if (options.route) workbenchRoute = options.route;
-			if (!workbenchOpen) {
-				sidebarSnapshot = { left: leftOpen, right: rightOpen };
-				leftOpen = false;
-				rightOpen = false;
+	function openPolicyEditor() {
+		const open = () => {
+			if (policy && !hasPendingDraft) {
+				resetEditorFromPolicy();
 			}
-			workbenchOpen = true;
-			queueMicrotask(() => graphAPI?.reflow());
+			editorOpen = true;
 		};
 		if (policy) {
-			openPanel();
+			open();
 			return;
 		}
-		if (options.ensurePolicy === false) {
-			openPanel();
-			return;
-		}
-		void loadPolicy().then(openPanel);
+		void loadPolicy().then(open);
 	}
 
-	function closeWorkbench() {
-		workbenchOpen = false;
-		if (sidebarSnapshot) {
-			leftOpen = sidebarSnapshot.left;
-			rightOpen = sidebarSnapshot.right;
-			sidebarSnapshot = null;
-		}
-		queueMicrotask(() => graphAPI?.reflow());
+	function closePolicyEditor() {
+		editorOpen = false;
 	}
 
-	function openRawPolicy() {
-		if (policy) {
-			rawPolicyOpen = true;
-			return;
-		}
-		void loadPolicy().then(() => {
-			rawPolicyOpen = true;
-		});
-	}
-
-	async function simulatePerspective() {
-		const validation = validatePerspective(policyPerspective, devices, policyMap);
-		if (editBusy || validation.status !== 'valid' || !policy?.hujson) return;
-		const selector = validation.selector;
-		policyPerspective = selector;
-		editBusy = true;
+	async function validateEditor() {
+		if (editorBusy || !editorDirty) return;
+		editorBusy = true;
 		cloudError = '';
-		if (draftHuJSON) {
-			await evaluateDraftImpact(draftHuJSON);
-			finishPerspectiveSimulation(selector);
-			policyGraphViewMode = 'draft';
-			editBusy = false;
-			return;
-		}
-		const result = await evaluatePolicyDraft({
-			hujson: policy.hujson,
-			perspective: selector
-		});
-		result.match({
-			ok: (value) => {
-				perspectiveEvaluation = value;
-				finishPerspectiveSimulation(selector);
-				policyGraphViewMode = draftHuJSON ? 'draft' : 'current';
-				const edgeCount = value.unchanged.length + value.added.length + value.changed.length;
-				editStatus = `${selector} can reach ${edgeCount} saved edge${edgeCount === 1 ? '' : 's'}.`;
+		editorErrors = [];
+		const result = await validatePolicyDraft(editorHuJSON);
+		await result.match({
+			ok: async (value) => {
+				editorValid = value.valid;
+				if (value.valid) {
+					validatedHuJSON = editorHuJSON;
+					editorStatus = 'Policy validated. Preview updated on the graph.';
+					await evaluatePolicy(editorHuJSON, true);
+				} else {
+					validatedHuJSON = '';
+					editorStatus = 'Fix validation errors before saving.';
+					editorErrors = value.errors ?? ['Policy failed validation.'];
+					previewEvaluation = undefined;
+				}
 			},
-			err: (error) => {
-				perspectiveEvaluation = undefined;
-				simulatedPerspective = '';
-				cloudError = error.message;
+			err: async (error) => {
+				editorValid = false;
+				validatedHuJSON = '';
+				editorErrors = [error.message];
+				editorStatus = 'Validation failed.';
+				previewEvaluation = undefined;
 			}
 		});
-		editBusy = false;
+		editorBusy = false;
 	}
 
-	function clearPerspective() {
-		policyPerspective = '';
-		simulatedPerspective = '';
-		perspectiveEvaluation = undefined;
-		scenario = null;
-		saveScenario(null);
-		policyGraphViewMode = draftHuJSON ? 'draft' : 'current';
-		graphMode = 'focused';
-		selectedDevice = rootDevice;
-		selectedEdge = undefined;
-		if (rootDevice) graphAPI?.selectDevice(rootDevice);
+	function discardEditorChanges() {
+		resetEditorFromPolicy();
 	}
 
-	function draftEvaluationSummary(value: PolicyEvaluateDraftResponse) {
-		const parts = [
-			`${value.added.length} added`,
-			`${value.changed.length} changed`,
-			`${value.removed.length} removed`
-		];
-		if (value.broadAccess.length > 0) {
-			parts.push(`${value.broadAccess.length} broad`);
-		}
-		if (value.unresolvedSelectors.length > 0) {
-			parts.push(`${value.unresolvedSelectors.length} unresolved`);
-		}
-		if (value.applicationGrants.length > 0) {
-			parts.push(`${value.applicationGrants.length} app grant`);
-		}
-		return `Draft impact: ${parts.join(', ')}. Validate before saving.`;
-	}
-
-	async function validateDraft() {
-		if (editBusy || !draftHuJSON) return;
-		editBusy = true;
-		cloudError = '';
-		const result = await validatePolicyDraft(draftHuJSON);
-		result.match({
-			ok: (value) => {
-				draftValid = value.valid;
-				editStatus = value.valid
-					? 'Draft validated. Save is enabled.'
-					: (value.errors ?? ['Draft failed validation.']).join(' ');
-			},
-			err: (error) => {
-				draftValid = false;
-				cloudError = error.message;
-			}
-		});
-		editBusy = false;
-	}
-
-	function discardDraft() {
-		draftHuJSON = '';
-		draftRuleText = '';
-		draftChanges = [];
-		draftEvaluation = undefined;
-		draftEvaluationPerspective = '';
-		draftValid = null;
-		editStatus = '';
-		policyGraphViewMode = 'current';
-		syncScenarioModes();
-	}
-
-	async function saveDraft() {
-		if (editBusy || !draftValid) return;
-		editBusy = true;
+	async function saveEditorPolicy() {
+		if (editorBusy || !hasValidatedPending) return;
+		editorBusy = true;
 		cloudError = '';
 		const result = await saveValidatedPolicyDraft();
-		result.match({
-			ok: (value) => {
+		await result.match({
+			ok: async (value) => {
 				policy = { tailnet: value.tailnet, hujson: value.hujson };
-				void refreshPolicyMap();
-				draftHuJSON = '';
-				draftRuleText = '';
-				draftChanges = [];
-				draftEvaluation = undefined;
-				draftEvaluationPerspective = '';
-				draftValid = null;
-				perspectiveEvaluation = undefined;
-				simulatedPerspective = '';
-				scenario = null;
-				saveScenario(null);
-				policyGraphViewMode = 'current';
-				editStatus = 'Saved. Topology will refresh from the updated policy.';
+				resetEditorFromPolicy();
+				editorOpen = false;
+				editorStatus = 'Policy saved.';
+				await evaluatePolicy(value.hujson);
 			},
-			err: (error) => {
+			err: async (error) => {
 				cloudError = error.message;
 			}
 		});
-		editBusy = false;
-	}
-
-	async function refreshPolicyMap() {
-		const result = await fetchPolicyMap();
-		result.match({
-			ok: (value) => {
-				policyMap = value;
-			},
-			err: (error) => {
-				cloudError = error.message;
-			}
-		});
+		editorBusy = false;
 	}
 
 	function closePhase2Dialog() {
@@ -575,68 +318,14 @@
 		return '-';
 	}
 
-	function selectorForDevice(device: Device | undefined, role: 'source' | 'destination') {
-		if (!device) return '';
-		if (role === 'source' && device.owner) return device.owner;
-		if (device.tags[0]) return device.tags[0];
-		return device.tailscaleIps[0] ?? device.ip ?? device.name;
-	}
-
-	function stripDestinationPorts(selector: string) {
-		if (!selector || selector === '*') return selector;
-		const lastColon = selector.lastIndexOf(':');
-		if (lastColon <= 3) return selector;
-		return selector.slice(0, lastColon);
-	}
-
-	function isWildcardSelector(selector: string | undefined) {
-		if (!selector || selector === '*') return true;
-		const host = stripDestinationPorts(selector);
-		return host === '*' || host === '*:*';
-	}
-
-	function seedBuilder(role: 'source' | 'destination') {
-		const edge = selectedEdge;
-		const edgeRef = edge?.policyRefs?.[0];
-		const device = edge
-			? devices.find((item) => item.id === (role === 'source' ? edge.from : edge.to))
-			: selectedDevice;
-		const deviceSelector = selectorForDevice(device, role);
-
-		const sources =
-			role === 'source'
-				? edgeRef?.src && !isWildcardSelector(edgeRef.src)
-					? edgeRef.src
-					: deviceSelector
-				: editSeed.sources;
-		const refDestination = stripDestinationPorts(edgeRef?.dst ?? '');
-		const destinations =
-			role === 'destination'
-				? refDestination && !isWildcardSelector(refDestination)
-					? refDestination
-					: deviceSelector
-				: editSeed.destinations;
-
-		editSeed = {
-			sources,
-			destinations,
-			ports: edge?.ports?.join(',') || editSeed.ports || '443'
-		};
-		openWorkbench({ route: edge?.accessScope === 'ssh' ? 'ssh' : 'general-access' });
-	}
-
-	function openPolicyFromLens(section?: string) {
-		const route: WorkbenchRoute = section === 'ssh' ? 'ssh' : 'general-access';
-		openWorkbench({ route });
-	}
-
 	$effect(() => {
-		if (!scenario) return;
-		const mode = policyGraphViewMode;
-		const graph = graphMode;
-		if (scenario.policyMode === mode && scenario.graphMode === graph) return;
-		scenario = { ...scenario, policyMode: mode, graphMode: graph };
-		saveScenario(scenario);
+		const text = editorHuJSON;
+		if (validatedHuJSON && text !== validatedHuJSON) {
+			validatedHuJSON = '';
+			editorValid = null;
+			editorErrors = [];
+			previewEvaluation = undefined;
+		}
 	});
 
 	onMount(async () => {
@@ -660,16 +349,8 @@
 			}
 		});
 
-		const restored = loadScenario();
 		if (cloudStatus.authenticated) {
 			await loadPolicy();
-			if (restored) {
-				scenario = restored;
-				policyPerspective = restored.sourceSelector;
-				policyGraphViewMode = restored.policyMode;
-				graphMode = restored.graphMode;
-				await simulatePerspective();
-			}
 		}
 
 		disconnectTopologySocket = connectTopologySocket({
@@ -728,10 +409,12 @@
 			</div>
 			<div class="flex min-w-0 items-center gap-[0.6rem]">
 				{#if cloudStatus.authenticated}
-					<button class="btn-primary" type="button" onclick={() => openWorkbench()}>
-						Access controls
-					</button>
-					<button class="btn-secondary" type="button" onclick={openRawPolicy}>Raw HuJSON</button>
+					{#if hasValidatedPending}
+						<button class="btn-save" type="button" disabled={editorBusy} onclick={saveEditorPolicy}>
+							Save validated policy
+						</button>
+					{/if}
+					<button class="btn-primary" type="button" onclick={openPolicyEditor}>Edit policy</button>
 				{:else}
 					<button class="btn-primary" type="button" onclick={() => (phase2Open = true)}>
 						Enable ACL Editing
@@ -765,10 +448,9 @@
 				{osOptions}
 				{visibleOnlineCount}
 				chooseDevice={(device) => chooseDevice(device)}
-				onViewAsOwner={(owner) => void applyPerspectiveFromSelector(owner)}
 			/>
 
-			<div class="flex min-h-0 min-w-0 flex-1">
+			<div class="relative flex min-h-0 min-w-0 flex-1">
 				<section
 					class="graph relative min-h-[32rem] min-w-0 flex-1 overflow-hidden"
 					aria-label="Topology graph"
@@ -784,88 +466,60 @@
 						ontoggle={() => (rightOpen = !rightOpen)}
 					/>
 
-					<div
-						class="absolute top-3 left-3 z-[2] flex items-center gap-[0.4rem] rounded-lg border border-graph-border bg-graph-hud-bg p-[0.35rem] shadow-[0_10px_26px_rgb(23_33_38/8%)]"
-						aria-label="Graph summary"
-					>
-						<span
-							class="inline-flex min-h-8 items-baseline gap-[0.3rem] rounded-md bg-graph-dot p-[0.35rem_0.55rem] text-[0.78rem] font-bold whitespace-nowrap text-secondary"
-							><strong class="text-[0.98rem] leading-none text-graph-hud-strong"
-								>{graphOnlineCount}</strong
-							> online</span
+					<div class="graph-hud" aria-label="Graph summary">
+						<span class="hud-chip"
+							><strong class="hud-chip-strong">{graphOnlineCount}</strong> online</span
 						>
-						<span
-							class="inline-flex min-h-8 items-baseline gap-[0.3rem] rounded-md bg-graph-dot p-[0.35rem_0.55rem] text-[0.78rem] font-bold whitespace-nowrap text-secondary"
-							><strong class="text-[0.98rem] leading-none text-graph-hud-strong"
-								>{visibleEdges.length}</strong
-							> links</span
+						<span class="hud-chip"
+							><strong class="hud-chip-strong">{visibleEdges.length}</strong> links</span
 						>
-						{#if cloudStatus.authenticated}
-							<span
-								class="inline-flex min-h-8 items-baseline gap-[0.3rem] rounded-md bg-graph-dot p-[0.35rem_0.55rem] text-[0.78rem] font-bold whitespace-nowrap text-secondary capitalize"
-								>{policyGraphViewMode} view</span
-							>
+						{#if previewEvaluation}
+							<span class="hud-chip hud-chip-warn">Preview</span>
 						{/if}
 						{#if cloudStatus.authenticated && graphMode === 'focused' && graphRootDevice}
-							<span
-								class="inline-flex min-h-8 items-baseline gap-[0.3rem] rounded-md bg-graph-dot p-[0.35rem_0.55rem] text-[0.78rem] font-bold whitespace-nowrap text-secondary"
-								><strong class="text-[0.98rem] leading-none text-graph-hud-strong"
+							<span class="hud-chip"
+								><strong class="hud-chip-strong"
 									>{graphRootDevice.name || graphRootDevice.ip}</strong
-								>{activeScenario ? ' simulated' : ' focus'}</span
+								> focus</span
 							>
 						{/if}
-					</div>
-					{#if cloudStatus.authenticated}
-						<PerspectiveBar
-							bind:perspective={policyPerspective}
-							{devices}
-							{policyMap}
-							bind:graphViewMode={policyGraphViewMode}
-							bind:graphMode
-							bind:showGhostEdges
-							hasDraft={Boolean(draftHuJSON)}
-							hasPerspectivePreview={Boolean(
-								activePerspectiveEvaluation || (activePerspective && activeDraftEvaluation)
-							)}
-							sourceCount={scenarioSourceCount}
-							reachableCount={perspectiveReachableCount}
-							scenarioActive={activeScenario}
-							busy={editBusy}
-							onApply={simulatePerspective}
-							onClear={clearPerspective}
-						/>
-					{/if}
-					<div
-						class="absolute top-3 right-3 z-[2] flex gap-[0.35rem] rounded-lg border border-graph-border bg-graph-hud-bg p-[0.35rem] shadow-[0_8px_22px_rgb(23_33_38/8%)]"
-						aria-label="Graph controls"
-					>
+						{#if cloudStatus.authenticated}
+							<div class="mode-toggle">
+								{#each ['focused', 'all'] as mode (mode)}
+									<button
+										type="button"
+										class="mode-button"
+										data-active={graphMode === mode}
+										onclick={() => (graphMode = mode as 'focused' | 'all')}
+									>
+										{mode === 'focused' ? 'Focused' : 'All'}
+									</button>
+								{/each}
+							</div>
+						{/if}
 						<button
 							type="button"
 							title="Zoom in"
 							onclick={() => graphAPI?.zoom(1.2)}
-							class="grid h-[2.1rem] w-[2.1rem] min-w-[2.1rem] place-items-center rounded-md border border-panel-border bg-panel-weak leading-none font-extrabold text-primary transition-[background-color,border-color,transform] duration-[160ms] ease-out hover:-translate-y-px hover:border-teal hover:bg-hover motion-reduce:transition-none motion-reduce:hover:transform-none"
-							>+</button
+							class="graph-control">+</button
 						>
 						<button
 							type="button"
 							title="Zoom out"
 							onclick={() => graphAPI?.zoom(0.8)}
-							class="grid h-[2.1rem] w-[2.1rem] min-w-[2.1rem] place-items-center rounded-md border border-panel-border bg-panel-weak leading-none font-extrabold text-primary transition-[background-color,border-color,transform] duration-[160ms] ease-out hover:-translate-y-px hover:border-teal hover:bg-hover motion-reduce:transition-none motion-reduce:hover:transform-none"
-							>-</button
+							class="graph-control">-</button
 						>
 						<button
 							type="button"
 							title="Fit to view"
 							onclick={() => graphAPI?.fit()}
-							class="grid h-[2.1rem] w-[2.1rem] min-w-[2.1rem] place-items-center rounded-md border border-panel-border bg-panel-weak leading-none font-extrabold text-primary transition-[background-color,border-color,transform] duration-[160ms] ease-out hover:-translate-y-px hover:border-teal hover:bg-hover motion-reduce:transition-none motion-reduce:hover:transform-none"
-							>⌖</button
+							class="graph-control">⌖</button
 						>
 						<button
 							type="button"
 							title="Reflow layout"
 							onclick={() => graphAPI?.reflow()}
-							class="grid h-[2.1rem] w-[2.1rem] min-w-[2.1rem] place-items-center rounded-md border border-panel-border bg-panel-weak leading-none font-extrabold text-primary transition-[background-color,border-color,transform] duration-[160ms] ease-out hover:-translate-y-px hover:border-teal hover:bg-hover motion-reduce:transition-none motion-reduce:hover:transform-none"
-							>↻</button
+							class="graph-control">↻</button
 						>
 					</div>
 
@@ -881,86 +535,54 @@
 						{cloudStatus}
 						{colorBy}
 						rootDevice={graphRootDevice}
-						scenarioSourceIds={scenarioSourceIDs}
 						onReady={(api) => (graphAPI = api)}
 					/>
 
 					<GraphLegend
 						{colorBy}
 						authenticated={cloudStatus.authenticated}
-						{graphMode}
+						bind:graphMode
 						{tagOptions}
 						{ownerOptions}
 						{osOptions}
 					/>
 
 					{#if localApiError}
-						<div
-							class="absolute top-1/2 left-1/2 w-[min(28rem,calc(100%-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-lg border border-base bg-surface p-4 shadow-[0_10px_30px_rgb(23_33_38/8%)]"
-						>
+						<div class="local-api-error">
 							<h2 class="mb-[0.4rem] text-base">Connect to Tailscale</h2>
 							<p class="mb-0 wrap-anywhere">{localApiErrorMessage(localApiError)}</p>
 						</div>
 					{/if}
 
-					<RawPolicyPanel
-						bind:open={rawPolicyOpen}
+					{#if cloudError}
+						<div class="cloud-error" role="alert">{cloudError}</div>
+					{/if}
+
+					<PolicyEditorPanel
+						bind:open={editorOpen}
 						{policy}
-						{draftHuJSON}
-						onClose={() => (rawPolicyOpen = false)}
-					/>
-					<DraftTray
-						{draftEvaluation}
-						{draftRuleText}
-						{draftChanges}
-						{draftDiffLines}
-						{draftValid}
-						{editBusy}
-						{editStatus}
-						onValidate={validateDraft}
-						onSave={saveDraft}
-						onDiscard={discardDraft}
-						onOpenAdvanced={openRawPolicy}
-						onOpenWorkbench={() => openWorkbench()}
+						bind:editorText={editorHuJSON}
+						isDirty={editorDirty}
+						valid={editorValid}
+						busy={editorBusy}
+						status={editorStatus}
+						errors={editorErrors}
+						onValidate={validateEditor}
+						onSave={saveEditorPolicy}
+						onDiscard={discardEditorChanges}
+						onClose={closePolicyEditor}
 					/>
 				</section>
 
-				<PolicyWorkbench
-					bind:open={workbenchOpen}
-					bind:route={workbenchRoute}
-					{policy}
-					{policyMap}
-					bind:search={policySearch}
-					{draftHuJSON}
-					scenarioSource={activePerspective}
-					bind:editSeed
-					{editBusy}
-					{activeScenarioLabel}
-					onClose={closeWorkbench}
-					onMutate={applyDraftMutation}
-					onViewAs={(selector) => void applyPerspectiveFromSelector(selector)}
+				<SidebarRight
+					bind:open={rightOpen}
+					bind:selectedDevice
+					bind:selectedEdge
+					{devices}
+					{visibleEdges}
+					{colorBy}
 				/>
 			</div>
-
-			<SidebarRight
-				bind:open={rightOpen}
-				bind:selectedDevice
-				bind:selectedEdge
-				{devices}
-				{visibleEdges}
-				{colorBy}
-				{activePerspective}
-				graphViewMode={policyGraphViewMode}
-				draftEvaluation={activePolicyEvaluation}
-				{policyMap}
-				onSeedSource={() => seedBuilder('source')}
-				onSeedDestination={() => seedBuilder('destination')}
-				onOpenPolicy={openPolicyFromLens}
-				onOpenPolicySection={(section) => openPolicyFromLens(section)}
-				scenarioSourceIds={scenarioSourceIDs}
-				onViewAsOwner={(owner) => void applyPerspectiveFromSelector(owner)}
-				onViewAsTag={(tag) => void applyPerspectiveFromSelector(tag)}
-			/>
 		</div>
 	</section>
 
@@ -979,7 +601,37 @@
 	.btn-primary {
 		@apply min-h-[2.35rem] rounded-md border border-panel-accent bg-panel-accent px-3 py-[0.45rem] text-sm font-extrabold text-panel-fg transition-[background-color,border-color,color,transform] duration-[160ms] ease-out hover:-translate-y-px disabled:transform-none disabled:cursor-not-allowed disabled:opacity-[0.58];
 	}
-	.btn-secondary {
-		@apply min-h-[2.35rem] rounded-md border border-panel-border bg-panel-weak px-3 py-[0.45rem] text-sm font-extrabold text-primary transition-[background-color,border-color,color,transform] duration-[160ms] ease-out hover:-translate-y-px disabled:transform-none disabled:cursor-not-allowed disabled:opacity-[0.58];
+	.btn-save {
+		@apply min-h-[2.35rem] rounded-md border border-ok bg-ok/10 px-3 py-[0.45rem] text-sm font-extrabold text-ok transition-[background-color,border-color,color,transform] duration-[160ms] ease-out hover:-translate-y-px hover:bg-ok/15 disabled:transform-none disabled:cursor-not-allowed disabled:opacity-[0.58];
+	}
+	.graph-hud {
+		@apply absolute top-3 left-3 z-[2] flex w-fit max-w-[calc(100%-1.5rem)] flex-wrap items-center gap-[0.4rem] rounded-lg border border-graph-border bg-graph-hud-bg p-[0.35rem] shadow-[0_10px_26px_rgb(23_33_38/8%)];
+	}
+	.hud-chip {
+		@apply inline-flex min-h-8 items-baseline gap-[0.3rem] rounded-md bg-graph-dot px-[0.55rem] py-[0.35rem] text-[0.78rem] font-bold whitespace-nowrap text-secondary;
+	}
+	.hud-chip-strong {
+		@apply text-[0.98rem] leading-none text-graph-hud-strong;
+	}
+	.hud-chip-warn {
+		@apply items-center text-warn;
+	}
+	.mode-toggle {
+		@apply inline-flex rounded-md border border-panel-border bg-panel-input p-[0.12rem];
+	}
+	.mode-button {
+		@apply rounded-sm border-0 bg-transparent px-2 py-[0.28rem] text-[0.72rem] font-extrabold text-secondary transition-[background-color,color] duration-[140ms] ease-out;
+	}
+	.mode-button[data-active='true'] {
+		@apply bg-hover text-primary;
+	}
+	.graph-control {
+		@apply grid h-[2.1rem] w-[2.1rem] min-w-[2.1rem] place-items-center rounded-md border border-panel-border bg-panel-weak leading-none font-extrabold text-primary transition-[background-color,border-color,transform] duration-[160ms] ease-out hover:-translate-y-px hover:border-teal hover:bg-hover motion-reduce:transition-none motion-reduce:hover:transform-none;
+	}
+	.local-api-error {
+		@apply absolute top-1/2 left-1/2 w-[min(28rem,calc(100%-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-lg border border-base bg-surface p-4 shadow-[0_10px_30px_rgb(23_33_38/8%)];
+	}
+	.cloud-error {
+		@apply absolute bottom-3 left-1/2 z-[4] max-w-[min(36rem,calc(100%-2rem))] -translate-x-1/2 rounded-lg border border-danger/30 bg-panel-bg px-3 py-2 text-[0.78rem] font-semibold text-danger shadow-[0_10px_26px_rgb(23_33_38/8%)];
 	}
 </style>

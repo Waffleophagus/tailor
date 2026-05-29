@@ -1,22 +1,16 @@
 import { expect, test } from '@playwright/test';
 
-import { baseURL, superUserPerspective } from './helpers/env';
+import { baseURL } from './helpers/env';
 import {
-	addGeneralAccessRule,
 	alternatePerspective,
-	clearScenario,
-	closeAccessControls,
-	discardDraft,
-	graphDebugCounts,
+	chooseDevice,
+	closePolicyEditor,
+	discardPolicyEditor,
 	graphSummaryLinkCount,
+	openPolicyEditor,
 	requireAclEditing,
-	scenarioBar,
-	scenarioDiffButton,
-	scenarioDraftButton,
-	simulateAsDeviceOwner,
-	simulatePerspective,
 	testDestination,
-	validateDraft
+	validatePolicyEditor
 } from './helpers/tailor';
 
 test.describe.configure({ mode: 'serial' });
@@ -36,13 +30,12 @@ test.beforeAll(async ({ request }) => {
 
 test.beforeEach(async ({ page }) => {
 	await requireAclEditing(page);
-	await discardDraft(page);
-	await clearScenario(page);
+	await discardPolicyEditor(page);
 });
 
 test.afterEach(async ({ page }) => {
-	await discardDraft(page);
-	await clearScenario(page);
+	await discardPolicyEditor(page);
+	await closePolicyEditor(page).catch(() => {});
 });
 
 test('loads topology and policy for an authenticated tailnet', async ({ request, page }) => {
@@ -59,40 +52,25 @@ test('loads topology and policy for an authenticated tailnet', async ({ request,
 
 	await page.goto('/');
 	await expect(page.getByRole('region', { name: 'Topology graph' })).toBeVisible();
-	await expect(page.getByRole('button', { name: 'Access controls' })).toBeVisible();
+	await expect(page.getByRole('button', { name: 'Edit policy' })).toBeVisible();
 });
 
-test('policy workbench stages an ACL mutation and evaluates draft impact', async ({ page }) => {
-	await addGeneralAccessRule(page, {
-		sources: alternatePerspective,
-		destinations: testDestination,
-		port: '443'
-	});
-
-	await expect(page.getByText('General access rules — ACL rule added')).toBeVisible();
-	await expect(scenarioDraftButton(page)).toBeEnabled();
-
-	await simulatePerspective(page, alternatePerspective);
-	await closeAccessControls(page);
-
-	const bar = scenarioBar(page);
-	await bar.getByRole('button', { name: 'Focused', exact: true }).click();
-	const ghostToggle = bar.getByRole('checkbox', { name: 'Show denied links' });
-	await expect(ghostToggle).toBeVisible();
-	await ghostToggle.uncheck();
-	await ghostToggle.check();
-	await bar.getByRole('button', { name: 'All connections', exact: true }).click();
-	await expect(ghostToggle).toBeHidden();
-
-	await scenarioDraftButton(page).click();
-	await scenarioDiffButton(page).click();
-
-	await expect(
-		page
-			.getByRole('region', { name: 'Staged policy change' })
-			.getByText(/Draft impact:|Impact preview unavailable/)
-	).toBeVisible({ timeout: 60_000 });
-	await validateDraft(page);
+test('policy editor validates HuJSON and shows graph preview', async ({ page }) => {
+	await openPolicyEditor(page);
+	const editor = page.getByRole('complementary', { name: 'Policy editor' });
+	const textarea = editor.getByRole('textbox', { name: 'Policy HuJSON' });
+	const current = await textarea.inputValue();
+	const marker = `"tailor-e2e-marker-${Date.now()}"`;
+	await textarea.fill(`${current}\n// ${marker}\n`);
+	await validatePolicyEditor(page);
+	await expect(page.getByLabel('Graph summary')).toContainText('Preview');
+	await closePolicyEditor(page);
+	await expect(page.getByRole('button', { name: 'Save validated policy' })).toBeVisible();
+	await expect(page.getByLabel('Graph summary')).toContainText('Preview');
+	await openPolicyEditor(page);
+	await editor.getByRole('button', { name: 'Discard', exact: true }).click();
+	await expect(page.getByRole('button', { name: 'Save validated policy' })).toBeHidden();
+	await expect(page.getByLabel('Graph summary')).not.toContainText('Preview');
 });
 
 test('mutate API appends and evaluates a reversible ACL draft', async ({ request }) => {
@@ -136,80 +114,14 @@ test('mutate API appends and evaluates a reversible ACL draft', async ({ request
 	expect(validation.valid).toBe(true);
 });
 
-test('super user simulation shows full topology nodes and broad connectivity', async ({
-	request,
-	page
-}) => {
-	const health = await request.get(`${baseURL}/api/health`);
-	expect(health.ok()).toBeTruthy();
-	const meta = (await health.json()) as { build?: string };
-	test.skip(meta.build !== 'dev', 'requires tailor built with -tags dev');
-
-	const topology = await request.get(`${baseURL}/api/topology`);
-	expect(topology.ok()).toBeTruthy();
-	const topo = (await topology.json()) as { devices?: { id: string }[] };
-	const deviceCount = topo.devices?.length ?? 0;
-	expect(deviceCount).toBeGreaterThan(10);
-
-	const policyRes = await request.get(`${baseURL}/api/policy`);
-	expect(policyRes.ok()).toBeTruthy();
-	const saved = (await policyRes.json()) as { hujson: string };
-	test.skip(
-		!saved.hujson.includes('group:superuser'),
-		'requires demo tailnet seeded with group:superuser (*:*) ACL'
-	);
-
-	const evaluate = await request.post(`${baseURL}/api/policy/evaluate-draft`, {
-		data: {
-			hujson: saved.hujson,
-			perspective: superUserPerspective
-		}
-	});
-	expect(evaluate.ok()).toBeTruthy();
-	const impact = (await evaluate.json()) as {
-		added?: unknown[];
-		unchanged?: unknown[];
-		visibleDeviceIds?: string[];
-		unresolvedSelectors?: unknown[];
-		unsupportedSections?: unknown[];
-	};
-	expect(Array.isArray(impact.unresolvedSelectors)).toBe(true);
-	expect(Array.isArray(impact.unsupportedSections)).toBe(true);
-	const superEdgeCount = (impact.added?.length ?? 0) + (impact.unchanged?.length ?? 0);
-	const superVisibleCount = impact.visibleDeviceIds?.length ?? 0;
-	expect(superEdgeCount).toBeGreaterThan(deviceCount - 4);
-	expect(superVisibleCount).toBeGreaterThan(deviceCount - 2);
-
-	await simulateAsDeviceOwner(page, 'superadmin-console');
-
-	await expect
-		.poll(async () => graphDebugCounts(page), { timeout: 60_000 })
-		.toMatchObject({ nodes: superVisibleCount });
-
+test('focused device view shows policy links for the selected node', async ({ page }) => {
+	await chooseDevice(page, 'alice-laptop');
 	const focusedLinks = await graphSummaryLinkCount(page);
-	expect(focusedLinks).toBeGreaterThan(8);
+	expect(focusedLinks).toBeGreaterThan(0);
 
-	await scenarioBar(page).getByRole('button', { name: 'All connections', exact: true }).click();
-	await expect
-		.poll(async () => graphSummaryLinkCount(page), { timeout: 15_000 })
-		.toBeGreaterThanOrEqual(focusedLinks);
-
-	const aliceEvaluate = await request.post(`${baseURL}/api/policy/evaluate-draft`, {
-		data: {
-			hujson: saved.hujson,
-			perspective: alternatePerspective
-		}
-	});
-	expect(aliceEvaluate.ok()).toBeTruthy();
-	const aliceImpact = (await aliceEvaluate.json()) as {
-		added?: unknown[];
-		unchanged?: unknown[];
-		visibleDeviceIds?: string[];
-	};
-	const aliceEdgeCount = (aliceImpact.added?.length ?? 0) + (aliceImpact.unchanged?.length ?? 0);
-	const aliceVisibleCount = aliceImpact.visibleDeviceIds?.length ?? 0;
-	expect(superEdgeCount).toBeGreaterThan(aliceEdgeCount);
-	expect(superVisibleCount).toBeGreaterThan(aliceVisibleCount);
+	await page.getByLabel('Graph summary').getByRole('button', { name: 'All', exact: true }).click();
+	const allLinks = await graphSummaryLinkCount(page);
+	expect(allLinks).toBeGreaterThanOrEqual(focusedLinks);
 });
 
 test('dev spawn endpoint adds devices to the demo tailnet', async ({ request }) => {
