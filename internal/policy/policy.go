@@ -104,11 +104,106 @@ func EvaluateDraft(savedRaw, draftRaw string, devices []api.Device, options Edge
 	savedEdges := ResolveEffectiveAccess(savedPolicy, devices, options)
 	draftEdges := ResolveEffectiveAccess(draftPolicy, devices, options)
 	response := compareEdges(savedEdges, draftEdges)
-	response.BroadAccess = broadEdges(draftEdges)
-	response.UnresolvedSelectors = unresolvedSelectors(draftPolicy, devices)
-	response.UnsupportedSections = unsupportedSections(draftRaw)
-	response.ApplicationGrants = applicationGrants(draftPolicy)
+	response.BroadAccess = nonNilEdges(broadEdges(draftEdges))
+	response.VisibleDeviceIDs = VisibleDeviceIDs(draftPolicy, devices, options.Perspective)
+	response.UnresolvedSelectors = nonNilUnresolved(unresolvedSelectors(draftPolicy, devices))
+	response.UnsupportedSections = nonNilStrings(unsupportedSections(draftRaw))
+	response.ApplicationGrants = nonNilApplicationGrants(applicationGrants(draftPolicy))
 	return response, nil
+}
+
+// VisibleDeviceIDs returns device IDs in a perspective's trimmed netmap.
+// See https://tailscale.com/docs/concepts/device-visibility
+func VisibleDeviceIDs(p Policy, devices []api.Device, perspective string) []string {
+	perspective = strings.TrimSpace(perspective)
+	if perspective == "" {
+		return allDeviceIDs(devices)
+	}
+
+	sourceDevices := devicesForPerspective(perspective, p, devices)
+	sourceIDs := map[string]bool{}
+	owners := map[string]bool{}
+	visible := map[string]bool{}
+	for _, device := range sourceDevices {
+		if device.ID == "" {
+			continue
+		}
+		sourceIDs[device.ID] = true
+		visible[device.ID] = true
+		if device.Owner != "" {
+			owners[device.Owner] = true
+		}
+	}
+
+	for _, device := range devices {
+		if device.ID == "" || device.Owner == "" {
+			continue
+		}
+		if owners[device.Owner] {
+			visible[device.ID] = true
+		}
+	}
+
+	for _, edge := range ResolveEffectiveAccess(p, devices, EdgeOptions{}) {
+		if !sourceIDs[edge.From] && !sourceIDs[edge.To] {
+			continue
+		}
+		if edge.From != "" {
+			visible[edge.From] = true
+		}
+		if edge.To != "" {
+			visible[edge.To] = true
+		}
+	}
+
+	return sortedDeviceIDs(visible)
+}
+
+func allDeviceIDs(devices []api.Device) []string {
+	visible := map[string]bool{}
+	for _, device := range devices {
+		if device.ID != "" {
+			visible[device.ID] = true
+		}
+	}
+	return sortedDeviceIDs(visible)
+}
+
+func sortedDeviceIDs(ids map[string]bool) []string {
+	out := make([]string, 0, len(ids))
+	for id := range ids {
+		out = append(out, id)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func nonNilEdges(edges []api.Edge) []api.Edge {
+	if edges == nil {
+		return []api.Edge{}
+	}
+	return edges
+}
+
+func nonNilStrings(values []string) []string {
+	if values == nil {
+		return []string{}
+	}
+	return values
+}
+
+func nonNilUnresolved(values []api.UnresolvedSelector) []api.UnresolvedSelector {
+	if values == nil {
+		return []api.UnresolvedSelector{}
+	}
+	return values
+}
+
+func nonNilApplicationGrants(values []api.ApplicationGrant) []api.ApplicationGrant {
+	if values == nil {
+		return []api.ApplicationGrant{}
+	}
+	return values
 }
 
 func StructuredMap(raw string) (api.PolicyMapResponse, error) {
@@ -375,10 +470,11 @@ func grantIPScopes(values []string) []grantIPScope {
 
 func compareEdges(savedEdges, draftEdges []api.Edge) api.PolicyEvaluateDraftResponse {
 	response := api.PolicyEvaluateDraftResponse{
-		Added:     []api.PolicyEdgeChange{},
-		Removed:   []api.PolicyEdgeChange{},
-		Unchanged: []api.PolicyEdgeChange{},
-		Changed:   []api.PolicyEdgeChange{},
+		Added:            []api.PolicyEdgeChange{},
+		Removed:          []api.PolicyEdgeChange{},
+		Unchanged:        []api.PolicyEdgeChange{},
+		Changed:          []api.PolicyEdgeChange{},
+		VisibleDeviceIDs: []string{},
 	}
 	savedByPair := map[string]api.Edge{}
 	draftByPair := map[string]api.Edge{}

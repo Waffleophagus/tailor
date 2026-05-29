@@ -1,16 +1,19 @@
 import { expect, test } from '@playwright/test';
 
-import { baseURL } from './helpers/env';
+import { baseURL, superUserPerspective } from './helpers/env';
 import {
 	addGeneralAccessRule,
 	alternatePerspective,
 	clearScenario,
 	closeAccessControls,
 	discardDraft,
+	graphDebugCounts,
+	graphSummaryLinkCount,
 	requireAclEditing,
 	scenarioBar,
 	scenarioDiffButton,
 	scenarioDraftButton,
+	simulateAsDeviceOwner,
 	simulatePerspective,
 	testDestination,
 	validateDraft
@@ -131,4 +134,100 @@ test('mutate API appends and evaluates a reversible ACL draft', async ({ request
 	expect(validate.ok()).toBeTruthy();
 	const validation = (await validate.json()) as { valid?: boolean };
 	expect(validation.valid).toBe(true);
+});
+
+test('super user simulation shows full topology nodes and broad connectivity', async ({
+	request,
+	page
+}) => {
+	const health = await request.get(`${baseURL}/api/health`);
+	expect(health.ok()).toBeTruthy();
+	const meta = (await health.json()) as { build?: string };
+	test.skip(meta.build !== 'dev', 'requires tailor built with -tags dev');
+
+	const topology = await request.get(`${baseURL}/api/topology`);
+	expect(topology.ok()).toBeTruthy();
+	const topo = (await topology.json()) as { devices?: { id: string }[] };
+	const deviceCount = topo.devices?.length ?? 0;
+	expect(deviceCount).toBeGreaterThan(10);
+
+	const policyRes = await request.get(`${baseURL}/api/policy`);
+	expect(policyRes.ok()).toBeTruthy();
+	const saved = (await policyRes.json()) as { hujson: string };
+	test.skip(
+		!saved.hujson.includes('group:superuser'),
+		'requires demo tailnet seeded with group:superuser (*:*) ACL'
+	);
+
+	const evaluate = await request.post(`${baseURL}/api/policy/evaluate-draft`, {
+		data: {
+			hujson: saved.hujson,
+			perspective: superUserPerspective
+		}
+	});
+	expect(evaluate.ok()).toBeTruthy();
+	const impact = (await evaluate.json()) as {
+		added?: unknown[];
+		unchanged?: unknown[];
+		visibleDeviceIds?: string[];
+		unresolvedSelectors?: unknown[];
+		unsupportedSections?: unknown[];
+	};
+	expect(Array.isArray(impact.unresolvedSelectors)).toBe(true);
+	expect(Array.isArray(impact.unsupportedSections)).toBe(true);
+	const superEdgeCount = (impact.added?.length ?? 0) + (impact.unchanged?.length ?? 0);
+	const superVisibleCount = impact.visibleDeviceIds?.length ?? 0;
+	expect(superEdgeCount).toBeGreaterThan(deviceCount - 4);
+	expect(superVisibleCount).toBeGreaterThan(deviceCount - 2);
+
+	await simulateAsDeviceOwner(page, 'superadmin-console');
+
+	await expect
+		.poll(async () => graphDebugCounts(page), { timeout: 60_000 })
+		.toMatchObject({ nodes: superVisibleCount });
+
+	const focusedLinks = await graphSummaryLinkCount(page);
+	expect(focusedLinks).toBeGreaterThan(8);
+
+	await scenarioBar(page).getByRole('button', { name: 'All connections', exact: true }).click();
+	await expect
+		.poll(async () => graphSummaryLinkCount(page), { timeout: 15_000 })
+		.toBeGreaterThanOrEqual(focusedLinks);
+
+	const aliceEvaluate = await request.post(`${baseURL}/api/policy/evaluate-draft`, {
+		data: {
+			hujson: saved.hujson,
+			perspective: alternatePerspective
+		}
+	});
+	expect(aliceEvaluate.ok()).toBeTruthy();
+	const aliceImpact = (await aliceEvaluate.json()) as {
+		added?: unknown[];
+		unchanged?: unknown[];
+		visibleDeviceIds?: string[];
+	};
+	const aliceEdgeCount = (aliceImpact.added?.length ?? 0) + (aliceImpact.unchanged?.length ?? 0);
+	const aliceVisibleCount = aliceImpact.visibleDeviceIds?.length ?? 0;
+	expect(superEdgeCount).toBeGreaterThan(aliceEdgeCount);
+	expect(superVisibleCount).toBeGreaterThan(aliceVisibleCount);
+});
+
+test('dev spawn endpoint adds devices to the demo tailnet', async ({ request }) => {
+	const health = await request.get(`${baseURL}/api/health`);
+	expect(health.ok()).toBeTruthy();
+	const meta = (await health.json()) as { build?: string };
+	test.skip(meta.build !== 'dev', 'requires tailor built with -tags dev');
+
+	const before = await request.get(`${baseURL}/api/topology`);
+	expect(before.ok()).toBeTruthy();
+	const initial = (await before.json()) as { devices?: unknown[] };
+	const initialCount = initial.devices?.length ?? 0;
+
+	const spawn = await request.post(`${baseURL}/api/dev/spawn-devices`, {
+		data: { count: 4, prefix: 'playwright' }
+	});
+	expect(spawn.ok()).toBeTruthy();
+	const body = (await spawn.json()) as { spawned?: unknown[]; devices?: unknown[] };
+	expect(body.spawned?.length).toBe(4);
+	expect(body.devices?.length).toBe(initialCount + 4);
 });

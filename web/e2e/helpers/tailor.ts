@@ -1,6 +1,11 @@
 import { expect, type Locator, type Page } from '@playwright/test';
 
-import { alternatePerspective, defaultPerspective, testDestination } from './env';
+import {
+	alternatePerspective,
+	defaultPerspective,
+	superUserPerspective,
+	testDestination
+} from './env';
 
 function scenarioBar(page: Page | Locator): Locator {
 	return page.getByLabel('Policy scenario');
@@ -60,11 +65,24 @@ export async function addGeneralAccessRule(
 export async function simulatePerspective(page: Page, perspective: string = defaultPerspective) {
 	const bar = scenarioBar(page);
 	const input = bar.getByRole('combobox', { name: 'Viewing as' });
-	await input.fill(perspective);
-	await input.press('Enter');
 	const simulate = bar.getByRole('button', { name: 'Simulate' });
-	await expect(simulate).toBeEnabled();
+	await input.click();
+	await input.fill(perspective);
+	await expect(simulate).toBeEnabled({ timeout: 15_000 });
 	await simulate.click();
+	await expect
+		.poll(async () => (await page.getByLabel('Graph summary').innerText()).toLowerCase(), {
+			timeout: 60_000
+		})
+		.toContain('simulated');
+}
+
+export async function simulateAsDeviceOwner(page: Page, deviceName: string) {
+	await page
+		.getByRole('listitem')
+		.filter({ has: page.getByRole('button', { name: deviceName, exact: true }) })
+		.getByRole('button', { name: 'View as' })
+		.click();
 	await expect
 		.poll(async () => (await page.getByLabel('Graph summary').innerText()).toLowerCase(), {
 			timeout: 60_000
@@ -113,4 +131,20 @@ export async function graphDebugSnapshot(page: Page): Promise<PlaywrightGraphDeb
 	});
 }
 
-export { alternatePerspective, defaultPerspective, testDestination };
+export async function graphSummaryLinkCount(page: Page): Promise<number> {
+	const text = await page.getByLabel('Graph summary').innerText();
+	const match = text.match(/(\d+)\s+links/i);
+	return match ? Number.parseInt(match[1], 10) : 0;
+}
+
+export async function graphDebugCounts(page: Page): Promise<{ nodes: number; edges: number }> {
+	return page.evaluate(() => {
+		const snapshot = window.__tailorGraphDebug?.();
+		return {
+			nodes: snapshot?.nodes?.length ?? 0,
+			edges: snapshot?.edges?.length ?? 0
+		};
+	});
+}
+
+export { alternatePerspective, defaultPerspective, superUserPerspective, testDestination };

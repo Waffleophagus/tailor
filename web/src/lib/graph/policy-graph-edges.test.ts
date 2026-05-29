@@ -38,6 +38,7 @@ describe('evaluationEdges', () => {
 		],
 		unchanged: [{ edge: sampleEdge({ id: 'same' }), state: 'unchanged' as const }],
 		broadAccess: [],
+		visibleDeviceIds: [],
 		unresolvedSelectors: [],
 		unsupportedSections: [],
 		applicationGrants: []

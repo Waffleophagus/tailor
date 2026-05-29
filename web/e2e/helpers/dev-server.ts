@@ -4,7 +4,6 @@ import { fileURLToPath } from 'node:url';
 import type { PlaywrightTestConfig } from '@playwright/test';
 
 const webRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
-export const repoRoot = path.resolve(webRoot, '..');
 
 export const tailorPort = process.env.TAILOR_E2E_TAILOR_PORT ?? '8080';
 export const tailorHealthURL =
@@ -19,9 +18,8 @@ function asWebServers(config: WebServerConfig): WebServerConfig {
 /** Build and run the Go backend for E2E when nothing is listening yet. */
 export function tailorWebServer(reuseExistingServer: boolean): WebServerConfig {
 	return {
-		command:
-			'mkdir -p web/.cache && go build -o web/.cache/tailor-e2e ./cmd/tailor && web/.cache/tailor-e2e',
-		cwd: repoRoot,
+		command: 'pnpm backend:e2e',
+		cwd: webRoot,
 		url: tailorHealthURL,
 		reuseExistingServer,
 		timeout: 120_000,

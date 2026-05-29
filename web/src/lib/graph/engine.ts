@@ -174,23 +174,8 @@ export function createEngine(opts: GraphInitOptions) {
 		return current.rootDevice;
 	}
 
-	function visibleDeviceIDs() {
-		return new Set(current.visibleDevices.map((d) => d.id));
-	}
-
-	function devicesForGraph() {
-		const { cloudStatus, graphMode, edges: allEdges, visibleDevices } = current;
-		if (!cloudStatus.authenticated || graphMode === 'all' || allEdges.length === 0) {
-			return visibleDevices;
-		}
-		const ids = new Set<string>();
-		const root = graphRootDevice();
-		if (root?.id && visibleDeviceIDs().has(root.id)) ids.add(root.id);
-		for (const edge of current.visibleEdges) {
-			ids.add(edge.from);
-			ids.add(edge.to);
-		}
-		return visibleDevices.filter((d) => ids.has(d.id));
+	function graphDevices() {
+		return current.visibleDevices;
 	}
 
 	function edgeClassesFor(edge: RenderEdge) {
@@ -342,10 +327,6 @@ export function createEngine(opts: GraphInitOptions) {
 			container.clientWidth ?? 0,
 			container.clientHeight ?? 0
 		].join('|');
-	}
-
-	function graphDevices() {
-		return devicesForGraph();
 	}
 
 	function prefersReducedMotion() {

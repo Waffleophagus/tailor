@@ -219,6 +219,46 @@ func TestAppendACLRulePreservesExistingHuJSONAndAppendsRule(t *testing.T) {
 	}
 }
 
+func TestVisibleDeviceIDsTrimsNetmapByEffectiveAccess(t *testing.T) {
+	p, err := Parse(`{
+		"groups": {
+			"group:eng": ["alice@example.com"]
+		},
+		"acls": [
+			{"action": "accept", "src": ["alice@example.com"], "dst": ["tag:web:443"]},
+			{"action": "accept", "src": ["bob@example.com"], "dst": ["tag:db:22"]}
+		]
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	devices := []api.Device{
+		{ID: "alice-laptop", Owner: "alice@example.com"},
+		{ID: "alice-phone", Owner: "alice@example.com"},
+		{ID: "bob-laptop", Owner: "bob@example.com"},
+		{ID: "web", Owner: "ops@example.com", Tags: []string{"tag:web"}},
+		{ID: "db", Owner: "ops@example.com", Tags: []string{"tag:db"}},
+		{ID: "secret", Owner: "ops@example.com", Tags: []string{"tag:secret"}},
+	}
+
+	aliceVisible := VisibleDeviceIDs(p, devices, "alice@example.com")
+	aliceSet := map[string]bool{}
+	for _, id := range aliceVisible {
+		aliceSet[id] = true
+	}
+	if !aliceSet["alice-laptop"] || !aliceSet["alice-phone"] || !aliceSet["web"] {
+		t.Fatalf("alice netmap = %#v, want alice devices and web", aliceVisible)
+	}
+	if aliceSet["secret"] {
+		t.Fatalf("alice should not see unrelated secret host: %#v", aliceVisible)
+	}
+
+	allVisible := VisibleDeviceIDs(p, devices, "")
+	if len(allVisible) != len(devices) {
+		t.Fatalf("empty perspective should show all devices, got %d want %d", len(allVisible), len(devices))
+	}
+}
+
 func TestEvaluateDraftComparesAccessAndReportsRisk(t *testing.T) {
 	saved := `{
 		"acls": [
@@ -275,6 +315,9 @@ func TestEvaluateDraftComparesAccessAndReportsRisk(t *testing.T) {
 	}
 	if evaluation.ApplicationGrants[0].Capabilities[0] != "tailscale.com/cap/file-sharing" {
 		t.Fatalf("application grant capabilities = %#v", evaluation.ApplicationGrants[0].Capabilities)
+	}
+	if evaluation.UnresolvedSelectors == nil || evaluation.UnsupportedSections == nil {
+		t.Fatal("evaluate-draft should return empty slices, not nil")
 	}
 }
 

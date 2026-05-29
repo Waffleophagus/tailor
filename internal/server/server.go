@@ -54,6 +54,7 @@ func New(options ...Options) http.Handler {
 	mux.HandleFunc("POST /api/policy/evaluate-draft", server.handlePolicyEvaluateDraft)
 	mux.HandleFunc("POST /api/policy/validate", server.handlePolicyValidate)
 	mux.HandleFunc("POST /api/policy/save", server.handlePolicySave)
+	server.registerDevRoutes(mux)
 
 	spa := spaHandler(http.FileServer(frontend.FileSystem()))
 	mux.Handle("/", spa)
@@ -265,9 +266,14 @@ func (s *Server) handlePolicySave(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleHealth(w http.ResponseWriter, r *http.Request) {
+	build := "release"
+	if devtailnet.Enabled {
+		build = "dev"
+	}
 	writeJSON(w, http.StatusOK, api.HealthResponse{
 		Status:  "ok",
 		Version: "dev",
+		Build:   build,
 	})
 }
 

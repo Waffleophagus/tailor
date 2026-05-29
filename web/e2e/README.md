@@ -4,12 +4,12 @@ Playwright tests against a running Tailor dev stack. **`pnpm test:e2e` starts th
 
 ## Prerequisites
 
-1. Go toolchain (to build `./cmd/tailor`).
+1. Go toolchain (to build `./cmd/tailor` with `-tags dev`).
 2. `web/.env` with an API key (see setup below).
 
 Playwright’s `webServer` hook will:
 
-1. `go build` the backend to `web/.cache/tailor-e2e` and run it on `:8080` (unless already healthy).
+1. `go build -tags dev` the backend to `web/.cache/tailor-e2e` and run it on `:8080` (unless already healthy).
 2. Start Vite on `TAILOR_E2E_BASE_URL` (default `http://127.0.0.1:5173`) proxying `/api` to the backend.
 
 Locally, an already-running `./tailor` or `pnpm dev` is reused (`reuseExistingServer`). In CI, both are always started fresh.
@@ -31,7 +31,7 @@ The default `.env.example` uses the built-in demo key — no real Tailscale Clou
 TAILSCALE_API_KEY=tskey-api-tailor-dev
 ```
 
-The backend serves a 14-device sample fleet with varied ACL scopes, draft evaluation, and in-memory validate/save.
+The backend serves a 15-device sample fleet (including a super-admin debug user) with varied ACL scopes, draft evaluation, and in-memory validate/save.
 
 ### Real tailnet
 
@@ -46,9 +46,34 @@ Set `TAILSCALE_API_KEY=tskey-api-…` from the Tailscale admin console. Local ta
 | `TAILOR_E2E_TAILOR_PORT`     | no       | `8080`                             | Backend listen port when Playwright starts it |
 | `TAILOR_E2E_PERSPECTIVE`     | no       | `alice@demo.tailor.ts.net`         | Primary simulate subject (demo tailnet)       |
 | `TAILOR_E2E_ALT_PERSPECTIVE` | no       | `bob@demo.tailor.ts.net`           | Secondary user for draft rules                |
+| `TAILOR_E2E_SUPER_USER`      | no       | `group:superuser`                  | Broad _:_ ACL subject for graph debugging     |
+| `TAILOR_E2E_SUPER_DEVICE`    | no       | `superadmin-console`               | Demo device owned by the super-user           |
 | `TAILOR_E2E_DESTINATION`     | no       | `tag:web`                          | ACL destination selector                      |
 
 `.env` is gitignored — never commit API keys.
+
+### Dev-only spawn API
+
+When running a **dev build** (`go build -tags dev`) and authenticated with `tskey-api-tailor-dev`:
+
+```http
+POST /api/dev/spawn-devices
+Content-Type: application/json
+
+{"count": 4, "prefix": "worker", "owner": "spawn@demo.tailor.ts.net", "os": "linux", "tags": ["tag:ci"]}
+```
+
+Returns the spawned devices plus the full demo fleet. New nodes appear on the topology websocket within ~2 seconds. This route is **not compiled into production builds** (`go build` without tags → 404).
+
+Production vs dev backend builds (from `web/`):
+
+```sh
+pnpm backend:build      # release — no demo key, no /api/dev/*
+pnpm backend:build:dev  # local dev, E2E, and demo tailnet
+pnpm backend:run:dev    # run the dev binary (after build:dev)
+pnpm dev:stack          # build:dev + run:dev (backend only; pair with pnpm dev)
+pnpm dev:spawn          # spawn 10 seriously-named demo machines (dev build only)
+```
 
 ## Run
 

@@ -43,6 +43,24 @@ interface CloudAuthStatusResponse {
 }
 
 // From api/types.go
+interface DevSpawnDevicesRequest {
+    count?: number;
+    prefix?: string;
+    names?: string[];
+    owner?: string;
+    os?: string;
+    tags?: string[];
+    online?: boolean | null;
+}
+
+// From api/types.go
+interface DevSpawnDevicesResponse {
+    tailnet: string;
+    spawned: Device[];
+    devices: Device[];
+}
+
+// From api/types.go
 interface Device {
     id: string;
     name: string;
@@ -97,6 +115,7 @@ interface GrantDraft {
 interface HealthResponse {
     status: string;
     version: string;
+    build?: string;
 }
 
 // From api/types.go

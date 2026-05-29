@@ -1,11 +1,18 @@
+//go:build dev
+
 package devtailnet
 
 import (
+	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Waffleophagus/tailor/internal/api"
 )
+
+// Enabled reports whether this binary was built with the dev tag.
+const Enabled = true
 
 // APIKey unlocks an in-memory demo tailnet — no Tailscale Cloud API calls.
 const APIKey = "tskey-api-tailor-dev"
@@ -13,11 +20,133 @@ const APIKey = "tskey-api-tailor-dev"
 // Name is the tailnet identifier returned to the frontend.
 const Name = "demo.tailor.ts.net"
 
+// SuperUserEmail owns a device with *:* ACL access for graph/simulation debugging.
+const SuperUserEmail = "superadmin@demo.tailor.ts.net"
+
+var (
+	storeMu sync.RWMutex
+	store   = newStore(seedDevices())
+)
+
 func IsDevAPIKey(key string) bool {
 	return strings.TrimSpace(key) == APIKey
 }
 
 func Devices() []api.Device {
+	storeMu.RLock()
+	defer storeMu.RUnlock()
+	return cloneDevices(store.devices)
+}
+
+func Policy() string {
+	return policyHuJSON
+}
+
+func SpawnDevices(request api.DevSpawnDevicesRequest) ([]api.Device, error) {
+	names := compactStrings(request.Names)
+	count := request.Count
+	if len(names) > 0 {
+		count = len(names)
+	}
+	if count <= 0 {
+		count = 1
+	}
+	if count > 20 {
+		return nil, fmt.Errorf("spawn at most 20 devices at a time")
+	}
+
+	prefix := strings.TrimSpace(request.Prefix)
+	if prefix == "" && len(names) == 0 {
+		prefix = "worker"
+	}
+	owner := strings.TrimSpace(request.Owner)
+	if owner == "" {
+		owner = "spawn@demo.tailor.ts.net"
+	}
+	osName := strings.TrimSpace(request.OS)
+	if osName == "" {
+		osName = "linux"
+	}
+	online := true
+	if request.Online != nil {
+		online = *request.Online
+	}
+	tags := compactStrings(request.Tags)
+
+	storeMu.Lock()
+	defer storeMu.Unlock()
+
+	spawned := make([]api.Device, 0, count)
+	for i := range count {
+		store.nextSeq++
+		seq := store.nextSeq
+		ip := fmt.Sprintf("100.100.0.%d", store.nextHostOctet)
+		store.nextHostOctet++
+		if store.nextHostOctet > 250 {
+			store.nextHostOctet = 100
+		}
+
+		name := fmt.Sprintf("%s-%d", prefix, seq)
+		if len(names) > 0 {
+			name = names[i]
+		}
+
+		device := api.Device{
+			ID:            fmt.Sprintf("dev-spawn-%d", seq),
+			Name:          name,
+			IP:            ip,
+			TailscaleIPs:  []string{ip},
+			OS:            osName,
+			Online:        online,
+			Owner:         owner,
+			Tags:          tags,
+			SubnetRouter:  false,
+			RoutedSubnets: []string{},
+		}
+		if !online {
+			device.LastSeen = time.Now().Add(-30 * time.Minute).UTC().Format(time.RFC3339)
+		}
+		store.devices = append(store.devices, device)
+		spawned = append(spawned, device)
+	}
+
+	return cloneDevices(spawned), nil
+}
+
+type deviceStore struct {
+	devices        []api.Device
+	nextSeq        int
+	nextHostOctet  int
+}
+
+func newStore(devices []api.Device) *deviceStore {
+	return &deviceStore{
+		devices:       cloneDevices(devices),
+		nextHostOctet: 100,
+	}
+}
+
+func cloneDevices(devices []api.Device) []api.Device {
+	out := make([]api.Device, len(devices))
+	copy(out, devices)
+	return out
+}
+
+func compactStrings(values []string) []string {
+	out := make([]string, 0, len(values))
+	seen := map[string]bool{}
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	return out
+}
+
+func seedDevices() []api.Device {
 	lastWeek := time.Now().Add(-7 * 24 * time.Hour).UTC().Format(time.RFC3339)
 	lastHour := time.Now().Add(-1 * time.Hour).UTC().Format(time.RFC3339)
 
@@ -93,11 +222,12 @@ func Devices() []api.Device {
 			TailscaleIPs: []string{"100.100.0.60"}, OS: "macOS", Online: true,
 			Owner: "contractor@demo.tailor.ts.net", Tags: []string{"tag:contractor"}, SubnetRouter: false, RoutedSubnets: []string{},
 		},
+		{
+			ID: "dev-superadmin-console", Name: "superadmin-console", IP: "100.100.0.70",
+			TailscaleIPs: []string{"100.100.0.70"}, OS: "linux", Online: true,
+			Owner: SuperUserEmail, Tags: []string{}, SubnetRouter: false, RoutedSubnets: []string{},
+		},
 	}
-}
-
-func Policy() string {
-	return policyHuJSON
 }
 
 const policyHuJSON = `{
@@ -109,6 +239,9 @@ const policyHuJSON = `{
 		],
 		"group:ops": [
 			"ops@demo.tailor.ts.net",
+		],
+		"group:superuser": [
+			"superadmin@demo.tailor.ts.net",
 		],
 	},
 	"tagOwners": {
@@ -124,6 +257,7 @@ const policyHuJSON = `{
 		"prod-cache": "10.20.0.20",
 	},
 	"acls": [
+		{"action": "accept", "src": ["group:superuser"], "dst": ["*:*"]},
 		{"action": "accept", "src": ["group:eng"], "dst": ["tag:web:443"]},
 		{"action": "accept", "src": ["bob@demo.tailor.ts.net"], "dst": ["tag:db:22"]},
 		{"action": "accept", "src": ["tag:ci"], "dst": ["tag:web:443"]},

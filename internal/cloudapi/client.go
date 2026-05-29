@@ -104,7 +104,7 @@ func (c *Client) Authenticate(ctx context.Context, request AuthRequest) (AuthSta
 		return AuthStatus{}, errors.New("Tailscale API key must start with tskey-api-")
 	}
 
-	if devtailnet.IsDevAPIKey(request.APIKey) {
+	if devtailnet.Enabled && devtailnet.IsDevAPIKey(request.APIKey) {
 		tailnet := request.Tailnet
 		if tailnet == "" || tailnet == "-" {
 			tailnet = devtailnet.Name

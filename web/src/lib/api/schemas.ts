@@ -148,6 +148,7 @@ export const policyEvaluateDraftResponseSchema = z.object({
 	unchanged: z.array(policyEdgeChangeSchema),
 	changed: z.array(policyEdgeChangeSchema),
 	broadAccess: z.array(edgeSchema),
+	visibleDeviceIds: z.array(z.string()),
 	unresolvedSelectors: z.array(unresolvedSelectorSchema),
 	unsupportedSections: z.array(z.string()),
 	applicationGrants: z.array(applicationGrantSchema)

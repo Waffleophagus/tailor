@@ -12,8 +12,14 @@ export interface GraphDebugEdge {
 	style: ReturnType<typeof resolveEdgeStyle>;
 }
 
+export interface GraphDebugNode {
+	id: string;
+	name: string;
+}
+
 export interface GraphDebugSnapshot {
 	edges: GraphDebugEdge[];
+	nodes: GraphDebugNode[];
 }
 
 export function graphDebugSnapshot(
@@ -22,6 +28,10 @@ export function graphDebugSnapshot(
 	selectedEdgeId?: string
 ): GraphDebugSnapshot {
 	return {
+		nodes: graph.nodes().map((element) => ({
+			id: element.id(),
+			name: element.data('name') ?? element.id()
+		})),
 		edges: graph.edges().map((element) => {
 			const renderEdge = visibleEdges.find((candidate) => candidate.id === element.id());
 			const classes = renderEdge
@@ -52,7 +62,7 @@ export function installGraphDebug(
 	if (!import.meta.env.DEV) return;
 	window.__tailorGraphDebug = () => {
 		const ctx = getGraph();
-		if (!ctx?.cy) return { edges: [] };
+		if (!ctx?.cy) return { edges: [], nodes: [] };
 		return graphDebugSnapshot(ctx.cy, ctx.visibleEdges, ctx.selectedEdgeId);
 	};
 }

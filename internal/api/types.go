@@ -5,6 +5,7 @@ import "encoding/json"
 type HealthResponse struct {
 	Status  string `json:"status"`
 	Version string `json:"version"`
+	Build   string `json:"build,omitempty"`
 }
 
 type LocalAPIStatusResponse struct {
@@ -195,6 +196,7 @@ type PolicyEvaluateDraftResponse struct {
 	Unchanged           []PolicyEdgeChange   `json:"unchanged"`
 	Changed             []PolicyEdgeChange   `json:"changed"`
 	BroadAccess         []Edge               `json:"broadAccess"`
+	VisibleDeviceIDs    []string             `json:"visibleDeviceIds"`
 	UnresolvedSelectors []UnresolvedSelector `json:"unresolvedSelectors"`
 	UnsupportedSections []string             `json:"unsupportedSections"`
 	ApplicationGrants   []ApplicationGrant   `json:"applicationGrants"`
@@ -224,6 +226,22 @@ type ApplicationGrant struct {
 
 type ErrorResponse struct {
 	Error string `json:"error"`
+}
+
+type DevSpawnDevicesRequest struct {
+	Count  int      `json:"count,omitempty"`
+	Prefix string   `json:"prefix,omitempty"`
+	Names  []string `json:"names,omitempty"`
+	Owner  string   `json:"owner,omitempty"`
+	OS     string   `json:"os,omitempty"`
+	Tags   []string `json:"tags,omitempty"`
+	Online *bool    `json:"online,omitempty"`
+}
+
+type DevSpawnDevicesResponse struct {
+	Tailnet string   `json:"tailnet"`
+	Spawned []Device `json:"spawned"`
+	Devices []Device `json:"devices"`
 }
 
 type SocketMessage struct {

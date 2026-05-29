@@ -159,9 +159,16 @@
 		}
 		return rootDevice;
 	});
-	const graphVisibleDeviceIDs = $derived(new SvelteSet(visibleDevices.map((device) => device.id)));
-	const visibleEdges = $derived(graphEdges());
+	const policyVisibleDeviceIDs = $derived.by(() => {
+		if (!activeScenario) return undefined;
+		const ids = activePolicyEvaluation?.visibleDeviceIds;
+		if (ids && ids.length > 0) return new SvelteSet(ids);
+		if (subjectIDs.size > 0) return subjectIDs;
+		return undefined;
+	});
 	const graphDevices = $derived(devicesForGraph());
+	const graphVisibleDeviceIDs = $derived(new SvelteSet(graphDevices.map((device) => device.id)));
+	const visibleEdges = $derived(graphEdges());
 	const scenarioSourceCount = $derived(activeScenario ? subjectIDs.size : 0);
 	const perspectiveReachableCount = $derived(
 		activeScenario ? scenarioReachableCount(visibleEdges, subjectIDs) : 0
@@ -186,7 +193,7 @@
 				const nodeIds = focusedScenarioNodeIds(rendered, subjectIDs);
 				rendered = rendered.filter((edge) => nodeIds.has(edge.from) && nodeIds.has(edge.to));
 				if (showGhostEdges && graphMode === 'focused') {
-					rendered = [...rendered, ...ghostDeniedEdges(rendered, subjectIDs, visibleDevices)];
+					rendered = [...rendered, ...ghostDeniedEdges(rendered, subjectIDs, graphDevices)];
 				}
 				return rendered;
 			}
@@ -254,25 +261,8 @@
 	}
 
 	function devicesForGraph(): Device[] {
-		const pool = visibleDevices;
-		if (!cloudStatus.authenticated || graphMode === 'all' || edges.length === 0) {
-			return pool;
-		}
-		const ids = new Set<string>(); // eslint-disable-line svelte/prefer-svelte-reactivity
-		if (activeScenario && subjectIDs.size > 0) {
-			for (const id of subjectIDs) ids.add(id);
-			for (const edge of visibleEdges) {
-				ids.add(edge.from);
-				ids.add(edge.to);
-			}
-			return pool.filter((device) => ids.has(device.id));
-		}
-		if (graphRootDevice?.id) ids.add(graphRootDevice.id);
-		for (const edge of visibleEdges) {
-			ids.add(edge.from);
-			ids.add(edge.to);
-		}
-		return pool.filter((device) => ids.has(device.id));
+		if (!policyVisibleDeviceIDs) return visibleDevices;
+		return visibleDevices.filter((device) => policyVisibleDeviceIDs.has(device.id));
 	}
 
 	function chooseDevice(device: Device) {

@@ -18,7 +18,16 @@
 		"test": "vitest run",
 		"test:watch": "vitest",
 		"test:e2e": "playwright test",
-		"test:e2e:ui": "playwright test --ui"
+		"test:e2e:ui": "playwright test --ui",
+		"backend:build": "cd .. && go build -o web/.cache/tailor ./cmd/tailor",
+		"backend:build:dev": "cd .. && go build -tags dev -o web/.cache/tailor-e2e ./cmd/tailor",
+		"backend:run": "cd .. && ./web/.cache/tailor",
+		"backend:run:dev": "cd .. && ./web/.cache/tailor-e2e",
+		"backend:e2e": "cd .. && go build -tags dev -o web/.cache/tailor-e2e ./cmd/tailor && exec ./web/.cache/tailor-e2e",
+		"backend:test": "cd .. && go test ./...",
+		"backend:test:dev": "cd .. && go test -tags dev ./...",
+		"dev:stack": "pnpm backend:build:dev && pnpm backend:run:dev",
+		"dev:spawn": "node --experimental-strip-types scripts/dev-spawn-fleet.ts"
 	},
 	"devDependencies": {
 		"@eslint/compat": "^2.1.0",
