@@ -53,6 +53,7 @@ Prefer **grants** when access shape is app/capability-native; fall back to **ACL
 - [ ] Unsupported rule shapes show read-only JSON with link to raw HuJSON editor.
 - [ ] Can open builder pre-filled from Policy Lens / graph selection (src/dst seed).
 - [ ] Tests cover ACL generation, grant generation, port preset handling, and draft staging.
+- [ ] Posture/via fields are marked edit-only when graph preview does not honor them, and the UI shows a clear label explaining this limitation.
 
 ## Simulation tier
 

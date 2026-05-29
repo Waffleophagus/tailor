@@ -19,7 +19,7 @@ Policy editing and simulation roadmap: `.scratch/tailnet-topology-visualizer/018
 
 
 ## Rules
-When you are done modifying anything in the front end, run the following in order
+When you are done modifying anything in the front end, run the following from `web/` (or `pnpm --dir web …` from the repo root) in order
 ```
 pnpm format && pnpm lint
 ```

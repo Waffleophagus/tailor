@@ -101,6 +101,7 @@ func TestDevAPIKeyConstant(t *testing.T) {
 }
 
 func TestSpawnDevicesAppendsToStore(t *testing.T) {
+	ResetStore()
 	before := len(Devices())
 	spawned, err := SpawnDevices(api.DevSpawnDevicesRequest{Count: 4, Prefix: "burst"})
 	if err != nil {
@@ -116,6 +117,7 @@ func TestSpawnDevicesAppendsToStore(t *testing.T) {
 }
 
 func TestSpawnDevicesUsesExplicitNames(t *testing.T) {
+	ResetStore()
 	spawned, err := SpawnDevices(api.DevSpawnDevicesRequest{
 		Names: []string{"compliance-archive-primary", "audit-trail-ingest"},
 	})

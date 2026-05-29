@@ -42,6 +42,13 @@ func Policy() string {
 	return policyHuJSON
 }
 
+// ResetStore reinitializes the in-memory demo device store (for tests).
+func ResetStore() {
+	storeMu.Lock()
+	defer storeMu.Unlock()
+	store = newStore(seedDevices())
+}
+
 func SpawnDevices(request api.DevSpawnDevicesRequest) ([]api.Device, error) {
 	names := compactStrings(request.Names)
 	count := request.Count
@@ -76,15 +83,18 @@ func SpawnDevices(request api.DevSpawnDevicesRequest) ([]api.Device, error) {
 	storeMu.Lock()
 	defer storeMu.Unlock()
 
+	available := store.availableSpawnIPs()
+	if available < count {
+		return nil, fmt.Errorf("cannot spawn %d devices: only %d demo IPs available in 100.100.0.100-250", count, available)
+	}
+
 	spawned := make([]api.Device, 0, count)
 	for i := range count {
-		store.nextSeq++
-		seq := store.nextSeq
-		ip := fmt.Sprintf("100.100.0.%d", store.nextHostOctet)
-		store.nextHostOctet++
-		if store.nextHostOctet > 250 {
-			store.nextHostOctet = 100
+		ip, err := store.allocateIP()
+		if err != nil {
+			return nil, err
 		}
+		id, seq := store.allocateSpawnID()
 
 		name := fmt.Sprintf("%s-%d", prefix, seq)
 		if len(names) > 0 {
@@ -92,7 +102,7 @@ func SpawnDevices(request api.DevSpawnDevicesRequest) ([]api.Device, error) {
 		}
 
 		device := api.Device{
-			ID:            fmt.Sprintf("dev-spawn-%d", seq),
+			ID:            id,
 			Name:          name,
 			IP:            ip,
 			TailscaleIPs:  []string{ip},
@@ -130,6 +140,60 @@ func cloneDevices(devices []api.Device) []api.Device {
 	out := make([]api.Device, len(devices))
 	copy(out, devices)
 	return out
+}
+
+func (s *deviceStore) availableSpawnIPs() int {
+	used := make(map[string]bool, len(s.devices))
+	for _, d := range s.devices {
+		used[d.IP] = true
+	}
+	const minOctet, maxOctet = 100, 250
+	n := 0
+	for octet := minOctet; octet <= maxOctet; octet++ {
+		if !used[fmt.Sprintf("100.100.0.%d", octet)] {
+			n++
+		}
+	}
+	return n
+}
+
+func (s *deviceStore) allocateIP() (string, error) {
+	used := make(map[string]bool, len(s.devices))
+	for _, d := range s.devices {
+		used[d.IP] = true
+	}
+	const minOctet, maxOctet = 100, 250
+	for range maxOctet - minOctet + 1 {
+		candidate := fmt.Sprintf("100.100.0.%d", s.nextHostOctet)
+		s.nextHostOctet++
+		if s.nextHostOctet > maxOctet {
+			s.nextHostOctet = minOctet
+		}
+		if !used[candidate] {
+			return candidate, nil
+		}
+	}
+	return "", fmt.Errorf("no available IPs in 100.100.0.100-250 range")
+}
+
+func (s *deviceStore) allocateSpawnID() (id string, seq int) {
+	used := make(map[string]bool, len(s.devices))
+	maxSeq := 0
+	for _, d := range s.devices {
+		used[d.ID] = true
+		var n int
+		if _, err := fmt.Sscanf(d.ID, "dev-spawn-%d", &n); err == nil && n > maxSeq {
+			maxSeq = n
+		}
+	}
+	for {
+		maxSeq++
+		candidate := fmt.Sprintf("dev-spawn-%d", maxSeq)
+		if !used[candidate] {
+			s.nextSeq = maxSeq
+			return candidate, maxSeq
+		}
+	}
 }
 
 func compactStrings(values []string) []string {

@@ -297,7 +297,7 @@
 		@apply text-[0.78rem] font-extrabold text-teal;
 	}
 	.tag-pill {
-		@apply bg-border-light inline-flex items-center rounded-full px-[0.55rem] py-[0.25rem] text-[0.8rem] font-bold text-primary;
+		@apply inline-flex items-center rounded-full bg-light px-[0.55rem] py-[0.25rem] text-[0.8rem] font-bold text-primary;
 	}
 	.dot {
 		@apply h-[0.6rem] w-[0.6rem] shrink-0 rounded-full bg-gray;

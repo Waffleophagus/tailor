@@ -138,7 +138,7 @@
 		</div>
 	{/if}
 
-	<div class="bg-border-light my-[0.35rem] h-px"></div>
+	<div class="my-[0.35rem] h-px bg-light"></div>
 
 	<div class="flex flex-col gap-1">
 		<div class="mb-0.5 text-[0.6rem] font-extrabold tracking-widest text-legend-title uppercase">
