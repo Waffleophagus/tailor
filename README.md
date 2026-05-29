@@ -43,8 +43,6 @@ docker compose up
 
 Open [http://localhost:8080](http://localhost:8080).
 
-> **Note:** The first GHCR publish may create a private package until you set visibility to public under **Packages** → **tailor** → **Package settings** → **Change visibility** (one-time for public repos).
-
 **Embedded mode** (container runs its own `tailscaled`):
 ```yaml
 environment:
