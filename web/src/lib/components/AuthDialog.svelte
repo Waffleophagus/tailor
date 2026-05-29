@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { fromAction } from 'svelte/attachments';
+
 	type SubmitData = { tailnet: string; apiKey: string };
 
 	let {
@@ -20,11 +22,15 @@
 	let authTailnet = $state('-');
 	let authAPIKey = $state('');
 
-	$effect(() => {
-		if (open) {
-			authTailnet = initialTailnet || '-';
-		}
-	});
+	function initAuthForm(_node: HTMLFormElement, tailnet: string) {
+		authTailnet = tailnet || '-';
+		authAPIKey = '';
+		return {
+			update(nextTailnet: string) {
+				authTailnet = nextTailnet || '-';
+			}
+		};
+	}
 
 	function handleSubmit(event: SubmitEvent & { currentTarget: EventTarget & HTMLFormElement }) {
 		event.preventDefault();
@@ -63,7 +69,11 @@
 					>×</button
 				>
 			</div>
-			<form onsubmit={handleSubmit} class="flex flex-col gap-[0.8rem] p-4">
+			<form
+				{@attach fromAction(initAuthForm, () => initialTailnet)}
+				onsubmit={handleSubmit}
+				class="flex flex-col gap-[0.8rem] p-4"
+			>
 				<label class="flex flex-col gap-[0.35rem] text-[0.78rem] font-extrabold text-label">
 					<span>Tailscale API Key</span>
 					<input

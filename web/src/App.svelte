@@ -92,7 +92,13 @@
 	const osOptions = $derived(unique(devices.map((device) => device.os).filter(Boolean)));
 	const rootDevice = $derived(devices[0]);
 	const editorDirty = $derived(Boolean(policy && editorHuJSON !== policy.hujson));
-	const hasValidatedPending = $derived(editorValid === true && validatedHuJSON !== '');
+	const validationStale = $derived(validatedHuJSON !== '' && editorHuJSON !== validatedHuJSON);
+	const effectiveValid = $derived(validationStale ? null : editorValid);
+	const effectiveErrors = $derived(validationStale ? [] : editorErrors);
+	const effectivePreviewEvaluation = $derived(validationStale ? undefined : previewEvaluation);
+	const hasValidatedPending = $derived(
+		!validationStale && editorValid === true && validatedHuJSON !== ''
+	);
 	const hasPendingDraft = $derived(editorDirty || hasValidatedPending);
 	const visibleOnlineCount = $derived(visibleDevices.filter((device) => device.online).length);
 	const graphDevices = $derived(visibleDevices);
@@ -107,7 +113,7 @@
 		const policyRendered = resolveBaseGraphEdges({
 			cloudAuthenticated: cloudStatus.authenticated,
 			topologyEdges: edges,
-			previewEvaluation,
+			previewEvaluation: effectivePreviewEvaluation,
 			policyEvaluation,
 			editorOpen,
 			editorDirty,
@@ -331,16 +337,6 @@
 		return '-';
 	}
 
-	$effect(() => {
-		const text = editorHuJSON;
-		if (validatedHuJSON && text !== validatedHuJSON) {
-			validatedHuJSON = '';
-			editorValid = null;
-			editorErrors = [];
-			previewEvaluation = undefined;
-		}
-	});
-
 	onMount(async () => {
 		const health = await fetchHealth();
 		health.match({
@@ -490,7 +486,7 @@
 						<span class="hud-chip"
 							><strong class="hud-chip-strong">{visibleEdges.length}</strong> links</span
 						>
-						{#if previewEvaluation}
+						{#if effectivePreviewEvaluation}
 							<span class="hud-chip hud-chip-warn">Preview</span>
 						{/if}
 						{#if cloudStatus.authenticated && graphMode === 'focused' && graphRootDevice}
@@ -580,10 +576,10 @@
 						{policy}
 						bind:editorText={editorHuJSON}
 						isDirty={editorDirty}
-						valid={editorValid}
+						valid={effectiveValid}
 						busy={editorBusy}
 						status={editorStatus}
-						errors={editorErrors}
+						errors={effectiveErrors}
 						onValidate={validateEditor}
 						onSave={saveEditorPolicy}
 						onDiscard={discardEditorChanges}

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onDestroy } from 'svelte';
+	import type { Attachment } from 'svelte/attachments';
 	import { loadLibs, createEngine } from '../graph/engine';
 	import type { ColorBy, RenderEdge } from '../graph/engine';
 	import type { Device, Edge } from '../api/schemas';
@@ -48,9 +49,16 @@
 		}) => void;
 	} = $props();
 
-	let graphEl: HTMLDivElement;
+	let graphEl = $state<HTMLDivElement | undefined>(undefined);
 	let engine = $state<ReturnType<typeof createEngine> | undefined>(undefined);
 	let libsLoaded = $state(false);
+
+	const graphContainer: Attachment<HTMLDivElement> = (element) => {
+		graphEl = element;
+		return () => {
+			graphEl = undefined;
+		};
+	};
 
 	$effect(() => {
 		if (!graphEl || devices.length === 0 || libsLoaded) return;
@@ -58,7 +66,7 @@
 			await loadLibs();
 			libsLoaded = true;
 			engine = createEngine({
-				container: graphEl,
+				container: graphEl!,
 				devices,
 				edges,
 				visibleDevices,
@@ -106,4 +114,4 @@
 	});
 </script>
 
-<div bind:this={graphEl} class="graph-canvas"></div>
+<div {@attach graphContainer} class="graph-canvas"></div>

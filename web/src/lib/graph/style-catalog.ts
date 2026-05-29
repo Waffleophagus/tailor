@@ -163,12 +163,12 @@ export function graphEdgeStylesheet(): StylesheetJson {
 		if (rule.selector === 'edge') {
 			Object.assign(style, {
 				'control-point-distances': (ele: { data: (key: string) => unknown }) => {
-					const distances = ele.data('cpDistances') as number[] | undefined;
-					return distances ?? [40, 40];
+					const distances = (ele.data('cpDistances') as number[] | undefined) ?? [40, 40];
+					return distances.join(' ');
 				},
 				'control-point-weights': (ele: { data: (key: string) => unknown }) => {
-					const weights = ele.data('cpWeights') as number[] | undefined;
-					return weights ?? [0.25, 0.75];
+					const weights = (ele.data('cpWeights') as number[] | undefined) ?? [0.25, 0.75];
+					return weights.join(' ');
 				}
 			});
 		}

@@ -3,60 +3,43 @@
 </p>
 
 <h1 align="center">Tailor</h1>
-<p align="center"><em>The easiest way to tailor ACLs for your tailnet.</em></p>
-
-> ⚠️ **WARNING: Not Production Ready**
-> Tailor is under active development. Features, UI, and APIs may change. It's **not quite ready**. I don't really foresee massive breaking changes but still. Contributions and feedback are very welcome!
-
+<p align="center"><em>Visualize and edit your Tailscale tailnet's access controls.</em></p>
 
 
 ## What is Tailor?
 
-Tailor is a visual tool that helps you understand and manage your [Tailscale](https://tailscale.com) tailnet's Access Control Lists (ACLs). It turns your raw policy file into an interactive, explorable map of your network.
+Tailor is a self-hosted visual tool for [Tailscale](https://tailscale.com) administrators. It maps out your tailnet as an interactive, explorable graph and lets you edit your ACL policy with validation and a live preview.
 
-Instead of editing HuJSON by hand, you can:
-
-- **Visualize your tailnet** — See all your devices, who owns them, and how they are grouped in an interactive graph.
-- **Understand access instantly** — Click any device to see which other devices it can reach, and inspect the exact ACL rules that allow it.
-- **Edit policies safely** — Modify ACL rules, groups, and tags through a guided UI. Changes are staged as a diff so you can review before committing them to your tailnet.
+- **Visualize your tailnet** — See every device as a live, force-directed graph that updates in real time as devices come and go.
+- **Filter and colorize** — Filter by tag, owner, OS, online status, or subnet-router role. Color nodes by status, tag, owner, or OS.
+- **Inspect devices and access** — Click any node to see its owner, tags, IPs, OS, and which other devices it can reach (when authenticated with the Cloud API).
+- **Edit ACL policies** — Authenticate with a Tailscale API key to fetch your tailnet's HuJSON policy. Edit directly, validate against Tailscale's Cloud API, preview the result on the graph, and save when it looks right.
 
 ## How it works
 
-Tailor runs as a single binary with an embedded web frontend. It talks to Tailscale in two ways:
+Tailor is a single Go binary with an embedded Svelte frontend. It connects to Tailscale in two ways:
 
-1. **Local discovery** — Tailor reads your local `tailscaled` daemon to list every device in your tailnet, its owner, tags, and online status.
-2. **Policy editing** *(optional)* — Provide a Tailscale API key to fetch your tailnet's ACL policy. Tailor overlays effective access paths onto the graph and lets you edit the policy with a live preview and validation.
+1. **LocalAPI** — Reads your local `tailscaled` daemon (via Unix socket or TCP) for the live device list. No credentials required.
+2. **Cloud API** *(optional)* — With a Tailscale API key, Tailor fetches your tailnet's ACL policy, resolves effective access into graph edges, and enables editing with validation.
 
-## Quick Start
+## Quick start
 
-### With Docker Compose (recommended)
-
-The container image is hosted on `ghcr.io`. You can run Tailor in two modes: **embedded** (the container runs its own `tailscaled`) or **external** (it piggybacks on your host's already-running `tailscaled`).
-
-Copy the example `compose.yaml` and start it:
+### Docker Compose (recommended)
 
 ```sh
 docker compose up
 ```
 
-Then open [http://localhost:8080](http://localhost:8080).
+Open [http://localhost:8080](http://localhost:8080).
 
-#### Embedded mode (default)
-
-The container starts its own `tailscaled`. To make it useful for discovering your tailnet, provide a [Tailscale auth key](https://tailscale.com/kb/1085/auth-keys) so the container joins your tailnet as its own node:
-
+**Embedded mode** (container runs its own `tailscaled`):
 ```yaml
 environment:
   TAILSCALE_AUTHKEY: "tskey-auth-..."
   TAILSCALE_HOSTNAME: "tailor"
 ```
 
-If you don't provide an auth key, Tailor still starts in embedded mode but only has access to the local daemon — you'll want to switch to external mode (below) or add an auth key for full discovery.
-
-#### External mode (host socket)
-
-On Linux hosts that already run `tailscaled`, you can mount the host's Unix socket instead of running a second daemon inside the container:
-
+**External mode** (use your host's already-running `tailscaled`):
 ```yaml
 environment:
   TAILOR_TAILSCALE_MODE: "external"
@@ -67,23 +50,13 @@ volumes:
 
 ### Prebuilt binary
 
-The fastest way to run Tailor without Docker or build tools.
-
-1. Download the latest release for your platform from the [Releases](../../releases) page.
-2. Extract the binary and run it:
+Download the latest release for your platform from the [Releases](../../releases) page, extract, and run:
 
 ```sh
 ./tailor
 ```
 
-The binary is fully self-contained — the web frontend is embedded, so no Node.js or Go toolchain is required.
-
-By default, Tailor reads your local `tailscaled` socket and serves the app on `http://localhost:8080`. You can override the address or socket path with environment variables:
-
-```sh
-TAILOR_ADDR=127.0.0.1:9090 ./tailor
-TAILOR_LOCALAPI_SOCKET=/var/run/tailscale/tailscaled.sock ./tailor
-```
+The binary is fully self-contained. By default it listens on `:8080` and reads your local `tailscaled` socket.
 
 ### Build from source
 
@@ -97,20 +70,37 @@ pnpm --dir web build
 # Compile the Go binary
 go build -o tailor ./cmd/tailor
 
-# Run it. By default it reads your local tailscaled socket.
+# Run it
 ./tailor
 ```
 
-The server listens on `:8080` by default. Override with the `TAILOR_ADDR` environment variable:
+## Configuration
+
+| Variable | Description | Default |
+|---|---|---|
+| `TAILOR_ADDR` | HTTP listen address | `:8080` |
+| `TAILOR_LOCALAPI_SOCKET` | Path to `tailscaled.sock` (Linux) | auto-detected |
+| `TAILOR_LOCALAPI_ENDPOINT` | TCP endpoint for LocalAPI (Windows) | — |
+| `TAILOR_TAILSCALE_MODE` | `auto`, `embedded`, or `external` | `auto` |
+| `TAILSCALE_AUTHKEY` | Tailscale auth key for embedded mode | — |
+| `TAILSCALE_HOSTNAME` | Hostname when joining tailnet | `tailor` |
+
+## Development
 
 ```sh
-TAILOR_ADDR=127.0.0.1:9090 ./tailor
+# Build and run the Go backend in dev mode (synthetic fleet)
+pnpm --dir web dev:stack
+
+# In another terminal, run the Vite dev server
+pnpm --dir web dev:proxy
 ```
 
-If your local `tailscaled.sock` lives somewhere non-standard, point to it with `TAILOR_LOCALAPI_SOCKET`:
+Dev mode compiles the backend with a built-in synthetic tailnet — a fake fleet of devices and a sample ACL policy — so you can work on the UI without joining a real tailnet. Use the demo API key `tskey-api-tailor-dev` to enable "Cloud API" editing against this synthetic data.
 
+Run tests:
 ```sh
-TAILOR_LOCALAPI_SOCKET=/var/run/tailscale/tailscaled.sock ./tailor
+pnpm --dir web check && pnpm --dir web test  # frontend
+go test ./...                                 # backend
 ```
 
 ## License

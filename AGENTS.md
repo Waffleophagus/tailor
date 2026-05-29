@@ -9,9 +9,7 @@ The `impeccable` skill (from `skills-lock.json`) is available for UI work. Use i
 
 ## Issue tracker
 
-Issues are local markdown files under `.scratch/<feature>/`. See `docs/agents/issue-tracker.md`.
-
-Policy editing and simulation roadmap: `.scratch/tailnet-topology-visualizer/018-policy-scenario-roadmap.md` — start with [019-policy-workbench-shell.md](.scratch/tailnet-topology-visualizer/019-policy-workbench-shell.md). Reference UI screenshots: `screenshots of ACL in site/`.
+Issues are tracked in-repo as needed. See `docs/agents/issue-tracker.md` for the current workflow.
 
 ### Triage labels
 

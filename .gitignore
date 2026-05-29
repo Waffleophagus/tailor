@@ -4,3 +4,4 @@ docs/PRD.md
 web/playwright-report/
 web/test-results/
 web/blob-report/
+.scratch/
