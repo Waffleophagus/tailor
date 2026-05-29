@@ -25,7 +25,8 @@
 		collapseDevicesByTag,
 		DEFAULT_TAG_COLLAPSE_RULES,
 		isAggregateDeviceId,
-		rewriteEdgesForCollapsedDevices
+		rewriteEdgesForCollapsedDevices,
+		tagFromAggregateId
 	} from './lib/graph/collapse-devices';
 	import { resolveGraphLayoutRoot } from './lib/graph/graph-layout-root';
 	import { resolveBaseGraphEdges } from './lib/graph/resolve-graph-edges';
@@ -174,13 +175,22 @@
 	}
 
 	$effect(() => {
-		if (!collapseTaggedFleets) return;
 		const selected = selectedDevice;
-		if (!selected || isAggregateDeviceId(selected.id)) return;
-		const mapped = deviceCollapse.graphIdForDevice.get(selected.id);
-		if (!mapped || mapped === selected.id) return;
-		const aggregate = graphDevices.find((device) => device.id === mapped);
-		if (aggregate) selectedDevice = aggregate;
+		if (!selected) return;
+
+		if (collapseTaggedFleets) {
+			if (isAggregateDeviceId(selected.id)) return;
+			const mapped = deviceCollapse.graphIdForDevice.get(selected.id);
+			if (!mapped || mapped === selected.id) return;
+			const aggregate = graphDevices.find((device) => device.id === mapped);
+			if (aggregate) selectedDevice = aggregate;
+			return;
+		}
+
+		if (!isAggregateDeviceId(selected.id)) return;
+		const tag = tagFromAggregateId(selected.id);
+		const member = tag ? devices.find((device) => device.tags.includes(tag)) : undefined;
+		selectedDevice = member ?? devices[0];
 	});
 
 	function scheduleTopologyPolicySync() {
@@ -408,7 +418,7 @@
 
 		disconnectTopologySocket = connectTopologySocket({
 			onSnapshot: (value) => {
-				tailscaleSetup = value.setup;
+				tailscaleSetup = value.setup ?? undefined;
 				if (value.setup?.required) {
 					apiStatus = 'setup required';
 					localApiError = undefined;
@@ -425,7 +435,7 @@
 				scheduleTopologyPolicySync();
 			},
 			onUnavailable: (status) => {
-				tailscaleSetup = status.setup;
+				tailscaleSetup = status.setup ?? undefined;
 				if (status.setup?.required) {
 					apiStatus = 'setup required';
 					localApiError = undefined;
