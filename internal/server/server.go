@@ -11,6 +11,7 @@ import (
 
 	"github.com/Waffleophagus/tailor/internal/api"
 	"github.com/Waffleophagus/tailor/internal/cloudapi"
+	"github.com/Waffleophagus/tailor/internal/deploy"
 	"github.com/Waffleophagus/tailor/internal/devtailnet"
 	"github.com/Waffleophagus/tailor/internal/frontend"
 	"github.com/Waffleophagus/tailor/internal/localapi"
@@ -27,6 +28,7 @@ type Options struct {
 type Server struct {
 	localAPI *localapi.Client
 	cloudAPI *cloudapi.Client
+	deploy   deploy.Environment
 }
 
 func New(options ...Options) http.Handler {
@@ -38,6 +40,7 @@ func New(options ...Options) http.Handler {
 	server := &Server{
 		localAPI: localapi.New(opts.LocalAPIEndpoint),
 		cloudAPI: cloudapi.New(),
+		deploy:   deploy.Detect(),
 	}
 
 	mux := http.NewServeMux()
@@ -211,11 +214,13 @@ func (s *Server) handlePolicyEvaluateDraft(w http.ResponseWriter, r *http.Reques
 		if errors.Is(err, localapi.ErrUnavailable) {
 			status = http.StatusServiceUnavailable
 		}
-		writeJSON(w, status, api.LocalAPIStatusResponse{
+		unavailable := api.LocalAPIStatusResponse{
 			Available:        false,
 			LocalAPIEndpoint: s.localAPI.Endpoint(),
 			Error:            err.Error(),
-		})
+		}
+		s.attachSetup(&unavailable, false, 0)
+		writeJSON(w, status, unavailable)
 		return
 	}
 	evaluation, err := policy.EvaluateDraft(current, request.HuJSON, devices, policy.EdgeOptions{Perspective: request.Perspective})
@@ -293,14 +298,17 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 			LocalAPIEndpoint: s.localAPI.Endpoint(),
 			Error:            err.Error(),
 		}
+		s.attachSetup(&status, false, 0)
 		writeJSON(w, http.StatusOK, status)
 		return
 	}
 
-	writeJSON(w, http.StatusOK, api.LocalAPIStatusResponse{
+	status := api.LocalAPIStatusResponse{
 		Available:        true,
 		LocalAPIEndpoint: s.localAPI.Endpoint(),
-	})
+	}
+	s.attachSetup(&status, true, 0)
+	writeJSON(w, http.StatusOK, status)
 }
 
 func (s *Server) handleTopology(w http.ResponseWriter, r *http.Request) {
@@ -310,15 +318,19 @@ func (s *Server) handleTopology(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, localapi.ErrUnavailable) {
 			status = http.StatusServiceUnavailable
 		}
-		writeJSON(w, status, api.LocalAPIStatusResponse{
+		unavailable := api.LocalAPIStatusResponse{
 			Available:        false,
 			LocalAPIEndpoint: s.localAPI.Endpoint(),
 			Error:            err.Error(),
-		})
+		}
+		s.attachSetup(&unavailable, false, 0)
+		writeJSON(w, status, unavailable)
 		return
 	}
 
-	writeJSON(w, http.StatusOK, s.topologySnapshot(r.Context(), devices))
+	snapshot := s.topologySnapshot(r.Context(), devices)
+	s.attachTopologySetup(&snapshot, true)
+	writeJSON(w, http.StatusOK, snapshot)
 }
 
 func (s *Server) handleTopologySocket(w http.ResponseWriter, r *http.Request) {
@@ -372,19 +384,23 @@ func (s *Server) writeTopologySocketMessage(ctx context.Context, conn *websocket
 func (s *Server) topologySocketMessage(ctx context.Context) api.SocketMessage {
 	devices, err := s.topologyDevices(ctx)
 	if err != nil {
+		unavailable := api.LocalAPIStatusResponse{
+			Available:        false,
+			LocalAPIEndpoint: s.localAPI.Endpoint(),
+			Error:            err.Error(),
+		}
+		s.attachSetup(&unavailable, false, 0)
 		return api.SocketMessage{
-			Type: api.SocketMessageLocalAPIUnavailable,
-			Payload: api.LocalAPIStatusResponse{
-				Available:        false,
-				LocalAPIEndpoint: s.localAPI.Endpoint(),
-				Error:            err.Error(),
-			},
+			Type:    api.SocketMessageLocalAPIUnavailable,
+			Payload: unavailable,
 		}
 	}
 
+	snapshot := s.topologySnapshot(ctx, devices)
+	s.attachTopologySetup(&snapshot, true)
 	return api.SocketMessage{
 		Type:    api.SocketMessageTopologySnapshot,
-		Payload: s.topologySnapshot(ctx, devices),
+		Payload: snapshot,
 	}
 }
 

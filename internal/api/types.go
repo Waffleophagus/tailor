@@ -8,10 +8,21 @@ type HealthResponse struct {
 	Build   string `json:"build,omitempty"`
 }
 
+type SetupHint struct {
+	ID      string `json:"id"`
+	Message string `json:"message"`
+}
+
+type TailscaleSetupInfo struct {
+	Required bool        `json:"required"`
+	Hints    []SetupHint `json:"hints,omitempty"`
+}
+
 type LocalAPIStatusResponse struct {
-	Available        bool   `json:"available"`
-	LocalAPIEndpoint string `json:"localApiEndpoint"`
-	Error            string `json:"error,omitempty"`
+	Available        bool                `json:"available"`
+	LocalAPIEndpoint string              `json:"localApiEndpoint"`
+	Error            string              `json:"error,omitempty"`
+	Setup            *TailscaleSetupInfo `json:"setup,omitempty"`
 }
 
 type Device struct {
@@ -70,9 +81,10 @@ type PolicyRef struct {
 }
 
 type TopologyResponse struct {
-	Devices []Device `json:"devices"`
-	Edges   []Edge   `json:"edges"`
-	Tailnet string   `json:"tailnet"`
+	Devices []Device            `json:"devices"`
+	Edges   []Edge              `json:"edges"`
+	Tailnet string              `json:"tailnet"`
+	Setup   *TailscaleSetupInfo `json:"setup,omitempty"`
 }
 
 type CloudAuthRequest struct {

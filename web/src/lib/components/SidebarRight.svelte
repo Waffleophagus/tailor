@@ -1,5 +1,7 @@
 <script lang="ts">
 	import type { Device } from '../api/schemas';
+	import type { DeviceAggregateMeta } from '../graph/collapse-devices';
+	import { isAggregateDeviceId } from '../graph/collapse-devices';
 	import type { RenderEdge } from '../graph/engine';
 	import ResizableSidebar from './ResizableSidebar.svelte';
 
@@ -8,6 +10,7 @@
 		selectedDevice = $bindable<Device | undefined>(undefined),
 		selectedEdge = $bindable<RenderEdge | undefined>(undefined),
 		devices = [],
+		aggregateMeta = new Map<string, DeviceAggregateMeta>(),
 		visibleEdges = [],
 		colorBy = $bindable<'status' | 'tag' | 'owner' | 'os'>('status')
 	}: {
@@ -15,16 +18,28 @@
 		selectedDevice?: Device;
 		selectedEdge?: RenderEdge;
 		devices?: Device[];
+		aggregateMeta?: Map<string, DeviceAggregateMeta>;
 		visibleEdges?: RenderEdge[];
 		colorBy?: 'status' | 'tag' | 'owner' | 'os';
 	} = $props();
 
+	const selectedAggregate = $derived(
+		selectedDevice && isAggregateDeviceId(selectedDevice.id)
+			? aggregateMeta.get(selectedDevice.id)
+			: undefined
+	);
+	const aggregateOnlineCount = $derived(
+		selectedAggregate?.members.filter((member) => member.online).length ?? 0
+	);
+
 	const edgeSource = $derived(devices.find((device) => device.id === selectedEdge?.from));
 	const edgeTarget = $derived(devices.find((device) => device.id === selectedEdge?.to));
 	const activeDevice = $derived(selectedDevice ?? edgeSource);
-	const deviceInitials = $derived(
-		activeDevice?.name ? activeDevice.name.split('.')[0].slice(0, 2).toUpperCase() : '?'
-	);
+	const deviceInitials = $derived.by(() => {
+		if (!activeDevice) return '?';
+		if (selectedAggregate) return String(selectedAggregate.members.length);
+		return activeDevice.name ? activeDevice.name.split('.')[0].slice(0, 2).toUpperCase() : '?';
+	});
 	const outgoingEdges = $derived(
 		selectedDevice ? visibleEdges.filter((edge) => edge.from === selectedDevice?.id) : []
 	);
@@ -142,6 +157,7 @@
 		>
 			<span
 				class="avatar grid h-9 w-9 shrink-0 place-items-center rounded-full text-[0.8rem] font-bold text-white"
+				class:aggregate-avatar={Boolean(selectedAggregate)}
 				style:background-color={avatarColor}
 				data-subnet-router={selectedDevice.subnetRouter}
 			>
@@ -151,21 +167,48 @@
 				<p
 					class="m-0 overflow-hidden text-[0.9rem] font-bold text-ellipsis whitespace-nowrap text-primary"
 				>
-					{selectedDevice.name}
+					{selectedAggregate?.label ?? selectedDevice.name}
 				</p>
 				<div
 					class="mt-[0.15rem] flex flex-wrap items-center gap-x-[0.45rem] gap-y-[0.3rem] text-[0.78rem] font-bold text-tertiary"
 				>
-					<span class="inline-flex items-center gap-[0.35rem]">
-						<span class="dot" class:online={selectedDevice.online}></span>
-						{selectedDevice.online ? 'online' : 'offline'}
-					</span>
+					{#if selectedAggregate}
+						<span>{selectedAggregate.members.length} devices</span>
+						<span class="inline-flex items-center gap-[0.35rem]">
+							<span class="dot online"></span>
+							{aggregateOnlineCount} online
+						</span>
+					{:else}
+						<span class="inline-flex items-center gap-[0.35rem]">
+							<span class="dot" class:online={selectedDevice.online}></span>
+							{selectedDevice.online ? 'online' : 'offline'}
+						</span>
+					{/if}
 					{#if selectedDevice.tags.length > 0}
 						<span class="tag-pill">{selectedDevice.tags[0]}</span>
 					{/if}
 				</div>
 			</div>
 		</div>
+
+		{#if selectedAggregate}
+			<div class="border-base-light mb-[0.85rem] border-b pb-[0.85rem]">
+				<h3 class="section-title">Collapsed fleet</h3>
+				<p class="m-0 text-[0.85rem] leading-[1.45] text-secondary">
+					This node represents <strong class="text-primary"
+						>{selectedAggregate.members.length}</strong
+					>
+					devices tagged
+					<span class="tag-pill">{selectedAggregate.tag}</span>. Any member can serve the same role
+					in your tailnet (for example as an exit node).
+				</p>
+				<div class="detail-row mt-3">
+					<span class="detail-label">Online</span><span class="detail-value"
+						>{aggregateOnlineCount} / {selectedAggregate.members.length}</span
+					>
+				</div>
+			</div>
+		{/if}
 
 		<div class="border-base-light mb-[0.85rem] border-b pb-[0.85rem]">
 			<h3 class="section-title">Reachability</h3>
@@ -183,42 +226,66 @@
 
 		<div class="border-base-light mb-[0.85rem] border-b pb-[0.85rem]">
 			<h3 class="section-title">Identity</h3>
-			<div class="detail-row">
-				<span class="detail-label">Owner</span><span class="detail-value"
-					>{selectedDevice.owner || 'unknown'}</span
-				>
-			</div>
-			<div class="detail-row">
-				<span class="detail-label">OS</span><span class="detail-value"
-					>{selectedDevice.os || 'unknown'}</span
-				>
-			</div>
+			{#if selectedAggregate}
+				<div class="detail-row">
+					<span class="detail-label">Type</span><span class="detail-value">Tagged fleet</span>
+				</div>
+			{:else}
+				<div class="detail-row">
+					<span class="detail-label">Owner</span><span class="detail-value"
+						>{selectedDevice.owner || 'unknown'}</span
+					>
+				</div>
+				<div class="detail-row">
+					<span class="detail-label">OS</span><span class="detail-value"
+						>{selectedDevice.os || 'unknown'}</span
+					>
+				</div>
+			{/if}
 		</div>
 
-		<div class="border-base-light mb-[0.85rem] border-b pb-[0.85rem]">
-			<h3 class="section-title">Network</h3>
-			<div class="detail-row">
-				<span class="detail-label">IP</span><span class="detail-value"
-					>{selectedDevice.ip || 'unknown'}</span
-				>
+		{#if !selectedAggregate}
+			<div class="border-base-light mb-[0.85rem] border-b pb-[0.85rem]">
+				<h3 class="section-title">Network</h3>
+				<div class="detail-row">
+					<span class="detail-label">IP</span><span class="detail-value"
+						>{selectedDevice.ip || 'unknown'}</span
+					>
+				</div>
+				<div class="detail-row">
+					<span class="detail-label">Tailscale IPs</span><span class="detail-value"
+						>{selectedDevice.tailscaleIps.length
+							? selectedDevice.tailscaleIps.join(', ')
+							: 'unknown'}</span
+					>
+				</div>
 			</div>
-			<div class="detail-row">
-				<span class="detail-label">Tailscale IPs</span><span class="detail-value"
-					>{selectedDevice.tailscaleIps.length
-						? selectedDevice.tailscaleIps.join(', ')
-						: 'unknown'}</span
-				>
-			</div>
-		</div>
+		{/if}
 
 		{#if selectedDevice.tags.length > 0}
-			<div class="border-base-light mb-[0.85rem] border-b">
+			<div class="border-base-light mb-[0.85rem] border-b pb-[0.85rem]">
 				<h3 class="section-title">Tags</h3>
 				<div class="flex flex-wrap gap-[0.35rem]">
 					{#each selectedDevice.tags as tag (tag)}
 						<span class="tag-pill">{tag}</span>
 					{/each}
 				</div>
+			</div>
+		{/if}
+
+		{#if selectedAggregate}
+			<div class="border-base-light mb-[0.85rem] border-b">
+				<h3 class="section-title">Members ({selectedAggregate.members.length})</h3>
+				<ul class="member-list m-0 max-h-[12rem] list-none overflow-y-auto p-0">
+					{#each selectedAggregate.members as member (member.id)}
+						<li class="member-item">
+							<span class="dot" class:online={member.online}></span>
+							<span class="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap"
+								>{member.name}</span
+							>
+						</li>
+					{/each}
+				</ul>
 			</div>
 		{/if}
 	{:else}
@@ -275,6 +342,9 @@
 	.avatar[data-subnet-router='true'] {
 		@apply rounded-lg;
 	}
+	.aggregate-avatar {
+		@apply rounded-lg text-[0.72rem];
+	}
 	.section-title {
 		@apply m-0 mb-2 p-0 text-[0.72rem] font-bold tracking-wider text-label uppercase;
 	}
@@ -313,5 +383,11 @@
 	}
 	.sidebar-icon svg {
 		@apply h-4 w-4;
+	}
+	.member-list {
+		@apply flex flex-col gap-[0.2rem];
+	}
+	.member-item {
+		@apply flex items-center gap-[0.45rem] text-[0.82rem] font-semibold text-secondary;
 	}
 </style>

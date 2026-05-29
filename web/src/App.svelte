@@ -14,14 +14,21 @@
 		Device,
 		Edge,
 		LocalAPIStatusResponse,
+		TailscaleSetupInfo,
 		PolicyEvaluateDraftResponse,
 		PolicyResponse
 	} from './lib/api/schemas';
 	import { fetchTopology } from './lib/api/topology';
 	import { connectTopologySocket } from './lib/api/topologySocket';
 	import type { RenderEdge } from './lib/graph/engine';
+	import {
+		collapseDevicesByTag,
+		DEFAULT_TAG_COLLAPSE_RULES,
+		isAggregateDeviceId,
+		rewriteEdgesForCollapsedDevices
+	} from './lib/graph/collapse-devices';
 	import { resolveGraphLayoutRoot } from './lib/graph/graph-layout-root';
-	import { filterEdgesForGraph, resolveBaseGraphEdges } from './lib/graph/resolve-graph-edges';
+	import { resolveBaseGraphEdges } from './lib/graph/resolve-graph-edges';
 	import AuthDialog from './lib/components/AuthDialog.svelte';
 	import GraphCanvas from './lib/components/GraphCanvas.svelte';
 	import GraphLegend from './lib/components/GraphLegend.svelte';
@@ -53,9 +60,11 @@
 	let editorErrors = $state<string[]>([]);
 	let phase2Open = $state(false);
 	let localApiError = $state<LocalAPIStatusResponse | Error | undefined>();
+	let tailscaleSetup = $state<TailscaleSetupInfo | undefined>();
 	let cloudBusy = $state(false);
 	let showOffline = $state(true);
 	let showSubnetRouters = $state(true);
+	let collapseTaggedFleets = $state(true);
 	let showTailnet = $state(false);
 	let showLabels = $state(false);
 	let graphMode = $state<'focused' | 'all'>('focused');
@@ -100,13 +109,22 @@
 		!validationStale && editorValid === true && validatedHuJSON !== ''
 	);
 	const hasPendingDraft = $derived(editorDirty || hasValidatedPending);
-	const visibleOnlineCount = $derived(visibleDevices.filter((device) => device.online).length);
-	const graphDevices = $derived(visibleDevices);
+	const deviceCollapse = $derived(
+		collapseDevicesByTag(visibleDevices, {
+			enabled: collapseTaggedFleets,
+			rules: DEFAULT_TAG_COLLAPSE_RULES
+		})
+	);
+	const graphDevices = $derived(deviceCollapse.graphDevices);
+	const listDevices = $derived(deviceCollapse.listDevices);
+	const aggregateMeta = $derived(deviceCollapse.aggregateMeta);
 	const graphVisibleDeviceIDs = $derived(new Set(graphDevices.map((device) => device.id)));
 	const graphRootDevice = $derived(
 		resolveGraphLayoutRoot(selectedDevice, rootDevice, graphVisibleDeviceIDs)
 	);
 	const visibleEdges = $derived(graphEdges());
+	const visibleDeviceIDs = $derived(new Set(visibleDevices.map((device) => device.id)));
+	const listOnlineCount = $derived(listDevices.filter((device) => device.online).length);
 	const graphOnlineCount = $derived(graphDevices.filter((device) => device.online).length);
 
 	function graphEdges(): RenderEdge[] {
@@ -119,25 +137,51 @@
 			editorDirty,
 			hasValidatedPending
 		});
+
+		let rendered: RenderEdge[];
 		if (policyRendered) {
-			return filterEdgesForGraph(
-				policyRendered,
-				graphVisibleDeviceIDs,
-				graphMode,
-				graphRootDevice?.id
+			rendered = policyRendered.filter(
+				(edge) => visibleDeviceIDs.has(edge.from) || visibleDeviceIDs.has(edge.to)
 			);
+		} else {
+			const root = graphRootDevice;
+			if (!root || !graphVisibleDeviceIDs.has(root.id) || !root.online) {
+				rendered = [];
+			} else {
+				rendered = graphDevices
+					.filter((device) => device.id !== root.id && device.online)
+					.map((device) => ({
+						id: `local:${root.id}:${device.id}`,
+						from: root.id,
+						to: device.id,
+						kind: 'local'
+					}));
+			}
 		}
-		const root = graphRootDevice;
-		if (!root || !graphVisibleDeviceIDs.has(root.id) || !root.online) return [];
-		return visibleDevices
-			.filter((device) => device.id !== root.id && device.online)
-			.map((device) => ({
-				id: `local:${root.id}:${device.id}`,
-				from: root.id,
-				to: device.id,
-				kind: 'local'
-			}));
+
+		if (collapseTaggedFleets && deviceCollapse.aggregateMeta.size > 0) {
+			rendered = rewriteEdgesForCollapsedDevices(rendered, deviceCollapse.graphIdForDevice);
+		}
+
+		if (graphMode === 'all') {
+			return rendered;
+		}
+		const focus = graphRootDevice?.id;
+		if (!focus) {
+			return [];
+		}
+		return rendered.filter((edge) => edge.from === focus || edge.to === focus);
 	}
+
+	$effect(() => {
+		if (!collapseTaggedFleets) return;
+		const selected = selectedDevice;
+		if (!selected || isAggregateDeviceId(selected.id)) return;
+		const mapped = deviceCollapse.graphIdForDevice.get(selected.id);
+		if (!mapped || mapped === selected.id) return;
+		const aggregate = graphDevices.find((device) => device.id === mapped);
+		if (aggregate) selectedDevice = aggregate;
+	});
 
 	function scheduleTopologyPolicySync() {
 		const savedPolicy = policy;
@@ -364,8 +408,14 @@
 
 		disconnectTopologySocket = connectTopologySocket({
 			onSnapshot: (value) => {
-				apiStatus = 'connected';
-				localApiError = undefined;
+				tailscaleSetup = value.setup;
+				if (value.setup?.required) {
+					apiStatus = 'setup required';
+					localApiError = undefined;
+				} else {
+					apiStatus = 'connected';
+					localApiError = undefined;
+				}
 				devices = value.devices;
 				edges = value.edges;
 				tailnetName = value.tailnet;
@@ -375,14 +425,24 @@
 				scheduleTopologyPolicySync();
 			},
 			onUnavailable: (status) => {
-				apiStatus = 'LocalAPI unavailable';
-				localApiError = status;
+				tailscaleSetup = status.setup;
+				if (status.setup?.required) {
+					apiStatus = 'setup required';
+					localApiError = undefined;
+				} else {
+					apiStatus = 'LocalAPI unavailable';
+					localApiError = status;
+				}
 				devices = [];
 				edges = [];
 				tailnetName = '';
 				selectedDevice = undefined;
 			},
 			onConnectionState: (state) => {
+				if (tailscaleSetup?.required) {
+					apiStatus = 'setup required';
+					return;
+				}
 				if (state === 'connected' && devices.length > 0) {
 					apiStatus = 'connected';
 					return;
@@ -446,11 +506,12 @@
 			<SidebarLeft
 				bind:open={leftOpen}
 				{devices}
-				{visibleDevices}
+				{listDevices}
 				bind:selectedDevice
 				bind:showLabels
 				bind:showOffline
 				bind:showSubnetRouters
+				bind:collapseTaggedFleets
 				bind:showTailnet
 				bind:selectedTag
 				bind:selectedOwner
@@ -459,7 +520,7 @@
 				{tagOptions}
 				{ownerOptions}
 				{osOptions}
-				{visibleOnlineCount}
+				{listOnlineCount}
 				chooseDevice={(device) => chooseDevice(device)}
 			/>
 
@@ -560,7 +621,27 @@
 						{osOptions}
 					/>
 
-					{#if localApiError}
+					{#if tailscaleSetup?.required}
+						<div class="tailscale-setup" role="status">
+							<h2 class="mb-[0.35rem] font-extrabold text-base text-primary">
+								Connect Tailscale in Docker
+							</h2>
+							<p class="mb-[0.65rem] text-[0.88rem] text-secondary">
+								Tailor needs Tailscale configured in the container before it can show your tailnet.
+								Use one of these options:
+							</p>
+							<ul class="m-0 list-none space-y-[0.55rem] p-0">
+								{#each tailscaleSetup.hints ?? [] as hint (hint.id)}
+									<li class="setup-hint">
+										<span class="setup-hint-label"
+											>{hint.id === 'auth-key' ? 'Recommended' : 'Alternative'}</span
+										>
+										<p class="mb-0 text-[0.88rem] leading-snug text-primary">{hint.message}</p>
+									</li>
+								{/each}
+							</ul>
+						</div>
+					{:else if localApiError}
 						<div class="local-api-error">
 							<h2 class="mb-[0.4rem] text-base">Connect to Tailscale</h2>
 							<p class="mb-0 wrap-anywhere">{localApiErrorMessage(localApiError)}</p>
@@ -591,7 +672,8 @@
 					bind:open={rightOpen}
 					bind:selectedDevice
 					bind:selectedEdge
-					{devices}
+					devices={graphDevices}
+					{aggregateMeta}
 					{visibleEdges}
 					{colorBy}
 				/>
@@ -640,6 +722,15 @@
 	}
 	.graph-control {
 		@apply grid h-[2.1rem] w-[2.1rem] min-w-[2.1rem] place-items-center rounded-md border border-panel-border bg-panel-weak leading-none font-extrabold text-primary transition-[background-color,border-color,transform] duration-[160ms] ease-out hover:-translate-y-px hover:border-teal hover:bg-hover motion-reduce:transition-none motion-reduce:hover:transform-none;
+	}
+	.tailscale-setup {
+		@apply absolute top-1/2 left-1/2 z-[3] w-[min(32rem,calc(100%-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-lg border border-teal/35 bg-surface p-4 shadow-[0_10px_30px_rgb(23_33_38/10%)];
+	}
+	.setup-hint {
+		@apply rounded-md border border-panel-border bg-panel-weak p-[0.65rem_0.75rem];
+	}
+	.setup-hint-label {
+		@apply mb-[0.25rem] block text-[0.68rem] font-extrabold tracking-wide text-teal uppercase;
 	}
 	.local-api-error {
 		@apply absolute top-1/2 left-1/2 w-[min(28rem,calc(100%-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-lg border border-base bg-surface p-4 shadow-[0_10px_30px_rgb(23_33_38/8%)];

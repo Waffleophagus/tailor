@@ -237,6 +237,24 @@ components:
           type: string
         version:
           type: string
+    SetupHint:
+      type: object
+      required: [id, message]
+      properties:
+        id:
+          type: string
+        message:
+          type: string
+    TailscaleSetupInfo:
+      type: object
+      required: [required]
+      properties:
+        required:
+          type: boolean
+        hints:
+          type: array
+          items:
+            $ref: "#/components/schemas/SetupHint"
     LocalAPIStatusResponse:
       type: object
       required: [available, localApiEndpoint]
@@ -247,6 +265,8 @@ components:
           type: string
         error:
           type: string
+        setup:
+          $ref: "#/components/schemas/TailscaleSetupInfo"
     Device:
       type: object
       required: [id, name, ip, tailscaleIps, os, online, owner, tags, subnetRouter, routedSubnets]
@@ -345,6 +365,8 @@ components:
             $ref: "#/components/schemas/Edge"
         tailnet:
           type: string
+        setup:
+          $ref: "#/components/schemas/TailscaleSetupInfo"
     CloudAuthRequest:
       type: object
       required: [tailnet, apiKey]

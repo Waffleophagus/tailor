@@ -11,7 +11,7 @@ services:
       # "external" to force Tailor to use a mounted host socket.
       TAILOR_TAILSCALE_MODE: "auto"
 
-      # Embedded mode:
+      # Embedded mode (required on Docker Desktop — the UI will prompt if missing):
       # Set an auth key when you want this container to join the tailnet as its
       # own Tailscale node. Create one in the Tailscale admin console.
       # TAILSCALE_AUTHKEY: "tskey-auth-..."
