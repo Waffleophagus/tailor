@@ -4,7 +4,8 @@ import { e2eWebServers } from './e2e/helpers/dev-server';
 import './e2e/helpers/load-env';
 
 const baseURL = process.env.TAILOR_E2E_BASE_URL ?? 'http://127.0.0.1:5173';
-const reuseExistingServer = !process.env.CI && process.env.TAILOR_E2E_INCLUDE_PRODUCTION !== '1';
+// Locally, reuse a running pnpm dev / tailor stack when healthy (including production save E2E).
+const reuseExistingServer = !process.env.CI;
 
 const includeProduction = process.env.TAILOR_E2E_INCLUDE_PRODUCTION === '1';
 

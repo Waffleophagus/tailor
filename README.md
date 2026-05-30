@@ -50,6 +50,8 @@ environment:
   TAILSCALE_HOSTNAME: "tailor"
 ```
 
+Once the node joins your tailnet, Tailor automatically configures [Tailscale Serve](https://tailscale.com/kb/1312/serve) so you can open **`https://tailor.<your-tailnet>.ts.net/`** — no `:8080` required. Port `8080` in `docker compose` is only needed for local (non-tailnet) access.
+
 **External mode** (use your host's already-running `tailscaled`):
 ```yaml
 environment:
@@ -99,6 +101,8 @@ go build -o tailor ./cmd/tailor
 | `TAILOR_TAILSCALE_MODE` | `auto`, `embedded`, or `external` | `auto` |
 | `TAILSCALE_AUTHKEY` | Tailscale auth key for embedded mode | — |
 | `TAILSCALE_HOSTNAME` | Hostname when joining tailnet | `tailor` |
+| `TAILOR_TAILSCALE_SERVE` | Auto-configure Tailscale Serve: `auto`, `on`, or `off` | `auto` |
+| `TAILOR_TAILSCALE_SERVE_PORT` | HTTPS port for Tailscale Serve | `443` |
 | `TAILOR_LOG_LEVEL` | Log level: `debug`, `info`, `warn`, `error` | `info` |
 | `TAILOR_LOG_FORMAT` | Log format: `text`, `json`, or `auto` (JSON in containers) | `auto` |
 | `TAILOR_LOG_DIR` | Optional directory for rotated log files (`tailor.log`); stdout always logged | — |

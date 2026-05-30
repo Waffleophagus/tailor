@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 
-import { alternatePerspective, isProductionApiKey, tailscaleApiKey } from './helpers/env';
+import { isProductionApiKey, tailscaleApiKey } from './helpers/env';
 import {
 	appendProbeAclRule,
 	fetchPolicyHujson,
@@ -44,9 +44,14 @@ test('round-trips a real ACL change against Tailscale Cloud', async ({ page, req
 		initialHujson = initialPolicy.hujson;
 		expect(initialHujson.length).toBeGreaterThan(10);
 
-		const mutatedHujson = await appendProbeAclRule(request, initialHujson, probePort);
+		const { hujson: mutatedHujson, src: probeSrc } = await appendProbeAclRule(
+			request,
+			initialHujson,
+			probePort,
+			{ liveTailnetOnly: true }
+		);
 		const editedHujson = `${mutatedHujson}\n// ${marker}\n`;
-		expect(editedHujson).toContain(alternatePerspective);
+		expect(editedHujson).toContain(probeSrc);
 		expect(editedHujson).toContain(`:${probePort}`);
 
 		await setPolicyEditorText(page, editedHujson);

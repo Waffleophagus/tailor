@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"github.com/Waffleophagus/tailor/internal/devtailnet"
 	tailorlog "github.com/Waffleophagus/tailor/internal/log"
 	"github.com/Waffleophagus/tailor/internal/server"
+	"github.com/Waffleophagus/tailor/internal/tailserve"
 )
 
 func main() {
@@ -49,6 +51,22 @@ func main() {
 		LocalAPIEndpoint: localAPIEndpoint,
 		Logger:           logger,
 	})
+
+	serveMode := tailserve.ParseMode(os.Getenv("TAILOR_TAILSCALE_SERVE"))
+	if serveMode != tailserve.ModeOff {
+		servePort, err := tailserve.ParseHTTPSPort(os.Getenv("TAILOR_TAILSCALE_SERVE_PORT"))
+		if err != nil {
+			logger.Error("invalid TAILOR_TAILSCALE_SERVE_PORT", "error", err)
+			os.Exit(1)
+		}
+		go tailserve.ConfigureWhenReady(context.Background(), tailserve.Options{
+			LocalAPIEndpoint: localAPIEndpoint,
+			ListenAddr:       addr,
+			Mode:             serveMode,
+			HTTPSPort:        servePort,
+			Logger:           logger,
+		})
+	}
 
 	srv := &http.Server{
 		Addr:              addr,

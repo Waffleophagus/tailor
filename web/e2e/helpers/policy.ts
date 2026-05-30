@@ -1,6 +1,7 @@
 import { expect, type APIRequestContext } from '@playwright/test';
 
-import { alternatePerspective, baseURL, testDestination } from './env';
+import { probeAclDraftTargets, probeAclTargetsFromTopology } from './demo';
+import { baseURL } from './env';
 
 export interface PolicyResponseBody {
 	hujson: string;
@@ -27,8 +28,12 @@ export function policiesEquivalent(a: string, b: string): boolean {
 export async function appendProbeAclRule(
 	request: APIRequestContext,
 	hujson: string,
-	port: number
-): Promise<string> {
+	port: number,
+	options?: { liveTailnetOnly?: boolean }
+): Promise<{ hujson: string; src: string; dst: string }> {
+	const probe = options?.liveTailnetOnly
+		? await probeAclTargetsFromTopology(request, port)
+		: await probeAclDraftTargets(request, port);
 	const response = await request.post(`${baseURL}/api/policy/mutate`, {
 		data: {
 			hujson,
@@ -36,15 +41,15 @@ export async function appendProbeAclRule(
 				type: 'append-acl',
 				rule: {
 					action: 'accept',
-					src: [alternatePerspective],
-					dst: [`${testDestination}:${port}`]
+					src: [probe.src],
+					dst: [probe.dst]
 				}
 			}
 		}
 	});
 	expect(response.ok(), `POST /api/policy/mutate failed: ${response.status()}`).toBeTruthy();
 	const body = (await response.json()) as { hujson: string };
-	return body.hujson;
+	return { hujson: body.hujson, src: probe.src, dst: probe.dst };
 }
 
 export function policyContainsProbe(hujson: string, port: number, marker: string): boolean {

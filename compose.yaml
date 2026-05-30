@@ -1,6 +1,8 @@
 services:
   tailor:
     build: .
+    # Optional when using TAILSCALE_AUTHKEY — Tailor is reachable on the tailnet
+    # at https://<TAILSCALE_HOSTNAME>.<your-tailnet>.ts.net/ via Tailscale Serve.
     ports:
       - "8080:8080"
     environment:
@@ -17,6 +19,7 @@ services:
       # own Tailscale node. Create one in the Tailscale admin console.
       # TAILSCALE_AUTHKEY: "tskey-auth-..."
       # TAILSCALE_HOSTNAME: "tailor"
+      # Then open https://tailor.<your-tailnet>.ts.net/ (no :8080 needed).
       # TAILSCALE_UP_EXTRA_ARGS: "--advertise-tags=tag:tailor"
 
       # Host socket mode:

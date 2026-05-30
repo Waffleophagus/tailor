@@ -27,23 +27,29 @@ export async function enableAclEditingViaUI(
 	options: { apiKey: string; tailnet: string }
 ) {
 	await page.goto('/');
-	const enableButton = page.getByRole('button', { name: 'Enable ACL Editing' });
-	if (await enableButton.isVisible()) {
-		await enableButton.click();
-		const dialog = page.getByRole('dialog', { name: 'Enable ACL Editing' });
-		await expect(dialog).toBeVisible();
-		await dialog.getByPlaceholder('tskey-api-...').fill(options.apiKey);
-		await dialog.getByPlaceholder('example.com or -').fill(options.tailnet);
-		await dialog.getByRole('button', { name: 'Fetch Policy' }).click();
-	} else if (await page.getByText(/Demo tailnet/).isVisible()) {
+	if (await page.getByText(/Demo tailnet/).isVisible()) {
 		throw new Error(
 			'Tailor backend is authenticated in demo mode. Stop any running tailor process on the E2E port and re-run pnpm test:e2e:production.'
 		);
 	}
-	await expect(page.getByRole('button', { name: 'Edit policy' })).toBeVisible({
-		timeout: 90_000
-	});
-	await expect(page.getByRole('button', { name: 'Enable ACL Editing' })).toBeHidden();
+
+	const enableButton = page.getByRole('button', { name: 'Enable ACL Editing' });
+	const editPolicy = page.getByRole('button', { name: 'Edit policy' });
+	if (await editPolicy.isVisible()) {
+		await expect(enableButton).toBeHidden();
+		return;
+	}
+
+	await expect(enableButton).toBeVisible({ timeout: 30_000 });
+	await enableButton.click();
+	const dialog = page.getByRole('dialog', { name: 'Enable ACL Editing' });
+	await expect(dialog).toBeVisible();
+	await dialog.getByPlaceholder('tskey-api-...').fill(options.apiKey);
+	await dialog.getByPlaceholder('example.com or -').fill(options.tailnet);
+	await dialog.getByRole('button', { name: 'Fetch Policy' }).click();
+
+	await expect(editPolicy).toBeVisible({ timeout: 90_000 });
+	await expect(enableButton).toBeHidden();
 	await expect(page.getByText(/Demo tailnet/)).toBeHidden();
 }
 

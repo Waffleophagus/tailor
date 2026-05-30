@@ -3,6 +3,8 @@ import { fileURLToPath } from 'node:url';
 
 import type { PlaywrightTestConfig } from '@playwright/test';
 
+import { isDemoApiKey } from './env';
+
 const webRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 
 export const tailorPort = process.env.TAILOR_E2E_TAILOR_PORT ?? '8080';
@@ -17,11 +19,13 @@ function asWebServers(config: WebServerConfig): WebServerConfig {
 
 /** Build and run the Go backend for E2E when nothing is listening yet. */
 export function tailorWebServer(reuseExistingServer: boolean): WebServerConfig {
+	// Demo-key runs need the dev binary and in-memory fleet, not a reused real-tailnet backend.
+	const reuseBackend = reuseExistingServer && !isDemoApiKey();
 	return {
 		command: 'pnpm backend:e2e',
 		cwd: webRoot,
 		url: tailorHealthURL,
-		reuseExistingServer,
+		reuseExistingServer: reuseBackend,
 		timeout: 120_000,
 		env: {
 			TAILOR_ADDR: `:${tailorPort}`

@@ -9,9 +9,14 @@ export const tailscaleApiKey = process.env.TAILSCALE_API_KEY?.trim() ?? '';
 /** Optional tailnet override from web/.env. */
 export const configuredTailnet = process.env.TAILOR_TAILNET?.trim() ?? '';
 
+/** True when web/.env uses the built-in demo API key. */
+export function isDemoApiKey(): boolean {
+	return tailscaleApiKey === demoApiKey;
+}
+
 /** True when web/.env has a real Cloud API key (not the demo key). */
 export function isProductionApiKey(): boolean {
-	return tailscaleApiKey.length > 0 && tailscaleApiKey !== demoApiKey;
+	return tailscaleApiKey.length > 0 && !isDemoApiKey();
 }
 
 /** Primary simulation subject. Override with TAILOR_E2E_PERSPECTIVE. */
