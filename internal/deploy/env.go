@@ -120,7 +120,7 @@ func (e Environment) hints(localAPIAvailable bool) []SetupHint {
 		hints = append(hints, SetupHint{
 			ID: "auth-key",
 			Message: "Set TAILSCALE_AUTHKEY to a tskey-auth-… key so this container joins your tailnet as its own node. " +
-				"Optional: TAILSCALE_HOSTNAME=tailor.",
+				"Optional: TAILSCALE_HOSTNAME=tailor. Tailor then exposes HTTPS via Tailscale Serve at https://tailor.<your-tailnet>.ts.net/.",
 		})
 	}
 
