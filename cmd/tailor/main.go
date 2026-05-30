@@ -53,12 +53,12 @@ func main() {
 	})
 
 	serveMode := tailserve.ParseMode(os.Getenv("TAILOR_TAILSCALE_SERVE"))
-	servePort, err := tailserve.ParseHTTPSPort(os.Getenv("TAILOR_TAILSCALE_SERVE_PORT"))
-	if err != nil {
-		logger.Error("invalid TAILOR_TAILSCALE_SERVE_PORT", "error", err)
-		os.Exit(1)
-	}
 	if serveMode != tailserve.ModeOff {
+		servePort, err := tailserve.ParseHTTPSPort(os.Getenv("TAILOR_TAILSCALE_SERVE_PORT"))
+		if err != nil {
+			logger.Error("invalid TAILOR_TAILSCALE_SERVE_PORT", "error", err)
+			os.Exit(1)
+		}
 		go tailserve.ConfigureWhenReady(context.Background(), tailserve.Options{
 			LocalAPIEndpoint: localAPIEndpoint,
 			ListenAddr:       addr,

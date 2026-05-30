@@ -82,3 +82,21 @@ func TestPortInUseByOther(t *testing.T) {
 		t.Fatal("expected existing foreign serve config to block")
 	}
 }
+
+func TestPortInUseByOtherNonProxyHandler(t *testing.T) {
+	t.Parallel()
+
+	sc := &ipn.ServeConfig{}
+	sc.SetWebHandler(
+		&ipn.HTTPHandler{Path: "/srv/www"},
+		"tailor.example.ts.net",
+		443,
+		"/",
+		true,
+		"example.ts.net",
+	)
+
+	if !portInUseByOther(sc, "tailor.example.ts.net", 443, "http://127.0.0.1:8080", "example.ts.net") {
+		t.Fatal("expected existing non-proxy handler at / to block")
+	}
+}

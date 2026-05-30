@@ -1,15 +1,14 @@
 import { expect, test } from '@playwright/test';
 
 import { baseURL } from './helpers/env';
+import { demoDeviceName, isDemoDevMode, probeAclDraftTargets } from './helpers/demo';
 import {
-	alternatePerspective,
 	chooseDevice,
 	closePolicyEditor,
 	discardPolicyEditor,
 	graphSummaryLinkCount,
 	openPolicyEditor,
 	requireAclEditing,
-	testDestination,
 	validatePolicyEditor
 } from './helpers/tailor';
 
@@ -73,6 +72,8 @@ test('policy editor validates HuJSON and shows graph preview', async ({ page }) 
 });
 
 test('mutate API appends and evaluates a reversible ACL draft', async ({ request }) => {
+	const probe = await probeAclDraftTargets(request);
+
 	const policyRes = await request.get(`${baseURL}/api/policy`);
 	expect(policyRes.ok()).toBeTruthy();
 	const saved = (await policyRes.json()) as { hujson: string };
@@ -84,8 +85,8 @@ test('mutate API appends and evaluates a reversible ACL draft', async ({ request
 				type: 'append-acl',
 				rule: {
 					action: 'accept',
-					src: [alternatePerspective],
-					dst: [`${testDestination}:19999`]
+					src: [probe.src],
+					dst: [probe.dst]
 				}
 			}
 		}
@@ -93,17 +94,23 @@ test('mutate API appends and evaluates a reversible ACL draft', async ({ request
 	expect(mutate.ok()).toBeTruthy();
 	const draft = (await mutate.json()) as { hujson: string };
 	expect(draft.hujson).toContain('19999');
-	expect(draft.hujson).toContain(alternatePerspective);
+	expect(draft.hujson).toContain(probe.src);
 
 	const evaluate = await request.post(`${baseURL}/api/policy/evaluate-draft`, {
 		data: {
 			hujson: draft.hujson,
-			perspective: alternatePerspective
+			perspective: probe.perspective
 		}
 	});
 	expect(evaluate.ok()).toBeTruthy();
-	const impact = (await evaluate.json()) as { added?: unknown[]; unchanged?: unknown[] };
-	expect((impact.added?.length ?? 0) + (impact.unchanged?.length ?? 0)).toBeGreaterThan(0);
+	const impact = (await evaluate.json()) as {
+		added?: unknown[];
+		unchanged?: unknown[];
+		changed?: unknown[];
+	};
+	const impactCount =
+		(impact.added?.length ?? 0) + (impact.unchanged?.length ?? 0) + (impact.changed?.length ?? 0);
+	expect(impactCount).toBeGreaterThan(0);
 
 	const validate = await request.post(`${baseURL}/api/policy/validate`, {
 		data: { hujson: draft.hujson }
@@ -113,8 +120,11 @@ test('mutate API appends and evaluates a reversible ACL draft', async ({ request
 	expect(validation.valid).toBe(true);
 });
 
-test('focused device view shows policy links for the selected node', async ({ page }) => {
-	await chooseDevice(page, 'alice-laptop');
+test('focused device view shows policy links for the selected node', async ({ page, request }) => {
+	const deviceName = (await isDemoDevMode(request))
+		? demoDeviceName()
+		: (await page.getByRole('list').getByRole('button').first().innerText()).trim();
+	await chooseDevice(page, deviceName);
 	const focusedLinks = await graphSummaryLinkCount(page);
 	expect(focusedLinks).toBeGreaterThan(0);
 
@@ -128,6 +138,7 @@ test('spawned device shows policy links without page reload', async ({ page, req
 	expect(health.ok()).toBeTruthy();
 	const meta = (await health.json()) as { build?: string };
 	test.skip(meta.build !== 'dev', 'requires tailor built with -tags dev');
+	test.skip(!(await isDemoDevMode(request)), 'requires demo tailnet (tskey-api-tailor-dev)');
 
 	await chooseDevice(page, 'k8s-staging-worker-01');
 
@@ -167,6 +178,7 @@ test('dev spawn endpoint adds devices to the demo tailnet', async ({ request }) 
 	expect(health.ok()).toBeTruthy();
 	const meta = (await health.json()) as { build?: string };
 	test.skip(meta.build !== 'dev', 'requires tailor built with -tags dev');
+	test.skip(!(await isDemoDevMode(request)), 'requires demo tailnet (tskey-api-tailor-dev)');
 
 	const before = await request.get(`${baseURL}/api/topology`);
 	expect(before.ok()).toBeTruthy();

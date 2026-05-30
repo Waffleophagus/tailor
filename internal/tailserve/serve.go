@@ -153,7 +153,7 @@ func portInUseByOther(sc *ipn.ServeConfig, dnsName string, port uint16, proxyURL
 	hp := ipn.HostPort(net.JoinHostPort(dnsName, strconv.Itoa(int(port))))
 	if web, ok := sc.Web[hp]; ok {
 		for _, handler := range web.Handlers {
-			if handler != nil && handler.Proxy != "" && handler.Proxy != proxyURL {
+			if handler != nil && (handler.Proxy == "" || handler.Proxy != proxyURL) {
 				return true
 			}
 		}
