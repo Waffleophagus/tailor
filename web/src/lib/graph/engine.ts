@@ -36,6 +36,7 @@ export interface GraphInitOptions extends SyncOptions {
 	container: HTMLElement;
 	onNodeSelect: (device: Device) => void;
 	onEdgeSelect: (edge?: RenderEdge) => void;
+	onSelectionSettled?: () => void;
 }
 
 export type RenderEdgeState = 'added' | 'removed' | 'changed' | 'unchanged' | 'ghost-denied';
@@ -65,7 +66,7 @@ export async function loadLibs() {
 }
 
 export function createEngine(opts: GraphInitOptions) {
-	const { container, onNodeSelect, onEdgeSelect } = opts;
+	const { container, onNodeSelect, onEdgeSelect, onSelectionSettled } = opts;
 
 	if (!cytoscapeMod) {
 		throw new Error('loadLibs() must be called first');
@@ -78,6 +79,12 @@ export function createEngine(opts: GraphInitOptions) {
 	let hoveredNodeID: string | undefined;
 
 	const LAYOUT_ANIMATION_MS = 420;
+	const PULSE_ANIMATION_MS = 360;
+	const EDGE_FOCUS_SETTLE_MS = 160;
+
+	let selectionSettleTimer: number | undefined;
+	let selectionSettleRaf1: number | undefined;
+	let selectionSettleRaf2: number | undefined;
 
 	const lastOnlineState = new Map<string, boolean>();
 
@@ -324,6 +331,55 @@ export function createEngine(opts: GraphInitOptions) {
 
 	function clearGraphFocus() {
 		graph?.elements().removeClass('dim focused');
+	}
+
+	function cancelSelectionSettled() {
+		if (selectionSettleRaf1 !== undefined) {
+			cancelAnimationFrame(selectionSettleRaf1);
+			selectionSettleRaf1 = undefined;
+		}
+		if (selectionSettleRaf2 !== undefined) {
+			cancelAnimationFrame(selectionSettleRaf2);
+			selectionSettleRaf2 = undefined;
+		}
+		if (selectionSettleTimer !== undefined) {
+			window.clearTimeout(selectionSettleTimer);
+			selectionSettleTimer = undefined;
+		}
+	}
+
+	function estimateLayoutSettleMs() {
+		if (current.graphMode !== 'focused' || !current.selectedDevice) return 0;
+		const root = graphRootDevice();
+		if (root?.id !== current.selectedDevice.id) return 0;
+		return LAYOUT_ANIMATION_MS + 280;
+	}
+
+	function queueSelectionSettledAfterGraphPick(kind: 'node' | 'edge') {
+		if (!onSelectionSettled) return;
+		cancelSelectionSettled();
+		if (prefersReducedMotion()) {
+			onSelectionSettled();
+			return;
+		}
+		if (kind === 'edge') {
+			selectionSettleTimer = window.setTimeout(() => {
+				selectionSettleTimer = undefined;
+				onSelectionSettled();
+			}, EDGE_FOCUS_SETTLE_MS);
+			return;
+		}
+		selectionSettleRaf1 = window.requestAnimationFrame(() => {
+			selectionSettleRaf1 = undefined;
+			selectionSettleRaf2 = window.requestAnimationFrame(() => {
+				selectionSettleRaf2 = undefined;
+				const delay = Math.max(PULSE_ANIMATION_MS, estimateLayoutSettleMs());
+				selectionSettleTimer = window.setTimeout(() => {
+					selectionSettleTimer = undefined;
+					onSelectionSettled();
+				}, delay);
+			});
+		});
 	}
 
 	function pulseNode(node: NodeSingular) {
@@ -687,6 +743,7 @@ export function createEngine(opts: GraphInitOptions) {
 				updateGraphSelection();
 				applyGraphFocus(node);
 				pulseNode(node);
+				queueSelectionSettledAfterGraphPick('node');
 			}
 		});
 
@@ -697,6 +754,7 @@ export function createEngine(opts: GraphInitOptions) {
 			onEdgeSelect(edge);
 			updateGraphSelection();
 			applyEdgeFocus(event.target as EdgeSingular);
+			queueSelectionSettledAfterGraphPick('edge');
 		});
 
 		graph.on('mouseover', 'node', (event: CyEventObject) => {
@@ -750,11 +808,15 @@ export function createEngine(opts: GraphInitOptions) {
 		if (!graph) return;
 		updateGraphSelection();
 		const node = graph.getElementById(device.id);
-		if (node.length) applyGraphFocus(node);
+		if (node.length) {
+			applyGraphFocus(node);
+			pulseNode(node);
+		}
 		// Root changes trigger pan from syncGraph; re-selecting the current root only needs pan.
 		if (device.id === layoutRootId) {
 			animatePanToLayoutHub(layoutAnimationDuration() > 0 ? 260 : 0);
 		}
+		queueSelectionSettledAfterGraphPick('node');
 	}
 
 	function sync(opts: SyncOptions) {
@@ -766,7 +828,14 @@ export function createEngine(opts: GraphInitOptions) {
 		syncGraph();
 	}
 
+	function resizeGraph() {
+		if (!graph) return;
+		graph.resize();
+		fitGraph();
+	}
+
 	function destroy() {
+		cancelSelectionSettled();
 		uninstallGraphDebug();
 		graph?.destroy();
 		graph = undefined;
@@ -777,6 +846,7 @@ export function createEngine(opts: GraphInitOptions) {
 		fit: fitGraph,
 		zoom: zoomGraph,
 		reflow: reflowGraph,
+		resize: resizeGraph,
 		selectDevice,
 		destroy
 	};

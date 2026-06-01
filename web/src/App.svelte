@@ -31,12 +31,17 @@
 	import { resolveGraphLayoutRoot } from './lib/graph/graph-layout-root';
 	import { resolveBaseGraphEdges } from './lib/graph/resolve-graph-edges';
 	import AuthDialog from './lib/components/AuthDialog.svelte';
+	import DeviceDetailsPanel from './lib/components/DeviceDetailsPanel.svelte';
+	import DeviceFiltersPanel from './lib/components/DeviceFiltersPanel.svelte';
 	import GraphCanvas from './lib/components/GraphCanvas.svelte';
 	import GraphLegend from './lib/components/GraphLegend.svelte';
+	import MobileGraphBar from './lib/components/MobileGraphBar.svelte';
+	import MobileSheet from './lib/components/MobileSheet.svelte';
 	import PolicyEditorPanel from './lib/components/PolicyEditorPanel.svelte';
 	import SidebarLeft from './lib/components/SidebarLeft.svelte';
 	import SidebarRight from './lib/components/SidebarRight.svelte';
 	import SidebarToggleButton from './lib/components/SidebarToggleButton.svelte';
+	import { viewport } from './lib/ui/viewport.svelte';
 
 	let apiStatus = $state('checking');
 	let devices = $state<Device[]>([]);
@@ -75,6 +80,7 @@
 	let colorBy = $state<'status' | 'tag' | 'owner' | 'os'>('status');
 	let leftOpen = $state(true);
 	let rightOpen = $state(true);
+	let mobileSheet = $state<'filters' | 'details' | 'legend' | null>(null);
 
 	let graphAPI:
 		| {
@@ -216,6 +222,19 @@
 		selectedDevice = device;
 		graphAPI?.selectDevice(device);
 	}
+
+	function openMobileSheet(sheet: 'filters' | 'details' | 'legend') {
+		mobileSheet = mobileSheet === sheet ? null : sheet;
+	}
+
+	const hasMobileSelection = $derived(Boolean(selectedDevice || selectedEdge));
+
+	$effect(() => {
+		if (!viewport.isMobile) return;
+		leftOpen = false;
+		rightOpen = false;
+		if (editorOpen) editorOpen = false;
+	});
 
 	function localApiErrorMessage(error: LocalAPIStatusResponse | Error | undefined) {
 		if (!error) return '';
@@ -391,81 +410,95 @@
 		return '-';
 	}
 
-	onMount(async () => {
-		const health = await fetchHealth();
-		health.match({
-			ok: (value) => {
-				apiStatus = value.status;
-			},
-			err: (error) => {
-				apiStatus = error.message;
-			}
-		});
+	function deviceShortLabel(device: Device | undefined): string {
+		if (!device) return '';
+		const raw = device.name || device.ip || '';
+		const short = raw.includes('.') ? raw.split('.')[0] : raw;
+		if (short.length <= 20) return short;
+		return `${short.slice(0, 18)}…`;
+	}
 
-		const cloud = await fetchCloudStatus();
-		cloud.match({
-			ok: (value) => {
-				cloudStatus = value;
-			},
-			err: (error) => {
-				cloudError = error.message;
-			}
-		});
+	onMount(() => {
+		const unbindViewport = viewport.bind();
 
-		if (cloudStatus.authenticated) {
-			await loadPolicy();
-		}
+		void (async () => {
+			const health = await fetchHealth();
+			health.match({
+				ok: (value) => {
+					apiStatus = value.status;
+				},
+				err: (error) => {
+					apiStatus = error.message;
+				}
+			});
 
-		disconnectTopologySocket = connectTopologySocket({
-			onSnapshot: (value) => {
-				tailscaleSetup = value.setup ?? undefined;
-				if (value.setup?.required) {
-					apiStatus = 'setup required';
-					localApiError = undefined;
-				} else {
-					apiStatus = 'connected';
-					localApiError = undefined;
+			const cloud = await fetchCloudStatus();
+			cloud.match({
+				ok: (value) => {
+					cloudStatus = value;
+				},
+				err: (error) => {
+					cloudError = error.message;
 				}
-				devices = value.devices;
-				edges = value.edges;
-				tailnetName = value.tailnet;
-				selectedDevice = selectedDevice
-					? (value.devices.find((device) => device.id === selectedDevice?.id) ?? value.devices[0])
-					: value.devices[0];
-				scheduleTopologyPolicySync();
-			},
-			onUnavailable: (status) => {
-				tailscaleSetup = status.setup ?? undefined;
-				if (status.setup?.required) {
-					apiStatus = 'setup required';
-					localApiError = undefined;
-				} else {
-					apiStatus = 'LocalAPI unavailable';
-					localApiError = status;
-				}
-				devices = [];
-				edges = [];
-				tailnetName = '';
-				selectedDevice = undefined;
-			},
-			onConnectionState: (state) => {
-				if (tailscaleSetup?.required) {
-					apiStatus = 'setup required';
-					return;
-				}
-				if (state === 'connected' && devices.length > 0) {
-					apiStatus = 'connected';
-					return;
-				}
-				apiStatus = state;
-			},
-			onError: (error) => {
-				if (devices.length === 0) {
-					apiStatus = 'socket error';
-					localApiError = error;
-				}
+			});
+
+			if (cloudStatus.authenticated) {
+				await loadPolicy();
 			}
-		});
+
+			disconnectTopologySocket = connectTopologySocket({
+				onSnapshot: (value) => {
+					tailscaleSetup = value.setup ?? undefined;
+					if (value.setup?.required) {
+						apiStatus = 'setup required';
+						localApiError = undefined;
+					} else {
+						apiStatus = 'connected';
+						localApiError = undefined;
+					}
+					devices = value.devices;
+					edges = value.edges;
+					tailnetName = value.tailnet;
+					selectedDevice = selectedDevice
+						? (value.devices.find((device) => device.id === selectedDevice?.id) ?? value.devices[0])
+						: value.devices[0];
+					scheduleTopologyPolicySync();
+				},
+				onUnavailable: (status) => {
+					tailscaleSetup = status.setup ?? undefined;
+					if (status.setup?.required) {
+						apiStatus = 'setup required';
+						localApiError = undefined;
+					} else {
+						apiStatus = 'LocalAPI unavailable';
+						localApiError = status;
+					}
+					devices = [];
+					edges = [];
+					tailnetName = '';
+					selectedDevice = undefined;
+				},
+				onConnectionState: (state) => {
+					if (tailscaleSetup?.required) {
+						apiStatus = 'setup required';
+						return;
+					}
+					if (state === 'connected' && devices.length > 0) {
+						apiStatus = 'connected';
+						return;
+					}
+					apiStatus = state;
+				},
+				onError: (error) => {
+					if (devices.length === 0) {
+						apiStatus = 'socket error';
+						localApiError = error;
+					}
+				}
+			});
+		})();
+
+		return () => unbindViewport();
 	});
 
 	onDestroy(() => {
@@ -476,136 +509,194 @@
 	});
 </script>
 
-<main class="min-h-screen">
+<main class="min-h-screen overflow-hidden">
 	<section class="grid h-screen grid-rows-[auto_minmax(0,1fr)] overflow-hidden">
-		<div class="flex items-center justify-between gap-4 border-b border-base bg-surface px-5 py-4">
-			<div>
-				<p class="m-0 text-[0.8rem] font-bold tracking-normal text-secondary uppercase">
+		<div
+			class="app-header shrink-0 border-b border-base bg-surface px-4 py-3 md:gap-4 md:px-5 md:py-4"
+			class:app-header-mobile={viewport.isMobile}
+			class:app-header-desktop={!viewport.isMobile}
+		>
+			<div class="min-w-0 flex-1">
+				<p
+					class="m-0 text-[0.72rem] font-bold tracking-normal text-secondary uppercase md:text-[0.8rem]"
+				>
 					Tailnet topology
 				</p>
-				<h1 class="m-0 text-2xl leading-[1.1]">Tailor</h1>
-				{#if cloudStatus.devMode}
+				<h1 class="m-0 text-xl leading-[1.1] md:text-2xl">Tailor</h1>
+				{#if viewport.isMobile}
+					<p
+						class="m-0 mt-0.5 line-clamp-2 text-[0.72rem] leading-snug font-semibold text-secondary"
+					>
+						Policy editing is available on desktop.
+					</p>
+				{/if}
+				{#if cloudStatus.devMode && !viewport.isMobile}
 					<p class="m-0 mt-1 text-[0.78rem] font-bold text-teal">
 						Demo tailnet — {cloudStatus.tailnet ?? 'demo.tailor.ts.net'}
 					</p>
 				{/if}
 			</div>
-			<div class="flex min-w-0 items-center gap-[0.6rem]">
-				{#if cloudStatus.authenticated}
-					{#if hasValidatedPending}
-						<button class="btn-save" type="button" disabled={editorBusy} onclick={saveEditorPolicy}>
-							Save validated policy
+			<div
+				class="app-header-actions flex min-w-0 shrink-0 items-center gap-[0.6rem]"
+				class:app-header-actions-mobile={viewport.isMobile}
+			>
+				{#if !viewport.isMobile}
+					{#if cloudStatus.authenticated}
+						{#if hasValidatedPending}
+							<button
+								class="btn-save"
+								type="button"
+								disabled={editorBusy}
+								onclick={saveEditorPolicy}
+							>
+								Save validated policy
+							</button>
+						{/if}
+						<button class="btn-primary" type="button" onclick={openPolicyEditor}>Edit policy</button
+						>
+					{:else}
+						<button class="btn-primary" type="button" onclick={() => (phase2Open = true)}>
+							Enable ACL Editing
 						</button>
 					{/if}
-					<button class="btn-primary" type="button" onclick={openPolicyEditor}>Edit policy</button>
-				{:else}
-					<button class="btn-primary" type="button" onclick={() => (phase2Open = true)}>
-						Enable ACL Editing
-					</button>
 				{/if}
 				<div
-					class="flex min-w-[5rem] items-center gap-[0.3rem] rounded-full border border-status-border bg-status-bg p-[0.45rem_0.7rem] text-center text-[0.85rem] font-bold text-status-text"
+					class="status-pill flex max-w-full min-w-0 items-center gap-[0.3rem] rounded-full border border-status-border bg-status-bg p-[0.45rem_0.7rem] text-[0.85rem] font-bold text-status-text"
 					data-state={apiStatus}
+					title={apiStatus}
 				>
-					<span class="h-2 w-2 rounded-full"></span>{apiStatus}
+					<span class="h-2 w-2 shrink-0 rounded-full"></span>
+					<span class="truncate">{apiStatus}</span>
 				</div>
 			</div>
 		</div>
 
 		<div class="flex h-full min-h-0">
-			<SidebarLeft
-				bind:open={leftOpen}
-				{devices}
-				{listDevices}
-				bind:selectedDevice
-				bind:showLabels
-				bind:showOffline
-				bind:showSubnetRouters
-				bind:collapseTaggedFleets
-				bind:showTailnet
-				bind:selectedTag
-				bind:selectedOwner
-				bind:selectedOS
-				bind:colorBy
-				{tagOptions}
-				{ownerOptions}
-				{osOptions}
-				{listOnlineCount}
-				chooseDevice={(device) => chooseDevice(device)}
-			/>
+			{#if !viewport.isMobile}
+				<SidebarLeft
+					bind:open={leftOpen}
+					{devices}
+					{listDevices}
+					bind:selectedDevice
+					bind:showLabels
+					bind:showOffline
+					bind:showSubnetRouters
+					bind:collapseTaggedFleets
+					bind:showTailnet
+					bind:selectedTag
+					bind:selectedOwner
+					bind:selectedOS
+					bind:colorBy
+					{tagOptions}
+					{ownerOptions}
+					{osOptions}
+					{listOnlineCount}
+					chooseDevice={(device) => chooseDevice(device)}
+				/>
+			{/if}
 
-			<div class="relative flex min-h-0 min-w-0 flex-1">
+			<div class="relative flex min-h-0 min-w-0 flex-1 flex-col">
 				<section
-					class="graph relative min-h-[32rem] min-w-0 flex-1 overflow-hidden"
+					class="graph relative min-h-0 min-w-0 flex-1 overflow-hidden md:min-h-[32rem]"
+					class:graph-mobile={viewport.isMobile}
 					aria-label="Topology graph"
 				>
-					<SidebarToggleButton
-						position="left"
-						open={leftOpen}
-						ontoggle={() => (leftOpen = !leftOpen)}
-					/>
-					<SidebarToggleButton
-						position="right"
-						open={rightOpen}
-						ontoggle={() => (rightOpen = !rightOpen)}
-					/>
+					{#if !viewport.isMobile}
+						<SidebarToggleButton
+							position="left"
+							open={leftOpen}
+							ontoggle={() => (leftOpen = !leftOpen)}
+						/>
+						<SidebarToggleButton
+							position="right"
+							open={rightOpen}
+							ontoggle={() => (rightOpen = !rightOpen)}
+						/>
+					{/if}
 
-					<div class="graph-hud" aria-label="Graph summary">
-						<span class="hud-chip"
-							><strong class="hud-chip-strong">{graphOnlineCount}</strong> online</span
-						>
-						<span class="hud-chip"
-							><strong class="hud-chip-strong">{visibleEdges.length}</strong> links</span
-						>
-						{#if effectivePreviewEvaluation}
-							<span class="hud-chip hud-chip-warn">Preview</span>
-						{/if}
-						{#if cloudStatus.authenticated && graphMode === 'focused' && graphRootDevice}
-							<span class="hud-chip"
-								><strong class="hud-chip-strong"
-									>{graphRootDevice.name || graphRootDevice.ip}</strong
-								> focus</span
-							>
-						{/if}
-						{#if cloudStatus.authenticated}
-							<div class="mode-toggle">
-								{#each ['focused', 'all'] as mode (mode)}
-									<button
-										type="button"
-										class="mode-button"
-										data-active={graphMode === mode}
-										onclick={() => (graphMode = mode as 'focused' | 'all')}
-									>
-										{mode === 'focused' ? 'Focused' : 'All'}
-									</button>
-								{/each}
+					{#if viewport.isMobile}
+						<div class="graph-hud graph-hud-mobile" aria-label="Graph summary">
+							<div class="hud-row">
+								<span class="hud-chip"
+									><strong class="hud-chip-strong">{graphOnlineCount}</strong> online</span
+								>
+								<span class="hud-chip"
+									><strong class="hud-chip-strong">{visibleEdges.length}</strong> links</span
+								>
+								{#if effectivePreviewEvaluation}
+									<span class="hud-chip hud-chip-warn">Preview</span>
+								{/if}
 							</div>
-						{/if}
-						<button
-							type="button"
-							title="Zoom in"
-							onclick={() => graphAPI?.zoom(1.2)}
-							class="graph-control">+</button
-						>
-						<button
-							type="button"
-							title="Zoom out"
-							onclick={() => graphAPI?.zoom(0.8)}
-							class="graph-control">-</button
-						>
-						<button
-							type="button"
-							title="Fit to view"
-							onclick={() => graphAPI?.fit()}
-							class="graph-control">⌖</button
-						>
-						<button
-							type="button"
-							title="Reflow layout"
-							onclick={() => graphAPI?.reflow()}
-							class="graph-control">↻</button
-						>
-					</div>
+							{#if cloudStatus.authenticated && graphMode === 'focused' && graphRootDevice}
+								<div class="hud-row">
+									<span
+										class="hud-chip hud-chip-focus"
+										title="{graphRootDevice.name || graphRootDevice.ip} focus"
+									>
+										<strong class="hud-chip-strong">{deviceShortLabel(graphRootDevice)}</strong>
+										focus
+									</span>
+								</div>
+							{/if}
+						</div>
+					{:else}
+						<div class="graph-hud" aria-label="Graph summary">
+							<span class="hud-chip"
+								><strong class="hud-chip-strong">{graphOnlineCount}</strong> online</span
+							>
+							<span class="hud-chip"
+								><strong class="hud-chip-strong">{visibleEdges.length}</strong> links</span
+							>
+							{#if effectivePreviewEvaluation}
+								<span class="hud-chip hud-chip-warn">Preview</span>
+							{/if}
+							{#if cloudStatus.authenticated && graphMode === 'focused' && graphRootDevice}
+								<span class="hud-chip"
+									><strong class="hud-chip-strong"
+										>{graphRootDevice.name || graphRootDevice.ip}</strong
+									> focus</span
+								>
+							{/if}
+							{#if cloudStatus.authenticated}
+								<div class="mode-toggle">
+									{#each ['focused', 'all'] as mode (mode)}
+										<button
+											type="button"
+											class="mode-button"
+											data-active={graphMode === mode}
+											onclick={() => (graphMode = mode as 'focused' | 'all')}
+										>
+											{mode === 'focused' ? 'Focused' : 'All'}
+										</button>
+									{/each}
+								</div>
+							{/if}
+							<button
+								type="button"
+								title="Zoom in"
+								onclick={() => graphAPI?.zoom(1.2)}
+								class="graph-control">+</button
+							>
+							<button
+								type="button"
+								title="Zoom out"
+								onclick={() => graphAPI?.zoom(0.8)}
+								class="graph-control">-</button
+							>
+							<button
+								type="button"
+								title="Fit to view"
+								onclick={() => graphAPI?.fit()}
+								class="graph-control">⌖</button
+							>
+							<button
+								type="button"
+								title="Reflow layout"
+								onclick={() => graphAPI?.reflow()}
+								class="graph-control">↻</button
+							>
+						</div>
+					{/if}
 
 					<GraphCanvas
 						devices={graphDevices}
@@ -622,14 +713,16 @@
 						onReady={(api) => (graphAPI = api)}
 					/>
 
-					<GraphLegend
-						{colorBy}
-						authenticated={cloudStatus.authenticated}
-						bind:graphMode
-						{tagOptions}
-						{ownerOptions}
-						{osOptions}
-					/>
+					{#if !viewport.isMobile}
+						<GraphLegend
+							{colorBy}
+							authenticated={cloudStatus.authenticated}
+							bind:graphMode
+							{tagOptions}
+							{ownerOptions}
+							{osOptions}
+						/>
+					{/if}
 
 					{#if tailscaleSetup?.required}
 						<div class="tailscale-setup" role="status">
@@ -659,25 +752,44 @@
 					{/if}
 
 					{#if cloudError}
-						<div class="cloud-error" role="alert">{cloudError}</div>
+						<div class="cloud-error" class:cloud-error-mobile={viewport.isMobile} role="alert">
+							{cloudError}
+						</div>
 					{/if}
 
-					<PolicyEditorPanel
-						bind:open={editorOpen}
-						{policy}
-						bind:editorText={editorHuJSON}
-						isDirty={editorDirty}
-						valid={effectiveValid}
-						busy={editorBusy}
-						status={editorStatus}
-						errors={effectiveErrors}
-						onValidate={validateEditor}
-						onSave={saveEditorPolicy}
-						onDiscard={discardEditorChanges}
-						onClose={closePolicyEditor}
-					/>
+					{#if !viewport.isMobile}
+						<PolicyEditorPanel
+							bind:open={editorOpen}
+							{policy}
+							bind:editorText={editorHuJSON}
+							isDirty={editorDirty}
+							valid={effectiveValid}
+							busy={editorBusy}
+							status={editorStatus}
+							errors={effectiveErrors}
+							onValidate={validateEditor}
+							onSave={saveEditorPolicy}
+							onDiscard={discardEditorChanges}
+							onClose={closePolicyEditor}
+						/>
+					{/if}
 				</section>
 
+				{#if viewport.isMobile}
+					<MobileGraphBar
+						hasSelection={hasMobileSelection}
+						cloudAuthenticated={cloudStatus.authenticated}
+						bind:graphMode
+						activeSheet={mobileSheet}
+						onOpenSheet={openMobileSheet}
+						onZoomIn={() => graphAPI?.zoom(1.2)}
+						onZoomOut={() => graphAPI?.zoom(0.8)}
+						onFit={() => graphAPI?.fit()}
+					/>
+				{/if}
+			</div>
+
+			{#if !viewport.isMobile}
 				<SidebarRight
 					bind:open={rightOpen}
 					bind:selectedDevice
@@ -687,18 +799,88 @@
 					{visibleEdges}
 					{colorBy}
 				/>
-			</div>
+			{/if}
 		</div>
 	</section>
 
-	<AuthDialog
-		bind:open={phase2Open}
-		initialTailnet={deriveTailnet()}
-		{cloudBusy}
-		{cloudError}
-		onClose={closePhase2Dialog}
-		onSubmit={enableACLEditing}
-	/>
+	{#if viewport.isMobile}
+		<MobileSheet
+			open={mobileSheet === 'filters'}
+			onclose={() => (mobileSheet = null)}
+			title="Filters"
+		>
+			{#if mobileSheet === 'filters'}
+				<DeviceFiltersPanel
+					{devices}
+					{listDevices}
+					bind:selectedDevice
+					bind:showLabels
+					bind:showOffline
+					bind:showSubnetRouters
+					bind:collapseTaggedFleets
+					bind:showTailnet
+					bind:selectedTag
+					bind:selectedOwner
+					bind:selectedOS
+					bind:colorBy
+					{tagOptions}
+					{ownerOptions}
+					{osOptions}
+					{listOnlineCount}
+					chooseDevice={(device) => chooseDevice(device)}
+					compact
+				/>
+			{/if}
+		</MobileSheet>
+
+		<MobileSheet
+			open={mobileSheet === 'details'}
+			onclose={() => (mobileSheet = null)}
+			title="Details"
+		>
+			{#if mobileSheet === 'details'}
+				<DeviceDetailsPanel
+					bind:selectedDevice
+					bind:selectedEdge
+					devices={graphDevices}
+					{aggregateMeta}
+					{visibleEdges}
+					bind:colorBy
+					showCredit={false}
+					compact
+				/>
+			{/if}
+		</MobileSheet>
+
+		<MobileSheet
+			open={mobileSheet === 'legend'}
+			onclose={() => (mobileSheet = null)}
+			title="Legend"
+		>
+			{#if mobileSheet === 'legend'}
+				<GraphLegend
+					{colorBy}
+					authenticated={cloudStatus.authenticated}
+					bind:graphMode
+					{tagOptions}
+					{ownerOptions}
+					{osOptions}
+					embedded
+				/>
+			{/if}
+		</MobileSheet>
+	{/if}
+
+	{#if !viewport.isMobile}
+		<AuthDialog
+			bind:open={phase2Open}
+			initialTailnet={deriveTailnet()}
+			{cloudBusy}
+			{cloudError}
+			onClose={closePhase2Dialog}
+			onSubmit={enableACLEditing}
+		/>
+	{/if}
 </main>
 
 <style>
@@ -747,5 +929,38 @@
 	}
 	.cloud-error {
 		@apply absolute bottom-3 left-1/2 z-[4] max-w-[min(36rem,calc(100%-2rem))] -translate-x-1/2 rounded-lg border border-danger/30 bg-panel-bg px-3 py-2 text-[0.78rem] font-semibold text-danger shadow-[0_10px_26px_rgb(23_33_38/8%)];
+	}
+	.cloud-error-mobile {
+		bottom: calc(8.75rem + env(safe-area-inset-bottom, 0px));
+	}
+	.graph-mobile {
+		padding-bottom: calc(8.75rem + env(safe-area-inset-bottom, 0px));
+	}
+	.graph-hud-mobile {
+		@apply right-3 left-3 z-[4] flex w-auto max-w-none flex-col items-stretch gap-[0.35rem] p-[0.4rem];
+	}
+	.graph-hud-mobile .hud-row {
+		@apply flex min-w-0 flex-wrap items-center gap-[0.35rem];
+	}
+	.hud-chip-focus {
+		@apply max-w-full min-w-0;
+	}
+	.hud-chip-focus .hud-chip-strong {
+		@apply inline-block max-w-[12rem] overflow-hidden align-bottom text-ellipsis whitespace-nowrap;
+	}
+	.app-header {
+		@apply relative z-10;
+	}
+	.app-header-mobile {
+		@apply flex flex-col gap-2;
+	}
+	.app-header-desktop {
+		@apply flex flex-row items-center justify-between gap-3;
+	}
+	.app-header-actions-mobile {
+		@apply w-full;
+	}
+	.app-header-actions-mobile .status-pill {
+		@apply w-full max-w-none justify-center;
 	}
 </style>

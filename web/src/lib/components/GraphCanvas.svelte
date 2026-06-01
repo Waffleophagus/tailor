@@ -25,6 +25,7 @@
 		onEdgeSelect = (edge?: RenderEdge) => {
 			selectedEdge = edge;
 		},
+		onSelectionSettled,
 		onReady
 	}: {
 		devices: Device[];
@@ -41,6 +42,7 @@
 		scenarioSourceIds?: ReadonlySet<string>;
 		onNodeSelect?: (device: Device) => void;
 		onEdgeSelect?: (edge?: RenderEdge) => void;
+		onSelectionSettled?: () => void;
 		onReady?: (api: {
 			fit: () => void;
 			zoom: (delta: number) => void;
@@ -80,7 +82,8 @@
 				rootDevice,
 				scenarioSourceIds,
 				onNodeSelect,
-				onEdgeSelect
+				onEdgeSelect,
+				onSelectionSettled
 			});
 			onReady?.({
 				fit: () => engine!.fit(),
@@ -107,6 +110,20 @@
 			rootDevice,
 			scenarioSourceIds
 		});
+	});
+
+	$effect(() => {
+		if (!graphEl || !engine) return;
+		let skipInitial = true;
+		const observer = new ResizeObserver(() => {
+			if (skipInitial) {
+				skipInitial = false;
+				return;
+			}
+			engine?.resize();
+		});
+		observer.observe(graphEl);
+		return () => observer.disconnect();
 	});
 
 	onDestroy(() => {

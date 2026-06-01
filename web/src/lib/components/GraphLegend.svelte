@@ -5,7 +5,8 @@
 		graphMode = $bindable<'focused' | 'all'>('all'),
 		tagOptions = [] as string[],
 		ownerOptions = [] as string[],
-		osOptions = [] as string[]
+		osOptions = [] as string[],
+		embedded = false
 	}: {
 		colorBy?: 'status' | 'tag' | 'owner' | 'os';
 		authenticated?: boolean;
@@ -13,6 +14,7 @@
 		tagOptions?: string[];
 		ownerOptions?: string[];
 		osOptions?: string[];
+		embedded?: boolean;
 	} = $props();
 
 	const osColors: Record<string, string> = {
@@ -72,7 +74,9 @@
 </script>
 
 <div
-	class="pointer-events-auto absolute bottom-3 left-3 z-[3] max-h-[calc(100%-1.5rem)] w-48 overflow-y-auto rounded-lg border border-graph-border bg-legend-bg/95 p-2 text-[0.675rem] font-bold text-secondary shadow-[0_8px_22px_rgb(23_33_38/8%)]"
+	class={embedded
+		? 'text-[0.675rem] font-bold text-secondary'
+		: 'pointer-events-auto absolute bottom-3 left-3 z-[3] hidden max-h-[calc(100%-1.5rem)] w-48 overflow-y-auto rounded-lg border border-graph-border bg-legend-bg/95 p-2 text-[0.675rem] font-bold text-secondary shadow-[0_8px_22px_rgb(23_33_38/8%)] md:block'}
 	role="region"
 	aria-label="Graph legend"
 >
