@@ -1,11 +1,14 @@
 <script lang="ts">
+	import { palette } from './avatar-color';
+
 	let {
 		colorBy = $bindable<'status' | 'tag' | 'owner' | 'os'>('status'),
 		authenticated = false,
 		graphMode = $bindable<'focused' | 'all'>('all'),
 		tagOptions = [] as string[],
 		ownerOptions = [] as string[],
-		osOptions = [] as string[]
+		osOptions = [] as string[],
+		embedded = false
 	}: {
 		colorBy?: 'status' | 'tag' | 'owner' | 'os';
 		authenticated?: boolean;
@@ -13,28 +16,8 @@
 		tagOptions?: string[];
 		ownerOptions?: string[];
 		osOptions?: string[];
+		embedded?: boolean;
 	} = $props();
-
-	const osColors: Record<string, string> = {
-		windows: '#01A6F0',
-		android: '#32DE84',
-		linux: '#F4BC00',
-		bsd: '#B5010F',
-		macOS: '#A2AAAD',
-		ios: '#FFFFFF',
-		tvos: '#FA6C1B'
-	};
-
-	function palette(value: string): string {
-		const osColor = osColors[value];
-		if (osColor) return osColor;
-		const colors = ['#438aa1', '#a5663f', '#7c6fb0', '#b0892f', '#5d7f73', '#b45f74', '#5973b0'];
-		let hash = 0;
-		for (let i = 0; i < value.length; i += 1) {
-			hash = (hash + value.charCodeAt(i) * (i + 1)) % colors.length;
-		}
-		return colors[hash];
-	}
 
 	interface ColorEntry {
 		color: string;
@@ -72,7 +55,9 @@
 </script>
 
 <div
-	class="pointer-events-auto absolute bottom-3 left-3 z-[3] max-h-[calc(100%-1.5rem)] w-48 overflow-y-auto rounded-lg border border-graph-border bg-legend-bg/95 p-2 text-[0.675rem] font-bold text-secondary shadow-[0_8px_22px_rgb(23_33_38/8%)]"
+	class={embedded
+		? 'text-[0.675rem] font-bold text-secondary'
+		: 'pointer-events-auto absolute bottom-3 left-3 z-[3] hidden max-h-[calc(100%-1.5rem)] w-48 overflow-y-auto rounded-lg border border-graph-border bg-legend-bg/95 p-2 text-[0.675rem] font-bold text-secondary shadow-[0_8px_22px_rgb(23_33_38/8%)] md:block'}
 	role="region"
 	aria-label="Graph legend"
 >
