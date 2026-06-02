@@ -246,9 +246,15 @@ func repairableLocalProxy(rawURL string) bool {
 	hostPort := strings.TrimPrefix(rawURL, "http://")
 	host, _, err := net.SplitHostPort(hostPort)
 	if err != nil {
-		return false
+		host = hostPort
+		if strings.HasPrefix(hostPort, "[") && strings.HasSuffix(hostPort, "]") {
+			host = strings.TrimPrefix(strings.TrimSuffix(hostPort, "]"), "[")
+		}
 	}
-	return host == "127.0.0.1" || host == "localhost" || host == "::1"
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
+	}
+	return strings.EqualFold(host, "localhost")
 }
 
 func listenAddrToProxyURL(listenAddr string) (string, error) {

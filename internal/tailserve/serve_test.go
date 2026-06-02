@@ -182,6 +182,30 @@ func TestPortInUseByOtherAllowsStaleLocalProxy(t *testing.T) {
 	}
 }
 
+func TestRepairableLocalProxy(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		in   string
+		want bool
+	}{
+		{"ipv4 loopback with port", "http://127.0.0.2:8080", true},
+		{"ipv6 loopback with port", "http://[::1]:8080", true},
+		{"localhost case insensitive", "http://LOCALHOST:8080", true},
+		{"ipv4 loopback without port", "http://127.0.0.2", true},
+		{"ipv6 loopback without port", "http://[::1]", true},
+		{"foreign ip", "http://192.0.2.10:3000", false},
+		{"foreign hostname", "http://example.com:3000", false},
+	}
+
+	for _, tc := range tests {
+		if got := repairableLocalProxy(tc.in); got != tc.want {
+			t.Fatalf("%s: repairableLocalProxy(%q) = %v, want %v", tc.name, tc.in, got, tc.want)
+		}
+	}
+}
+
 func TestPortInUseByOtherBlocksForeignProxy(t *testing.T) {
 	t.Parallel()
 
