@@ -160,7 +160,16 @@ func portInUseByOther(sc *ipn.ServeConfig, dnsName string, port uint16, proxyURL
 	hp := ipn.HostPort(net.JoinHostPort(dnsName, strconv.Itoa(int(port))))
 	if web, ok := sc.Web[hp]; ok {
 		for _, handler := range web.Handlers {
-			if handler != nil && (handler.Proxy == "" || !repairableLocalProxy(handler.Proxy)) {
+			if handler == nil {
+				continue
+			}
+			if handler.Proxy != "" {
+				if !repairableLocalProxy(handler.Proxy) {
+					return true
+				}
+				continue
+			}
+			if handler.Redirect != "" || handler.Path != "" || handler.Text != "" {
 				return true
 			}
 		}
@@ -187,7 +196,16 @@ func httpRedirectInUseByOther(sc *ipn.ServeConfig, dnsName, redirectURL, mds str
 	hp := ipn.HostPort(net.JoinHostPort(dnsName, strconv.Itoa(httpRedirectPort)))
 	if web, ok := sc.Web[hp]; ok {
 		for _, handler := range web.Handlers {
-			if handler != nil && handler.Redirect != redirectURL && !repairableLocalProxy(handler.Proxy) {
+			if handler == nil {
+				continue
+			}
+			if handler.Redirect != "" && handler.Redirect != redirectURL {
+				return true
+			}
+			if handler.Redirect == redirectURL {
+				continue
+			}
+			if !repairableLocalProxy(handler.Proxy) {
 				return true
 			}
 		}
@@ -199,7 +217,16 @@ func httpRedirectInUseByOther(sc *ipn.ServeConfig, dnsName, redirectURL, mds str
 		}
 		if tcp.HTTP {
 			handler := sc.GetWebHandler("", hp, "/")
-			if handler == nil || (handler.Redirect != redirectURL && !repairableLocalProxy(handler.Proxy)) {
+			if handler == nil {
+				return true
+			}
+			if handler.Redirect != "" && handler.Redirect != redirectURL {
+				return true
+			}
+			if handler.Redirect == redirectURL {
+				return false
+			}
+			if !repairableLocalProxy(handler.Proxy) {
 				return true
 			}
 		}

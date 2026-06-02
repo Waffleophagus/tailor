@@ -132,6 +132,27 @@ func TestHTTPRedirectInUseByOtherBlocksDifferentRedirect(t *testing.T) {
 	}
 }
 
+func TestHTTPRedirectInUseByOtherWithMismatchedRedirectAndLocalProxy(t *testing.T) {
+	t.Parallel()
+
+	sc := &ipn.ServeConfig{}
+	sc.SetWebHandler(
+		&ipn.HTTPHandler{
+			Redirect: "308:https://other.example.ts.net${REQUEST_URI}",
+			Proxy:    "http://127.0.0.1:8080",
+		},
+		"tailor.example.ts.net",
+		80,
+		"/",
+		false,
+		"example.ts.net",
+	)
+
+	if !httpRedirectInUseByOther(sc, "tailor.example.ts.net", "308:https://tailor.example.ts.net${REQUEST_URI}", "example.ts.net") {
+		t.Fatal("expected mismatched redirect to block even with local proxy")
+	}
+}
+
 func TestHTTPSRedirectURL(t *testing.T) {
 	t.Parallel()
 
