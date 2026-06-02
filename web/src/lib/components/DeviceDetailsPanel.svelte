@@ -3,6 +3,7 @@
 	import type { DeviceAggregateMeta } from '../graph/collapse-devices';
 	import { isAggregateDeviceId } from '../graph/collapse-devices';
 	import type { RenderEdge } from '../graph/engine';
+	import { palette } from './avatar-color';
 
 	let {
 		selectedDevice = $bindable<Device | undefined>(undefined),
@@ -48,27 +49,6 @@
 		selectedDevice ? visibleEdges.filter((edge) => edge.to === selectedDevice?.id) : []
 	);
 
-	const osColors: Record<string, string> = {
-		windows: '#01A6F0',
-		android: '#32DE84',
-		linux: '#F4BC00',
-		bsd: '#B5010F',
-		macOS: '#A2AAAD',
-		ios: '#FFFFFF',
-		tvos: '#FA6C1B'
-	};
-
-	function palette(value: string): string {
-		const osColor = osColors[value];
-		if (osColor) return osColor;
-		const colors = ['#438aa1', '#a5663f', '#7c6fb0', '#b0892f', '#5d7f73', '#b45f74', '#5973b0'];
-		let hash = 0;
-		for (let i = 0; i < value.length; i += 1) {
-			hash = (hash + value.charCodeAt(i) * (i + 1)) % colors.length;
-		}
-		return colors[hash];
-	}
-
 	const avatarColor = $derived.by((): string | undefined => {
 		if (!activeDevice) return undefined;
 		if (colorBy === 'status') {
@@ -99,7 +79,7 @@
 	}
 </script>
 
-<div class="flex min-h-0 flex-col">
+<div class="flex min-h-full flex-col">
 	{#if !compact}
 		<div class="mb-3 shrink-0">
 			<h2 class="m-0 text-[0.95rem] leading-[1.2]">Details</h2>

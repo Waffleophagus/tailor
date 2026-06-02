@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { Snippet } from 'svelte';
+	import { tick, type Snippet } from 'svelte';
 
 	let {
 		open = false,
@@ -13,14 +13,104 @@
 		children: Snippet;
 	} = $props();
 
+	let sheetElement = $state<HTMLDivElement>();
+	let previouslyFocused: HTMLElement | undefined;
+	let wasOpen = false;
+
+	const focusableSelector = [
+		'a[href]',
+		'button:not([disabled])',
+		'textarea:not([disabled])',
+		'input:not([disabled])',
+		'select:not([disabled])',
+		'[tabindex]:not([tabindex="-1"])'
+	].join(',');
+
+	function focusableElements() {
+		if (!sheetElement) return [];
+		return Array.from(sheetElement.querySelectorAll<HTMLElement>(focusableSelector)).filter(
+			(element) => !element.hasAttribute('disabled') && element.offsetParent !== null
+		);
+	}
+
+	function focusSheet() {
+		const [firstFocusable] = focusableElements();
+		(firstFocusable ?? sheetElement)?.focus();
+	}
+
+	function restoreFocus() {
+		previouslyFocused?.focus();
+		previouslyFocused = undefined;
+	}
+
+	function handleKeydown(event: KeyboardEvent) {
+		if (event.key === 'Escape') {
+			event.preventDefault();
+			close();
+			return;
+		}
+
+		if (event.key !== 'Tab') return;
+
+		const elements = focusableElements();
+		if (elements.length === 0) {
+			event.preventDefault();
+			sheetElement?.focus();
+			return;
+		}
+
+		const first = elements[0];
+		const last = elements[elements.length - 1];
+
+		if (event.shiftKey && document.activeElement === first) {
+			event.preventDefault();
+			last.focus();
+		} else if (!event.shiftKey && document.activeElement === last) {
+			event.preventDefault();
+			first.focus();
+		} else if (!sheetElement?.contains(document.activeElement)) {
+			event.preventDefault();
+			first.focus();
+		}
+	}
+
 	function close() {
 		onclose?.();
 	}
+
+	$effect(() => {
+		if (open && !wasOpen) {
+			previouslyFocused =
+				document.activeElement instanceof HTMLElement ? document.activeElement : undefined;
+			wasOpen = true;
+			tick().then(() => {
+				if (open) focusSheet();
+			});
+		} else if (!open && wasOpen) {
+			wasOpen = false;
+			restoreFocus();
+		}
+	});
 </script>
 
 {#if open}
-	<button type="button" class="backdrop" aria-label="Close panel" onclick={close}></button>
-	<div class="sheet" role="dialog" aria-modal="true" aria-label={title}>
+	<button
+		type="button"
+		class="backdrop"
+		aria-label="Close panel"
+		onclick={close}
+		onkeydown={handleKeydown}
+		tabindex="-1"
+	></button>
+	<div
+		bind:this={sheetElement}
+		class="sheet"
+		role="dialog"
+		aria-modal="true"
+		aria-label={title || 'Panel'}
+		tabindex="-1"
+		onkeydown={handleKeydown}
+	>
 		<div class="handle" aria-hidden="true"></div>
 		{#if title}
 			<div class="header">
