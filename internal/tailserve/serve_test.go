@@ -57,20 +57,116 @@ func TestAlreadyConfigured(t *testing.T) {
 		"example.ts.net",
 	)
 
-	if !alreadyConfigured(sc, "tailor.example.ts.net", 443, "http://127.0.0.1:8080") {
+	if alreadyConfigured(sc, "tailor.example.ts.net", 443, "http://127.0.0.1:8080", "308:https://tailor.example.ts.net${REQUEST_URI}") {
+		t.Fatal("expected missing HTTP redirect to be incomplete")
+	}
+
+	sc.SetWebHandler(
+		&ipn.HTTPHandler{Redirect: "308:https://tailor.example.ts.net${REQUEST_URI}"},
+		"tailor.example.ts.net",
+		80,
+		"/",
+		false,
+		"example.ts.net",
+	)
+
+	if !alreadyConfigured(sc, "tailor.example.ts.net", 443, "http://127.0.0.1:8080", "308:https://tailor.example.ts.net${REQUEST_URI}") {
 		t.Fatal("expected matching serve config to be detected")
 	}
-	if alreadyConfigured(sc, "tailor.example.ts.net", 443, "http://127.0.0.1:9090") {
+	if alreadyConfigured(sc, "tailor.example.ts.net", 443, "http://127.0.0.1:9090", "308:https://tailor.example.ts.net${REQUEST_URI}") {
 		t.Fatal("different proxy URL should not match")
 	}
 }
 
-func TestPortInUseByOther(t *testing.T) {
+func TestHTTPRedirectInUseByOtherAllowsMatchingRedirect(t *testing.T) {
 	t.Parallel()
 
 	sc := &ipn.ServeConfig{}
 	sc.SetWebHandler(
-		&ipn.HTTPHandler{Proxy: "http://127.0.0.1:3000"},
+		&ipn.HTTPHandler{Redirect: "308:https://tailor.example.ts.net${REQUEST_URI}"},
+		"tailor.example.ts.net",
+		80,
+		"/",
+		false,
+		"example.ts.net",
+	)
+
+	if httpRedirectInUseByOther(sc, "tailor.example.ts.net", "308:https://tailor.example.ts.net${REQUEST_URI}", "example.ts.net") {
+		t.Fatal("expected matching HTTP redirect to be accepted")
+	}
+}
+
+func TestHTTPRedirectInUseByOtherAllowsStaleLocalProxy(t *testing.T) {
+	t.Parallel()
+
+	sc := &ipn.ServeConfig{}
+	sc.SetWebHandler(
+		&ipn.HTTPHandler{Proxy: "http://127.0.0.1:80"},
+		"tailor.example.ts.net",
+		80,
+		"/",
+		false,
+		"example.ts.net",
+	)
+
+	if httpRedirectInUseByOther(sc, "tailor.example.ts.net", "308:https://tailor.example.ts.net${REQUEST_URI}", "example.ts.net") {
+		t.Fatal("expected stale local HTTP proxy to be repairable")
+	}
+}
+
+func TestHTTPRedirectInUseByOtherBlocksDifferentRedirect(t *testing.T) {
+	t.Parallel()
+
+	sc := &ipn.ServeConfig{}
+	sc.SetWebHandler(
+		&ipn.HTTPHandler{Redirect: "308:https://other.example.ts.net${REQUEST_URI}"},
+		"tailor.example.ts.net",
+		80,
+		"/",
+		false,
+		"example.ts.net",
+	)
+
+	if !httpRedirectInUseByOther(sc, "tailor.example.ts.net", "308:https://tailor.example.ts.net${REQUEST_URI}", "example.ts.net") {
+		t.Fatal("expected different HTTP redirect to block")
+	}
+}
+
+func TestHTTPSRedirectURL(t *testing.T) {
+	t.Parallel()
+
+	if got := httpsRedirectURL("tailor.example.ts.net", 443); got != "308:https://tailor.example.ts.net${REQUEST_URI}" {
+		t.Fatalf("default redirect = %q", got)
+	}
+	if got := httpsRedirectURL("tailor.example.ts.net", 8443); got != "308:https://tailor.example.ts.net:8443${REQUEST_URI}" {
+		t.Fatalf("custom-port redirect = %q", got)
+	}
+}
+
+func TestPortInUseByOtherAllowsStaleLocalProxy(t *testing.T) {
+	t.Parallel()
+
+	sc := &ipn.ServeConfig{}
+	sc.SetWebHandler(
+		&ipn.HTTPHandler{Proxy: "http://127.0.0.1:80"},
+		"tailor.example.ts.net",
+		443,
+		"/",
+		true,
+		"example.ts.net",
+	)
+
+	if portInUseByOther(sc, "tailor.example.ts.net", 443, "http://127.0.0.1:8080", "example.ts.net") {
+		t.Fatal("expected existing local proxy to be repairable")
+	}
+}
+
+func TestPortInUseByOtherBlocksForeignProxy(t *testing.T) {
+	t.Parallel()
+
+	sc := &ipn.ServeConfig{}
+	sc.SetWebHandler(
+		&ipn.HTTPHandler{Proxy: "http://192.0.2.10:3000"},
 		"tailor.example.ts.net",
 		443,
 		"/",
@@ -79,7 +175,7 @@ func TestPortInUseByOther(t *testing.T) {
 	)
 
 	if !portInUseByOther(sc, "tailor.example.ts.net", 443, "http://127.0.0.1:8080", "example.ts.net") {
-		t.Fatal("expected existing foreign serve config to block")
+		t.Fatal("expected existing foreign proxy config to block")
 	}
 }
 

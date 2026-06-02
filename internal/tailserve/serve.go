@@ -16,6 +16,7 @@ import (
 )
 
 const defaultHTTPSPort = 443
+const httpRedirectPort = 80
 
 // Mode controls whether Tailor configures Tailscale Serve on startup.
 type Mode string
@@ -112,7 +113,8 @@ func tryConfigure(ctx context.Context, lc *local.Client, proxyURL string, httpsP
 		sc = new(ipn.ServeConfig)
 	}
 
-	if alreadyConfigured(sc, dnsName, httpsPort, proxyURL) {
+	redirectURL := httpsRedirectURL(dnsName, httpsPort)
+	if alreadyConfigured(sc, dnsName, httpsPort, proxyURL, redirectURL) {
 		logger.Info("tailscale serve already configured",
 			"url", fmt.Sprintf("https://%s/", dnsName),
 			"proxy", proxyURL,
@@ -123,9 +125,13 @@ func tryConfigure(ctx context.Context, lc *local.Client, proxyURL string, httpsP
 	if portInUseByOther(sc, dnsName, httpsPort, proxyURL, mds) {
 		return fmt.Errorf("port %d already has a different tailscale serve config", httpsPort)
 	}
+	if httpRedirectInUseByOther(sc, dnsName, redirectURL, mds) {
+		return fmt.Errorf("port %d already has a different tailscale serve config", httpRedirectPort)
+	}
 
 	handler := &ipn.HTTPHandler{Proxy: proxyURL}
 	sc.SetWebHandler(handler, dnsName, httpsPort, "/", true, mds)
+	sc.SetWebHandler(&ipn.HTTPHandler{Redirect: redirectURL}, dnsName, httpRedirectPort, "/", false, mds)
 
 	if err := lc.SetServeConfig(ctx, sc); err != nil {
 		return fmt.Errorf("set serve config: %w", err)
@@ -138,12 +144,13 @@ func tryConfigure(ctx context.Context, lc *local.Client, proxyURL string, httpsP
 	return nil
 }
 
-func alreadyConfigured(sc *ipn.ServeConfig, dnsName string, port uint16, proxyURL string) bool {
+func alreadyConfigured(sc *ipn.ServeConfig, dnsName string, port uint16, proxyURL, redirectURL string) bool {
 	if sc == nil {
 		return false
 	}
 	handler := sc.GetWebHandler("", ipn.HostPort(net.JoinHostPort(dnsName, strconv.Itoa(int(port)))), "/")
-	return handler != nil && handler.Proxy == proxyURL
+	redirect := sc.GetWebHandler("", ipn.HostPort(net.JoinHostPort(dnsName, strconv.Itoa(httpRedirectPort))), "/")
+	return handler != nil && handler.Proxy == proxyURL && redirect != nil && redirect.Redirect == redirectURL
 }
 
 func portInUseByOther(sc *ipn.ServeConfig, dnsName string, port uint16, proxyURL, mds string) bool {
@@ -153,7 +160,7 @@ func portInUseByOther(sc *ipn.ServeConfig, dnsName string, port uint16, proxyURL
 	hp := ipn.HostPort(net.JoinHostPort(dnsName, strconv.Itoa(int(port))))
 	if web, ok := sc.Web[hp]; ok {
 		for _, handler := range web.Handlers {
-			if handler != nil && (handler.Proxy == "" || handler.Proxy != proxyURL) {
+			if handler != nil && (handler.Proxy == "" || !repairableLocalProxy(handler.Proxy)) {
 				return true
 			}
 		}
@@ -165,12 +172,56 @@ func portInUseByOther(sc *ipn.ServeConfig, dnsName string, port uint16, proxyURL
 		}
 		if tcp.HTTPS || tcp.HTTP {
 			handler := sc.GetWebHandler("", hp, "/")
-			if handler == nil || handler.Proxy != proxyURL {
+			if handler == nil || !repairableLocalProxy(handler.Proxy) {
 				return true
 			}
 		}
 	}
 	return false
+}
+
+func httpRedirectInUseByOther(sc *ipn.ServeConfig, dnsName, redirectURL, mds string) bool {
+	if sc == nil {
+		return false
+	}
+	hp := ipn.HostPort(net.JoinHostPort(dnsName, strconv.Itoa(httpRedirectPort)))
+	if web, ok := sc.Web[hp]; ok {
+		for _, handler := range web.Handlers {
+			if handler != nil && handler.Redirect != redirectURL && !repairableLocalProxy(handler.Proxy) {
+				return true
+			}
+		}
+	}
+	_ = mds
+	if tcp, ok := sc.TCP[httpRedirectPort]; ok && tcp != nil {
+		if tcp.TCPForward != "" || tcp.HTTPS {
+			return true
+		}
+		if tcp.HTTP {
+			handler := sc.GetWebHandler("", hp, "/")
+			if handler == nil || (handler.Redirect != redirectURL && !repairableLocalProxy(handler.Proxy)) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func httpsRedirectURL(dnsName string, httpsPort uint16) string {
+	host := dnsName
+	if httpsPort != defaultHTTPSPort {
+		host = net.JoinHostPort(dnsName, strconv.Itoa(int(httpsPort)))
+	}
+	return "308:https://" + host + "${REQUEST_URI}"
+}
+
+func repairableLocalProxy(rawURL string) bool {
+	hostPort := strings.TrimPrefix(rawURL, "http://")
+	host, _, err := net.SplitHostPort(hostPort)
+	if err != nil {
+		return false
+	}
+	return host == "127.0.0.1" || host == "localhost" || host == "::1"
 }
 
 func listenAddrToProxyURL(listenAddr string) (string, error) {
