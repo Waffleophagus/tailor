@@ -28,6 +28,10 @@ type Service struct {
 
 	mu           sync.Mutex
 	stagedDrafts map[string]stagedDraft
+
+	cleanupDone chan struct{}
+	cleanupStop chan struct{}
+	closeOnce   sync.Once
 }
 
 const (
@@ -39,6 +43,7 @@ const (
 var ErrPolicyFetch = errors.New("policy fetch failed")
 var ErrStagedDraftNotFound = errors.New("staged draft not found")
 var ErrStagedDraftHashMismatch = errors.New("staged draft hash mismatch")
+var ErrStagedDraftBaseMismatch = errors.New("staged draft base policy mismatch")
 
 type PolicyFetchError struct {
 	Err error
@@ -71,9 +76,18 @@ func New(options Options) *Service {
 		localAPI:     localapi.New(options.LocalAPIEndpoint, localapi.WithLogger(logger)),
 		cloudAPI:     cloudapi.New(cloudapi.WithLogger(logger)),
 		stagedDrafts: map[string]stagedDraft{},
+		cleanupDone:  make(chan struct{}),
+		cleanupStop:  make(chan struct{}),
 	}
 	go service.cleanupStagedDrafts()
 	return service
+}
+
+func (s *Service) Close() {
+	s.closeOnce.Do(func() {
+		close(s.cleanupStop)
+		<-s.cleanupDone
+	})
 }
 
 func (s *Service) LocalAPIEndpoint() string {
@@ -273,6 +287,13 @@ func (s *Service) SaveStagedPolicy(ctx context.Context, request api.PolicySaveRe
 	if err := policy.ValidateTailscaleConstraints(draft.HuJSON); err != nil {
 		return api.PolicySaveResponse{}, err
 	}
+	current, err := s.cloudAPI.Policy(ctx)
+	if err != nil {
+		return api.PolicySaveResponse{}, PolicyFetchError{Err: err}
+	}
+	if policyHash(current) != draft.BaseHash {
+		return api.PolicySaveResponse{}, ErrStagedDraftBaseMismatch
+	}
 	saved, err := s.cloudAPI.SavePolicy(ctx, draft.HuJSON)
 	if err != nil {
 		return api.PolicySaveResponse{}, err
@@ -307,12 +328,18 @@ func (s *Service) stagedDraft(id, draftHash string) (stagedDraft, error) {
 }
 
 func (s *Service) cleanupStagedDrafts() {
+	defer close(s.cleanupDone)
 	ticker := time.NewTicker(stagedDraftCleanupInterval)
 	defer ticker.Stop()
-	for now := range ticker.C {
-		s.mu.Lock()
-		s.evictExpiredStagedDraftsLocked(now.UTC())
-		s.mu.Unlock()
+	for {
+		select {
+		case now := <-ticker.C:
+			s.mu.Lock()
+			s.evictExpiredStagedDraftsLocked(now.UTC())
+			s.mu.Unlock()
+		case <-s.cleanupStop:
+			return
+		}
 	}
 }
 

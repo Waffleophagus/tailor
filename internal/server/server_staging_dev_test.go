@@ -27,6 +27,33 @@ func TestPolicySaveRequiresExplicitStagedDraftInDevMode(t *testing.T) {
 	}
 }
 
+func TestStagedDraftRoutesRequireCloudAuthInDevMode(t *testing.T) {
+	mux := httptest.NewServer(New())
+	defer mux.Close()
+
+	for _, item := range []struct {
+		method string
+		path   string
+	}{
+		{method: http.MethodGet, path: "/api/policy/staged"},
+		{method: http.MethodGet, path: "/api/policy/staged/draft-missing"},
+		{method: http.MethodDelete, path: "/api/policy/staged/draft-missing"},
+	} {
+		req, err := http.NewRequest(item.method, mux.URL+item.path, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("%s %s status = %d, want %d", item.method, item.path, resp.StatusCode, http.StatusUnauthorized)
+		}
+	}
+}
+
 func TestPolicySaveRejectsStaleDraftHashInDevMode(t *testing.T) {
 	mux := httptest.NewServer(New())
 	defer mux.Close()
@@ -131,6 +158,11 @@ func stageDemoPolicy(t *testing.T, baseURL string) api.PolicyStageResponse {
 		t.Fatal(err)
 	}
 	defer policyResp.Body.Close()
+	if policyResp.StatusCode != http.StatusOK {
+		body := new(bytes.Buffer)
+		_, _ = body.ReadFrom(policyResp.Body)
+		t.Fatalf("policy status = %d, want %d: %s", policyResp.StatusCode, http.StatusOK, body.String())
+	}
 	var current api.PolicyResponse
 	if err := json.NewDecoder(policyResp.Body).Decode(&current); err != nil {
 		t.Fatal(err)

@@ -288,6 +288,7 @@ The `app` field maps **capability identifiers** to arrays of parameter objects:
 **Opaque parameters**: The policy engine treats `app` parameters as opaque JSON. It compiles and distributes them but does **not** validate against any schema. Clients use these parameters for local authorization decisions.
 
 **Known Tailscale capabilities**:
+
 | Capability | Application | Parameters |
 |------------|-------------|------------|
 | `tailscale.com/cap/tailsql` | TailSQL (SQL playground) | `dataSrc` (array of data source names or `*`) |
@@ -467,6 +468,7 @@ Wildcard patterns:
 - `?` matches a single character
 
 Examples:
+
 | Pattern | Matches | Rejects |
 |---------|---------|---------|
 | `*` | Everything | — |

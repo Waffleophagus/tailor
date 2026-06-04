@@ -42,7 +42,7 @@ func (c Config) Enabled() bool {
 	if c.Exposure == ExposureOff {
 		return false
 	}
-	if c.Exposure == ExposurePublic && c.Token == "" {
+	if c.Exposure != ExposureLocalhost && c.Token == "" {
 		return false
 	}
 	return true
@@ -129,12 +129,6 @@ func envOr(key, fallback string) string {
 }
 
 func isLoopbackRequest(r *http.Request) bool {
-	if ip := requestHeaderIP(r.Header.Get("X-Forwarded-For")); ip != nil {
-		return ip.IsLoopback()
-	}
-	if ip := requestHeaderIP(r.Header.Get("X-Real-IP")); ip != nil {
-		return ip.IsLoopback()
-	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		host = r.RemoteAddr
@@ -146,15 +140,4 @@ func isLoopbackRequest(r *http.Request) bool {
 func validBearerToken(header, token string) bool {
 	expected := "Bearer " + token
 	return len(header) == len(expected) && subtle.ConstantTimeCompare([]byte(header), []byte(expected)) == 1
-}
-
-func requestHeaderIP(value string) net.IP {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return nil
-	}
-	if before, _, found := strings.Cut(value, ","); found {
-		value = strings.TrimSpace(before)
-	}
-	return net.ParseIP(value)
 }

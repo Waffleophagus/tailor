@@ -220,6 +220,9 @@ func (c *Client) SavePolicy(ctx context.Context, draft string) (string, error) {
 		return "", errors.New("draft policy is required")
 	}
 	if session.DevMode {
+		if _, err := policy.Parse(draft); err != nil {
+			return "", err
+		}
 		c.mu.Lock()
 		if c.session != nil {
 			c.session.Policy = draft

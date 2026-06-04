@@ -342,15 +342,22 @@
 		const result = await fetchStagedPolicyDrafts();
 		result.match({
 			ok: (value) => {
-				stagedDrafts = value.drafts;
-				if (selectedStagedDraft) {
-					selectedStagedDraft = value.drafts.find((draft) => draft.id === selectedStagedDraft?.id);
-				}
+				setStagedDrafts(value.drafts);
 			},
 			err: (error) => {
 				cloudError = error.message;
 			}
 		});
+	}
+
+	function setStagedDrafts(drafts: StagedDraft[]) {
+		stagedDrafts = drafts;
+		if (!selectedStagedDraft) return;
+		const found = drafts.find((draft) => draft.id === selectedStagedDraft?.id);
+		if (selectedStagedDraft.hujson && found && !found.hujson) {
+			found.hujson = selectedStagedDraft.hujson;
+		}
+		selectedStagedDraft = found;
 	}
 
 	function openPolicyEditor() {
@@ -561,7 +568,9 @@
 					devices = value.devices;
 					edges = value.edges;
 					tailnetName = value.tailnet;
-					stagedDrafts = value.stagedDrafts ?? stagedDrafts;
+					if (value.stagedDrafts) {
+						setStagedDrafts(value.stagedDrafts);
+					}
 					selectedDevice = selectedDevice
 						? (value.devices.find((device) => device.id === selectedDevice?.id) ?? value.devices[0])
 						: value.devices[0];

@@ -199,7 +199,7 @@ gh pr view "$pr_number" --json comments,reviews --jq '
 
 **Display in the original unresolved thread order:**
 
-```
+```text
 CodeRabbit Issues for PR #123: [PR Title]
 
 | # | Severity | Issue Title | Location & Details | Type | Action |

@@ -282,10 +282,16 @@ func (s *Server) handlePolicyValidate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handlePolicyStaged(w http.ResponseWriter, r *http.Request) {
+	if !s.requireCloudAuth(w, r, "staged policy list requires auth") {
+		return
+	}
 	writeJSON(w, http.StatusOK, s.core.StagedDrafts())
 }
 
 func (s *Server) handlePolicyStagedDraft(w http.ResponseWriter, r *http.Request) {
+	if !s.requireCloudAuth(w, r, "staged policy fetch requires auth") {
+		return
+	}
 	response, err := s.core.StagedDraft(r.PathValue("id"))
 	if err != nil {
 		if errors.Is(err, tailorcore.ErrStagedDraftNotFound) {
@@ -343,6 +349,9 @@ func (s *Server) handlePolicyStage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handlePolicyDiscardStaged(w http.ResponseWriter, r *http.Request) {
+	if !s.requireCloudAuth(w, r, "staged policy discard requires auth") {
+		return
+	}
 	response, err := s.core.DiscardStagedDraft(r.PathValue("id"))
 	if err != nil {
 		if errors.Is(err, tailorcore.ErrStagedDraftNotFound) {
@@ -379,6 +388,11 @@ func (s *Server) handlePolicySave(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, tailorcore.ErrStagedDraftHashMismatch) {
 			logAPIError(s.logger, r, http.StatusConflict, err, "policy save stale draft hash")
 			writeError(w, http.StatusConflict, "Staged draft hash does not match.")
+			return
+		}
+		if errors.Is(err, tailorcore.ErrStagedDraftBaseMismatch) {
+			logAPIError(s.logger, r, http.StatusConflict, err, "policy save stale base policy")
+			writeError(w, http.StatusConflict, "Staged draft is based on an older policy.")
 			return
 		}
 		if errors.Is(err, policy.ErrInvalidPolicy) {
@@ -587,6 +601,16 @@ func writeJSON(w http.ResponseWriter, status int, payload any) {
 
 func writeError(w http.ResponseWriter, status int, message string) {
 	writeJSON(w, status, api.ErrorResponse{Error: message})
+}
+
+func (s *Server) requireCloudAuth(w http.ResponseWriter, r *http.Request, logMessage string) bool {
+	if s.core.CloudStatus().Authenticated {
+		return true
+	}
+	err := cloudapi.ErrNotAuthenticated
+	logAPIError(s.logger, r, http.StatusUnauthorized, err, logMessage)
+	writeError(w, http.StatusUnauthorized, "Enable ACL editing before reviewing staged policy changes.")
+	return false
 }
 
 func cloudAuthStatusResponse(status cloudapi.AuthStatus) api.CloudAuthStatusResponse {

@@ -53,3 +53,19 @@ func TestValidateAndSavePolicyInDevMode(t *testing.T) {
 		t.Fatalf("saved = %q, want draft", saved)
 	}
 }
+
+func TestSavePolicyInvalidInDevMode(t *testing.T) {
+	client := New()
+	if _, err := client.Authenticate(context.Background(), AuthRequest{
+		Tailnet: "-",
+		APIKey:  "tskey-api-tailor-dev",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	invalidDraft := `{"acls":[`
+	saved, err := client.SavePolicy(context.Background(), invalidDraft)
+	if err == nil {
+		t.Fatalf("SavePolicy(%q) error = nil, saved = %q", invalidDraft, saved)
+	}
+}

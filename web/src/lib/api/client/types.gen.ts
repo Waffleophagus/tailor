@@ -69,6 +69,7 @@ export type TopologyResponse = {
     edges: Array<Edge>;
     tailnet: string;
     setup?: TailscaleSetupInfo;
+    stagedDrafts?: Array<StagedDraft>;
 };
 
 export type CloudAuthRequest = {
