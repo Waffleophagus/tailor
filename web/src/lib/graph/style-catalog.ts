@@ -98,9 +98,6 @@ export const EDGE_STYLE_RULES: EdgeStyleRule[] = [
 	{
 		selector: 'edge.state-added',
 		style: {
-			lineColor: '#2f9f68',
-			targetArrowColor: '#2f9f68',
-			lineStyle: 'dashed',
 			opacity: 0.94,
 			width: 3.3
 		}
@@ -118,9 +115,6 @@ export const EDGE_STYLE_RULES: EdgeStyleRule[] = [
 	{
 		selector: 'edge.state-changed',
 		style: {
-			lineColor: '#b0892f',
-			targetArrowColor: '#b0892f',
-			lineStyle: 'dashed',
 			opacity: 0.9,
 			width: 3
 		}

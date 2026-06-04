@@ -71,9 +71,9 @@ export const EDGE_STYLE_CASES: EdgeStyleCase[] = [
 		expected: { lineColor: '#2f9f68', curveStyle: 'straight', opacity: 0.66, width: 2.2 }
 	},
 	{
-		name: 'draft added edge is green dashed',
+		name: 'draft added edge preserves scope color and line style',
 		edge: edge({ kind: 'acl', accessScope: 'http', state: 'added' }),
-		expected: { lineColor: '#2f9f68', lineStyle: 'dashed', width: 3.3, opacity: 0.94 }
+		expected: { lineColor: '#438aa1', lineStyle: 'solid', width: 3.3, opacity: 0.94 }
 	},
 	{
 		name: 'draft removed edge is red dotted',
@@ -81,9 +81,14 @@ export const EDGE_STYLE_CASES: EdgeStyleCase[] = [
 		expected: { lineColor: '#b94c4c', lineStyle: 'dotted', width: 2.8, opacity: 0.78 }
 	},
 	{
-		name: 'draft changed edge is gold dashed',
+		name: 'draft changed edge preserves scope color and line style',
 		edge: edge({ kind: 'acl', accessScope: 'http', state: 'changed' }),
-		expected: { lineColor: '#b0892f', lineStyle: 'dashed', width: 3, opacity: 0.9 }
+		expected: { lineColor: '#438aa1', lineStyle: 'solid', width: 3, opacity: 0.9 }
+	},
+	{
+		name: 'draft changed SSH edge preserves green solid scope style',
+		edge: edge({ kind: 'acl', accessScope: 'ssh', state: 'changed' }),
+		expected: { lineColor: '#2f9f68', lineStyle: 'solid', width: 3, opacity: 0.9 }
 	},
 	{
 		name: 'ghost denied edge is gray dotted',
