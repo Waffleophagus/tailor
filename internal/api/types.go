@@ -190,10 +190,53 @@ type PolicyValidateResponse struct {
 	Errors  []string `json:"errors,omitempty"`
 }
 
+type PolicyStageRequest struct {
+	HuJSON  string `json:"hujson"`
+	Source  string `json:"source,omitempty"`
+	Summary string `json:"summary,omitempty"`
+}
+
+type PolicySaveRequest struct {
+	DraftID   string `json:"draftId"`
+	DraftHash string `json:"draftHash"`
+}
+
 type PolicySaveResponse struct {
 	Saved   bool   `json:"saved"`
 	Tailnet string `json:"tailnet"`
 	HuJSON  string `json:"hujson"`
+}
+
+type StagedDraft struct {
+	ID         string                      `json:"id"`
+	Source     string                      `json:"source"`
+	Tailnet    string                      `json:"tailnet"`
+	BaseHash   string                      `json:"baseHash"`
+	DraftHash  string                      `json:"draftHash"`
+	HuJSON     string                      `json:"hujson,omitempty"`
+	Valid      bool                        `json:"valid"`
+	Errors     []string                    `json:"errors,omitempty"`
+	Evaluation PolicyEvaluateDraftResponse `json:"evaluation"`
+	Summary    string                      `json:"summary,omitempty"`
+	CreatedAt  string                      `json:"createdAt"`
+	UpdatedAt  string                      `json:"updatedAt"`
+}
+
+type PolicyStageResponse struct {
+	Draft StagedDraft `json:"draft"`
+}
+
+type PolicyStagedResponse struct {
+	Drafts []StagedDraft `json:"drafts"`
+}
+
+type PolicyStagedDraftResponse struct {
+	Draft StagedDraft `json:"draft"`
+}
+
+type PolicyDiscardStagedResponse struct {
+	Discarded bool   `json:"discarded"`
+	DraftID   string `json:"draftId"`
 }
 
 type PolicyEvaluateDraftRequest struct {

@@ -16,8 +16,8 @@ import (
 	"github.com/Waffleophagus/tailor/internal/devtailnet"
 	"github.com/Waffleophagus/tailor/internal/frontend"
 	"github.com/Waffleophagus/tailor/internal/localapi"
-	"github.com/Waffleophagus/tailor/internal/policy"
-	"github.com/Waffleophagus/tailor/internal/topology"
+	"github.com/Waffleophagus/tailor/internal/mcpserver"
+	"github.com/Waffleophagus/tailor/internal/tailorcore"
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
 )
@@ -28,10 +28,9 @@ type Options struct {
 }
 
 type Server struct {
-	logger   *slog.Logger
-	localAPI *localapi.Client
-	cloudAPI *cloudapi.Client
-	deploy   deploy.Environment
+	logger *slog.Logger
+	core   *tailorcore.Service
+	deploy deploy.Environment
 }
 
 func New(options ...Options) http.Handler {
@@ -45,11 +44,14 @@ func New(options ...Options) http.Handler {
 	}
 
 	deployEnv := deploy.Detect()
+	core := tailorcore.New(tailorcore.Options{
+		LocalAPIEndpoint: opts.LocalAPIEndpoint,
+		Logger:           logger,
+	})
 	server := &Server{
-		logger:   logger,
-		localAPI: localapi.New(opts.LocalAPIEndpoint, localapi.WithLogger(logger)),
-		cloudAPI: cloudapi.New(cloudapi.WithLogger(logger)),
-		deploy:   deployEnv,
+		logger: logger,
+		core:   core,
+		deploy: deployEnv,
 	}
 
 	mux := http.NewServeMux()
@@ -65,8 +67,22 @@ func New(options ...Options) http.Handler {
 	mux.HandleFunc("POST /api/policy/mutate", server.handlePolicyMutate)
 	mux.HandleFunc("POST /api/policy/evaluate-draft", server.handlePolicyEvaluateDraft)
 	mux.HandleFunc("POST /api/policy/validate", server.handlePolicyValidate)
+	mux.HandleFunc("GET /api/policy/staged", server.handlePolicyStaged)
+	mux.HandleFunc("POST /api/policy/stage", server.handlePolicyStage)
+	mux.HandleFunc("GET /api/policy/staged/{id}", server.handlePolicyStagedDraft)
+	mux.HandleFunc("DELETE /api/policy/staged/{id}", server.handlePolicyDiscardStaged)
 	mux.HandleFunc("POST /api/policy/save", server.handlePolicySave)
 	server.registerDevRoutes(mux)
+
+	mcpConfig := mcpserver.ConfigFromEnv()
+	if mcpConfig.Enabled() {
+		logger.Info("remote mcp enabled",
+			"exposure", string(mcpConfig.Exposure),
+			"path", mcpConfig.Path,
+			"readonly", mcpConfig.ReadOnly,
+		)
+		mux.Handle(mcpConfig.Path, mcpserver.Handler(core, mcpConfig, logger))
+	}
 
 	spa := spaHandler(http.FileServer(frontend.FileSystem()))
 	mux.Handle("/", spa)
@@ -75,7 +91,7 @@ func New(options ...Options) http.Handler {
 }
 
 func (s *Server) handleCloudStatus(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, cloudAuthStatusResponse(s.cloudAPI.Status()))
+	writeJSON(w, http.StatusOK, cloudAuthStatusResponse(s.core.CloudStatus()))
 }
 
 func (s *Server) handleCloudAuth(w http.ResponseWriter, r *http.Request) {
@@ -86,7 +102,7 @@ func (s *Server) handleCloudAuth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	status, err := s.cloudAPI.Authenticate(r.Context(), cloudapi.AuthRequest{
+	status, err := s.core.AuthenticateCloud(r.Context(), cloudapi.AuthRequest{
 		Tailnet: request.Tailnet,
 		APIKey:  request.APIKey,
 	})
@@ -115,7 +131,7 @@ func (s *Server) handleCloudAuth(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handlePolicy(w http.ResponseWriter, r *http.Request) {
-	policy, err := s.cloudAPI.Policy(r.Context())
+	response, err := s.core.Policy(r.Context())
 	if err != nil {
 		if errors.Is(err, cloudapi.ErrNotAuthenticated) {
 			logAPIError(s.logger, r, http.StatusUnauthorized, err, "policy fetch requires auth")
@@ -126,32 +142,21 @@ func (s *Server) handlePolicy(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
-	status := s.cloudAPI.Status()
-	writeJSON(w, http.StatusOK, api.PolicyResponse{
-		Tailnet: status.Tailnet,
-		HuJSON:  policy,
-	})
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (s *Server) handlePolicyMap(w http.ResponseWriter, r *http.Request) {
-	rawPolicy, err := s.cloudAPI.Policy(r.Context())
+	policyMap, err := s.core.PolicyMap(r.Context())
 	if err != nil {
 		if errors.Is(err, cloudapi.ErrNotAuthenticated) {
 			logAPIError(s.logger, r, http.StatusUnauthorized, err, "policy map requires auth")
 			writeError(w, http.StatusUnauthorized, "Enable ACL editing before fetching the policy map.")
 			return
 		}
-		logAPIError(s.logger, r, http.StatusBadGateway, err, "policy map fetch failed")
+		logAPIError(s.logger, r, http.StatusBadGateway, err, "policy map failed")
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
-	policyMap, err := policy.StructuredMap(rawPolicy)
-	if err != nil {
-		logAPIError(s.logger, r, http.StatusBadGateway, err, "policy map parse failed")
-		writeError(w, http.StatusBadGateway, err.Error())
-		return
-	}
-	policyMap.Tailnet = s.cloudAPI.Status().Tailnet
 	writeJSON(w, http.StatusOK, policyMap)
 }
 
@@ -162,31 +167,28 @@ func (s *Server) handlePolicyDraft(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "Request body must be valid JSON.")
 		return
 	}
-	rule, err := draftRule(request)
-	if err != nil {
+	if _, err := tailorcore.DraftRule(request); err != nil {
 		logAPIError(s.logger, r, http.StatusBadRequest, err, "invalid policy draft rule")
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	current, err := s.cloudAPI.Policy(r.Context())
+	response, err := s.core.DraftPolicy(r.Context(), request)
 	if err != nil {
 		if errors.Is(err, cloudapi.ErrNotAuthenticated) {
 			logAPIError(s.logger, r, http.StatusUnauthorized, err, "policy draft requires auth")
 			writeError(w, http.StatusUnauthorized, "Enable ACL editing before drafting a policy change.")
 			return
 		}
-		logAPIError(s.logger, r, http.StatusBadGateway, err, "policy draft fetch failed")
-		writeError(w, http.StatusBadGateway, err.Error())
-		return
-	}
-	draft, err := policy.AppendACLRule(current, rule)
-	if err != nil {
+		if errors.Is(err, tailorcore.ErrPolicyFetch) {
+			logAPIError(s.logger, r, http.StatusBadGateway, err, "policy draft fetch failed")
+			writeError(w, http.StatusBadGateway, err.Error())
+			return
+		}
 		logAPIError(s.logger, r, http.StatusBadRequest, err, "policy draft append failed")
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	status := s.cloudAPI.Status()
-	writeJSON(w, http.StatusOK, api.PolicyDraftResponse{Tailnet: status.Tailnet, Rule: rule, HuJSON: draft})
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (s *Server) handlePolicyMutate(w http.ResponseWriter, r *http.Request) {
@@ -196,33 +198,23 @@ func (s *Server) handlePolicyMutate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "Request body must be valid JSON.")
 		return
 	}
-	base := strings.TrimSpace(request.HuJSON)
-	if base == "" {
-		current, err := s.cloudAPI.Policy(r.Context())
-		if err != nil {
-			if errors.Is(err, cloudapi.ErrNotAuthenticated) {
-				logAPIError(s.logger, r, http.StatusUnauthorized, err, "policy mutate requires auth")
-				writeError(w, http.StatusUnauthorized, "Enable ACL editing before mutating policy.")
-				return
-			}
+	response, err := s.core.MutatePolicy(r.Context(), request)
+	if err != nil {
+		if errors.Is(err, cloudapi.ErrNotAuthenticated) {
+			logAPIError(s.logger, r, http.StatusUnauthorized, err, "policy mutate requires auth")
+			writeError(w, http.StatusUnauthorized, "Enable ACL editing before mutating policy.")
+			return
+		}
+		if errors.Is(err, tailorcore.ErrPolicyFetch) {
 			logAPIError(s.logger, r, http.StatusBadGateway, err, "policy mutate fetch failed")
 			writeError(w, http.StatusBadGateway, err.Error())
 			return
 		}
-		base = current
-	}
-	draft, err := policy.ApplyMutation(base, request.Mutation)
-	if err != nil {
 		logAPIError(s.logger, r, http.StatusBadRequest, err, "policy mutate failed")
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	status := s.cloudAPI.Status()
-	writeJSON(w, http.StatusOK, api.PolicyMutationResponse{
-		Tailnet: status.Tailnet,
-		HuJSON:  draft,
-		Summary: request.Mutation.Type,
-	})
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (s *Server) handlePolicyEvaluateDraft(w http.ResponseWriter, r *http.Request) {
@@ -232,45 +224,26 @@ func (s *Server) handlePolicyEvaluateDraft(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusBadRequest, "Request body must be valid JSON.")
 		return
 	}
-	if strings.TrimSpace(request.HuJSON) == "" {
-		logAPIError(s.logger, r, http.StatusBadRequest, nil, "draft policy required")
-		writeError(w, http.StatusBadRequest, "Draft policy is required.")
-		return
-	}
-	current, err := s.cloudAPI.Policy(r.Context())
+	evaluation, err := s.core.EvaluatePolicyDraft(r.Context(), request)
 	if err != nil {
 		if errors.Is(err, cloudapi.ErrNotAuthenticated) {
 			logAPIError(s.logger, r, http.StatusUnauthorized, err, "evaluate draft requires auth")
 			writeError(w, http.StatusUnauthorized, "Enable ACL editing before evaluating a policy draft.")
 			return
 		}
-		logAPIError(s.logger, r, http.StatusBadGateway, err, "evaluate draft policy fetch failed")
-		writeError(w, http.StatusBadGateway, err.Error())
-		return
-	}
-	devices, err := s.topologyDevicesLogged(r.Context(), "evaluate_draft")
-	if err != nil {
-		status := http.StatusInternalServerError
+		if errors.Is(err, tailorcore.ErrPolicyFetch) {
+			logAPIError(s.logger, r, http.StatusBadGateway, err, "evaluate draft policy fetch failed")
+			writeError(w, http.StatusBadGateway, err.Error())
+			return
+		}
 		if errors.Is(err, localapi.ErrUnavailable) {
-			status = http.StatusServiceUnavailable
+			s.writeLocalAPIUnavailable(w, r, http.StatusServiceUnavailable, err, "evaluate draft topology unavailable")
+			return
 		}
-		logAPIError(s.logger, r, status, err, "evaluate draft topology unavailable")
-		unavailable := api.LocalAPIStatusResponse{
-			Available:        false,
-			LocalAPIEndpoint: s.localAPI.Endpoint(),
-			Error:            err.Error(),
-		}
-		s.attachSetup(&unavailable, false, 0)
-		writeJSON(w, status, unavailable)
-		return
-	}
-	evaluation, err := policy.EvaluateDraft(current, request.HuJSON, devices, policy.EdgeOptions{Perspective: request.Perspective})
-	if err != nil {
 		logAPIError(s.logger, r, http.StatusBadRequest, err, "evaluate draft failed")
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	evaluation.Tailnet = s.cloudAPI.Status().Tailnet
 	writeJSON(w, http.StatusOK, evaluation)
 }
 
@@ -281,37 +254,126 @@ func (s *Server) handlePolicyValidate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "Request body must be valid JSON.")
 		return
 	}
-	if err := s.cloudAPI.ValidatePolicy(r.Context(), request.HuJSON); err != nil {
+	response, err := s.core.ValidatePolicy(r.Context(), request.HuJSON)
+	if err != nil {
 		if errors.Is(err, cloudapi.ErrNotAuthenticated) {
 			logAPIError(s.logger, r, http.StatusUnauthorized, err, "policy validate requires auth")
 			writeError(w, http.StatusUnauthorized, "Enable ACL editing before validating a policy change.")
 			return
 		}
 		s.logger.Info("policy validation failed",
-			"tailnet", s.cloudAPI.Status().Tailnet,
+			"tailnet", s.core.CloudStatus().Tailnet,
 			"error", err.Error(),
 			"request_id", RequestIDFromContext(r.Context()),
 		)
 		writeJSON(w, http.StatusBadGateway, api.PolicyValidateResponse{
 			Valid:   false,
-			Tailnet: s.cloudAPI.Status().Tailnet,
+			Tailnet: s.core.CloudStatus().Tailnet,
 			Errors:  []string{err.Error()},
 		})
 		return
 	}
-	writeJSON(w, http.StatusOK, api.PolicyValidateResponse{Valid: true, Tailnet: s.cloudAPI.Status().Tailnet})
+	writeJSON(w, http.StatusOK, response)
+}
+
+func (s *Server) handlePolicyStaged(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, s.core.StagedDrafts())
+}
+
+func (s *Server) handlePolicyStagedDraft(w http.ResponseWriter, r *http.Request) {
+	response, err := s.core.StagedDraft(r.PathValue("id"))
+	if err != nil {
+		if errors.Is(err, tailorcore.ErrStagedDraftNotFound) {
+			logAPIError(s.logger, r, http.StatusNotFound, err, "staged draft not found")
+			writeError(w, http.StatusNotFound, "Staged draft not found.")
+			return
+		}
+		logAPIError(s.logger, r, http.StatusBadRequest, err, "staged draft fetch failed")
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
+func (s *Server) handlePolicyStage(w http.ResponseWriter, r *http.Request) {
+	var request api.PolicyStageRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 10<<20)).Decode(&request); err != nil {
+		logAPIError(s.logger, r, http.StatusBadRequest, err, "invalid policy stage JSON")
+		writeError(w, http.StatusBadRequest, "Request body must be valid JSON.")
+		return
+	}
+	response, err := s.core.StagePolicyDraft(r.Context(), request)
+	if err != nil {
+		if errors.Is(err, cloudapi.ErrNotAuthenticated) {
+			logAPIError(s.logger, r, http.StatusUnauthorized, err, "policy stage requires auth")
+			writeError(w, http.StatusUnauthorized, "Enable ACL editing before staging a policy change.")
+			return
+		}
+		if errors.Is(err, tailorcore.ErrPolicyFetch) {
+			logAPIError(s.logger, r, http.StatusBadGateway, err, "policy stage fetch failed")
+			writeError(w, http.StatusBadGateway, err.Error())
+			return
+		}
+		if errors.Is(err, localapi.ErrUnavailable) {
+			s.writeLocalAPIUnavailable(w, r, http.StatusServiceUnavailable, err, "policy stage topology unavailable")
+			return
+		}
+		s.logger.Info("policy stage failed",
+			"tailnet", s.core.CloudStatus().Tailnet,
+			"error", err.Error(),
+			"request_id", RequestIDFromContext(r.Context()),
+		)
+		writeJSON(w, http.StatusBadGateway, api.PolicyValidateResponse{
+			Valid:   false,
+			Tailnet: s.core.CloudStatus().Tailnet,
+			Errors:  []string{err.Error()},
+		})
+		return
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
+func (s *Server) handlePolicyDiscardStaged(w http.ResponseWriter, r *http.Request) {
+	response, err := s.core.DiscardStagedDraft(r.PathValue("id"))
+	if err != nil {
+		if errors.Is(err, tailorcore.ErrStagedDraftNotFound) {
+			logAPIError(s.logger, r, http.StatusNotFound, err, "staged draft not found")
+			writeError(w, http.StatusNotFound, "Staged draft not found.")
+			return
+		}
+		logAPIError(s.logger, r, http.StatusBadRequest, err, "discard staged draft failed")
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (s *Server) handlePolicySave(w http.ResponseWriter, r *http.Request) {
-	policy, err := s.cloudAPI.SaveValidatedPolicy(r.Context())
+	var request api.PolicySaveRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&request); err != nil {
+		logAPIError(s.logger, r, http.StatusBadRequest, err, "invalid policy save JSON")
+		writeError(w, http.StatusBadRequest, "Request body must include draftId and draftHash.")
+		return
+	}
+	response, err := s.core.SaveStagedPolicy(r.Context(), request)
 	if err != nil {
 		if errors.Is(err, cloudapi.ErrNotAuthenticated) {
 			logAPIError(s.logger, r, http.StatusUnauthorized, err, "policy save requires auth")
 			writeError(w, http.StatusUnauthorized, "Enable ACL editing before saving a policy change.")
 			return
 		}
+		if errors.Is(err, tailorcore.ErrStagedDraftNotFound) {
+			logAPIError(s.logger, r, http.StatusBadRequest, err, "policy save draft not found")
+			writeError(w, http.StatusBadRequest, "Choose a staged draft before saving.")
+			return
+		}
+		if errors.Is(err, tailorcore.ErrStagedDraftHashMismatch) {
+			logAPIError(s.logger, r, http.StatusConflict, err, "policy save stale draft hash")
+			writeError(w, http.StatusConflict, "Staged draft hash does not match.")
+			return
+		}
 		s.logger.Warn("policy save failed",
-			"tailnet", s.cloudAPI.Status().Tailnet,
+			"tailnet", s.core.CloudStatus().Tailnet,
 			"error", err.Error(),
 			"request_id", RequestIDFromContext(r.Context()),
 		)
@@ -319,18 +381,13 @@ func (s *Server) handlePolicySave(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
-	status := s.cloudAPI.Status()
 	s.logger.Info("policy saved",
-		"tailnet", status.Tailnet,
-		"dev_mode", status.DevMode,
-		"policy_bytes", len(policy),
+		"tailnet", response.Tailnet,
+		"dev_mode", s.core.CloudStatus().DevMode,
+		"policy_bytes", len(response.HuJSON),
 		"request_id", RequestIDFromContext(r.Context()),
 	)
-	writeJSON(w, http.StatusOK, api.PolicySaveResponse{
-		Saved:   true,
-		Tailnet: status.Tailnet,
-		HuJSON:  policy,
-	})
+	writeJSON(w, http.StatusOK, response)
 }
 
 func handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -346,7 +403,7 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
-	if s.useDevTailnet() {
+	if s.core.UseDevTailnet() {
 		writeJSON(w, http.StatusOK, api.LocalAPIStatusResponse{
 			Available:        true,
 			LocalAPIEndpoint: "dev tailnet (" + devtailnet.Name + ")",
@@ -354,11 +411,11 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err := s.localAPI.StatusLogged(r.Context(), "status")
+	_, err := s.core.TopologyDevicesLogged(r.Context(), "status")
 	if err != nil {
 		status := api.LocalAPIStatusResponse{
 			Available:        false,
-			LocalAPIEndpoint: s.localAPI.Endpoint(),
+			LocalAPIEndpoint: s.core.LocalAPIEndpoint(),
 			Error:            err.Error(),
 		}
 		s.attachSetup(&status, false, 0)
@@ -368,27 +425,20 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 
 	status := api.LocalAPIStatusResponse{
 		Available:        true,
-		LocalAPIEndpoint: s.localAPI.Endpoint(),
+		LocalAPIEndpoint: s.core.LocalAPIEndpoint(),
 	}
 	s.attachSetup(&status, true, 0)
 	writeJSON(w, http.StatusOK, status)
 }
 
 func (s *Server) handleTopology(w http.ResponseWriter, r *http.Request) {
-	devices, err := s.topologyDevicesLogged(r.Context(), "topology")
+	devices, err := s.core.TopologyDevicesLogged(r.Context(), "topology")
 	if err != nil {
 		status := http.StatusInternalServerError
 		if errors.Is(err, localapi.ErrUnavailable) {
 			status = http.StatusServiceUnavailable
 		}
-		logAPIError(s.logger, r, status, err, "topology unavailable")
-		unavailable := api.LocalAPIStatusResponse{
-			Available:        false,
-			LocalAPIEndpoint: s.localAPI.Endpoint(),
-			Error:            err.Error(),
-		}
-		s.attachSetup(&unavailable, false, 0)
-		writeJSON(w, status, unavailable)
+		s.writeLocalAPIUnavailable(w, r, status, err, "topology unavailable")
 		return
 	}
 
@@ -396,7 +446,7 @@ func (s *Server) handleTopology(w http.ResponseWriter, r *http.Request) {
 		"device_count", len(devices),
 		"request_id", RequestIDFromContext(r.Context()),
 	)
-	snapshot := s.topologySnapshot(r.Context(), devices)
+	snapshot := s.core.TopologySnapshot(r.Context(), devices)
 	s.attachTopologySetup(&snapshot, true)
 	writeJSON(w, http.StatusOK, snapshot)
 }
@@ -471,11 +521,11 @@ func (s *Server) writeTopologySocketMessage(ctx context.Context, conn *websocket
 }
 
 func (s *Server) topologySocketMessage(ctx context.Context) api.SocketMessage {
-	devices, err := s.topologyDevices(ctx)
+	devices, err := s.core.TopologyDevices(ctx)
 	if err != nil {
 		unavailable := api.LocalAPIStatusResponse{
 			Available:        false,
-			LocalAPIEndpoint: s.localAPI.Endpoint(),
+			LocalAPIEndpoint: s.core.LocalAPIEndpoint(),
 			Error:            err.Error(),
 		}
 		s.attachSetup(&unavailable, false, 0)
@@ -485,7 +535,7 @@ func (s *Server) topologySocketMessage(ctx context.Context) api.SocketMessage {
 		}
 	}
 
-	snapshot := s.topologySnapshot(ctx, devices)
+	snapshot := s.core.TopologySnapshot(ctx, devices)
 	s.attachTopologySetup(&snapshot, true)
 	return api.SocketMessage{
 		Type:    api.SocketMessageTopologySnapshot,
@@ -493,56 +543,15 @@ func (s *Server) topologySocketMessage(ctx context.Context) api.SocketMessage {
 	}
 }
 
-func (s *Server) useDevTailnet() bool {
-	return s.cloudAPI.Status().DevMode
-}
-
-func (s *Server) topologyDevices(ctx context.Context) ([]api.Device, error) {
-	if s.useDevTailnet() {
-		return devtailnet.Devices(), nil
+func (s *Server) writeLocalAPIUnavailable(w http.ResponseWriter, r *http.Request, status int, err error, message string) {
+	logAPIError(s.logger, r, status, err, message)
+	unavailable := api.LocalAPIStatusResponse{
+		Available:        false,
+		LocalAPIEndpoint: s.core.LocalAPIEndpoint(),
+		Error:            err.Error(),
 	}
-	return s.localAPI.Status(ctx)
-}
-
-func (s *Server) topologyDevicesLogged(ctx context.Context, operation string) ([]api.Device, error) {
-	if s.useDevTailnet() {
-		return devtailnet.Devices(), nil
-	}
-	return s.localAPI.StatusLogged(ctx, operation)
-}
-
-func (s *Server) topologyTailnet(ctx context.Context) string {
-	if s.useDevTailnet() {
-		return devtailnet.Name
-	}
-	if tn, err := s.localAPI.TailnetName(ctx); err == nil {
-		return tn
-	}
-	return ""
-}
-
-func (s *Server) topologySnapshot(ctx context.Context, devices []api.Device) api.TopologyResponse {
-	edges := topology.Phase1Edges(devices)
-	if status := s.cloudAPI.Status(); status.Authenticated && status.HasPolicy {
-		rawPolicy, err := s.cloudAPI.Policy(ctx)
-		if err == nil {
-			if accessEdges, err := policy.EffectiveAccessEdges(rawPolicy, devices, policy.EdgeOptions{}); err == nil {
-				edges = accessEdges
-			} else {
-				s.logger.Debug("effective access edges failed", "error", err.Error())
-			}
-		} else {
-			s.logger.Debug("topology policy fetch failed", "error", err.Error())
-		}
-	}
-
-	tailnet := s.topologyTailnet(ctx)
-
-	return api.TopologyResponse{
-		Devices: devices,
-		Edges:   edges,
-		Tailnet: tailnet,
-	}
+	s.attachSetup(&unavailable, false, 0)
+	writeJSON(w, status, unavailable)
 }
 
 func writeJSON(w http.ResponseWriter, status int, payload any) {
@@ -567,49 +576,6 @@ func cloudAuthStatusResponse(status cloudapi.AuthStatus) api.CloudAuthStatusResp
 		HasPolicy:     status.HasPolicy,
 		DevMode:       status.DevMode,
 	}
-}
-
-func draftRule(request api.PolicyDraftRequest) (api.ACLDraft, error) {
-	sources := compactStrings(request.Sources)
-	destinations := compactStrings(request.Destinations)
-	ports := compactStrings(request.Ports)
-	if len(sources) == 0 {
-		return api.ACLDraft{}, errors.New("at least one source selector is required")
-	}
-	if len(destinations) == 0 {
-		return api.ACLDraft{}, errors.New("at least one destination selector is required")
-	}
-	if len(ports) == 0 {
-		return api.ACLDraft{}, errors.New("at least one destination port is required")
-	}
-	dst := make([]string, 0, len(destinations))
-	portSet := strings.Join(ports, ",")
-	for _, destination := range destinations {
-		if strings.Contains(destination, ":") && strings.HasSuffix(destination, ":*") {
-			dst = append(dst, destination)
-			continue
-		}
-		dst = append(dst, destination+":"+portSet)
-	}
-	proto := strings.TrimSpace(request.Protocol)
-	if proto == "tcp" {
-		proto = ""
-	}
-	return api.ACLDraft{Action: "accept", Src: sources, Dst: dst, Proto: proto}, nil
-}
-
-func compactStrings(values []string) []string {
-	out := make([]string, 0, len(values))
-	seen := map[string]bool{}
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value == "" || seen[value] {
-			continue
-		}
-		seen[value] = true
-		out = append(out, value)
-	}
-	return out
 }
 
 func spaHandler(fileServer http.Handler) http.Handler {

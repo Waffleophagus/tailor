@@ -2,7 +2,7 @@
 
 import type { Client, Options as Options2, TDataShape } from './client';
 import { client } from './client.gen';
-import type { AuthenticateCloudData, AuthenticateCloudErrors, AuthenticateCloudResponses, DraftPolicyAclRuleData, DraftPolicyAclRuleErrors, DraftPolicyAclRuleResponses, EvaluatePolicyDraftData, EvaluatePolicyDraftErrors, EvaluatePolicyDraftResponses, GetCloudStatusData, GetCloudStatusResponses, GetHealthData, GetHealthResponses, GetPolicyData, GetPolicyErrors, GetPolicyMapData, GetPolicyMapErrors, GetPolicyMapResponses, GetPolicyResponses, GetStatusData, GetStatusResponses, GetTopologyData, GetTopologyErrors, GetTopologyResponses, SaveValidatedPolicyDraftData, SaveValidatedPolicyDraftErrors, SaveValidatedPolicyDraftResponses, ValidatePolicyDraftData, ValidatePolicyDraftErrors, ValidatePolicyDraftResponses } from './types.gen';
+import type { AuthenticateCloudData, AuthenticateCloudErrors, AuthenticateCloudResponses, DiscardStagedPolicyDraftData, DiscardStagedPolicyDraftErrors, DiscardStagedPolicyDraftResponses, DraftPolicyAclRuleData, DraftPolicyAclRuleErrors, DraftPolicyAclRuleResponses, EvaluatePolicyDraftData, EvaluatePolicyDraftErrors, EvaluatePolicyDraftResponses, GetCloudStatusData, GetCloudStatusResponses, GetHealthData, GetHealthResponses, GetPolicyData, GetPolicyErrors, GetPolicyMapData, GetPolicyMapErrors, GetPolicyMapResponses, GetPolicyResponses, GetStagedPolicyDraftData, GetStagedPolicyDraftErrors, GetStagedPolicyDraftResponses, GetStagedPolicyDraftsData, GetStagedPolicyDraftsResponses, GetStatusData, GetStatusResponses, GetTopologyData, GetTopologyErrors, GetTopologyResponses, SaveValidatedPolicyDraftData, SaveValidatedPolicyDraftErrors, SaveValidatedPolicyDraftResponses, StagePolicyDraftData, StagePolicyDraftErrors, StagePolicyDraftResponses, ValidatePolicyDraftData, ValidatePolicyDraftErrors, ValidatePolicyDraftResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -66,4 +66,26 @@ export const validatePolicyDraft = <ThrowOnError extends boolean = false>(option
     }
 });
 
-export const saveValidatedPolicyDraft = <ThrowOnError extends boolean = false>(options?: Options<SaveValidatedPolicyDraftData, ThrowOnError>) => (options?.client ?? client).post<SaveValidatedPolicyDraftResponses, SaveValidatedPolicyDraftErrors, ThrowOnError>({ url: '/api/policy/save', ...options });
+export const saveValidatedPolicyDraft = <ThrowOnError extends boolean = false>(options: Options<SaveValidatedPolicyDraftData, ThrowOnError>) => (options.client ?? client).post<SaveValidatedPolicyDraftResponses, SaveValidatedPolicyDraftErrors, ThrowOnError>({
+    url: '/api/policy/save',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+export const getStagedPolicyDrafts = <ThrowOnError extends boolean = false>(options?: Options<GetStagedPolicyDraftsData, ThrowOnError>) => (options?.client ?? client).get<GetStagedPolicyDraftsResponses, unknown, ThrowOnError>({ url: '/api/policy/staged', ...options });
+
+export const stagePolicyDraft = <ThrowOnError extends boolean = false>(options: Options<StagePolicyDraftData, ThrowOnError>) => (options.client ?? client).post<StagePolicyDraftResponses, StagePolicyDraftErrors, ThrowOnError>({
+    url: '/api/policy/stage',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+export const discardStagedPolicyDraft = <ThrowOnError extends boolean = false>(options: Options<DiscardStagedPolicyDraftData, ThrowOnError>) => (options.client ?? client).delete<DiscardStagedPolicyDraftResponses, DiscardStagedPolicyDraftErrors, ThrowOnError>({ url: '/api/policy/staged/{id}', ...options });
+
+export const getStagedPolicyDraft = <ThrowOnError extends boolean = false>(options: Options<GetStagedPolicyDraftData, ThrowOnError>) => (options.client ?? client).get<GetStagedPolicyDraftResponses, GetStagedPolicyDraftErrors, ThrowOnError>({ url: '/api/policy/staged/{id}', ...options });

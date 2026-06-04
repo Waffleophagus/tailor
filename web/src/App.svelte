@@ -2,10 +2,14 @@
 	import { onDestroy, onMount } from 'svelte';
 	import {
 		authenticateCloud,
+		discardStagedPolicyDraft,
 		evaluatePolicyDraft,
 		fetchCloudStatus,
 		fetchPolicy,
+		fetchStagedPolicyDraft,
+		fetchStagedPolicyDrafts,
 		saveValidatedPolicyDraft,
+		stagePolicyDraft,
 		validatePolicyDraft
 	} from './lib/api/cloud';
 	import { fetchHealth } from './lib/api/health';
@@ -16,7 +20,8 @@
 		LocalAPIStatusResponse,
 		TailscaleSetupInfo,
 		PolicyEvaluateDraftResponse,
-		PolicyResponse
+		PolicyResponse,
+		StagedDraft
 	} from './lib/api/schemas';
 	import { fetchTopology } from './lib/api/topology';
 	import { connectTopologySocket } from './lib/api/topologySocket';
@@ -64,6 +69,9 @@
 	let editorBusy = $state(false);
 	let editorStatus = $state('');
 	let editorErrors = $state<string[]>([]);
+	let stagedDrafts = $state<StagedDraft[]>([]);
+	let selectedStagedDraft = $state<StagedDraft | undefined>();
+	let stagedBusy = $state(false);
 	let phase2Open = $state(false);
 	let localApiError = $state<LocalAPIStatusResponse | Error | undefined>();
 	let tailscaleSetup = $state<TailscaleSetupInfo | undefined>();
@@ -116,6 +124,7 @@
 		!validationStale && editorValid === true && validatedHuJSON !== ''
 	);
 	const hasPendingDraft = $derived(editorDirty || hasValidatedPending);
+	const mcpStagedDrafts = $derived(stagedDrafts.filter((draft) => draft.source === 'mcp'));
 	const deviceCollapse = $derived(
 		collapseDevicesByTag(visibleDevices, {
 			enabled: collapseTaggedFleets,
@@ -252,6 +261,7 @@
 		editorStatus = '';
 		editorErrors = [];
 		previewEvaluation = undefined;
+		selectedStagedDraft = undefined;
 	}
 
 	async function evaluatePolicy(hujson: string, preview = false) {
@@ -316,8 +326,25 @@
 				resetEditorFromPolicy();
 				cloudError = '';
 				await evaluatePolicy(value.hujson);
+				await loadStagedDrafts();
 			},
 			err: async (error) => {
+				cloudError = error.message;
+			}
+		});
+	}
+
+	async function loadStagedDrafts() {
+		if (!cloudStatus.authenticated) return;
+		const result = await fetchStagedPolicyDrafts();
+		result.match({
+			ok: (value) => {
+				stagedDrafts = value.drafts;
+				if (selectedStagedDraft) {
+					selectedStagedDraft = value.drafts.find((draft) => draft.id === selectedStagedDraft?.id);
+				}
+			},
+			err: (error) => {
 				cloudError = error.message;
 			}
 		});
@@ -379,18 +406,90 @@
 		resetEditorFromPolicy();
 	}
 
+	async function loadStagedDraft(draft: StagedDraft) {
+		if (!policy || stagedBusy) return;
+		stagedBusy = true;
+		const result = await fetchStagedPolicyDraft(draft.id);
+		result.match({
+			ok: (value) => {
+				selectedStagedDraft = value.draft;
+				editorHuJSON = value.draft.hujson ?? '';
+				validatedHuJSON = value.draft.hujson ?? '';
+				editorValid = value.draft.valid;
+				editorErrors = value.draft.errors ?? [];
+				previewEvaluation = value.draft.evaluation;
+				editorStatus = `${value.draft.source.toUpperCase()} staged draft loaded for review.`;
+				editorOpen = true;
+			},
+			err: (error) => {
+				cloudError = error.message;
+			}
+		});
+		stagedBusy = false;
+	}
+
+	async function discardStagedDraft(draft: StagedDraft) {
+		if (stagedBusy) return;
+		stagedBusy = true;
+		const result = await discardStagedPolicyDraft(draft.id);
+		result.match({
+			ok: () => {
+				stagedDrafts = stagedDrafts.filter((item) => item.id !== draft.id);
+				if (selectedStagedDraft?.id === draft.id) {
+					resetEditorFromPolicy();
+				}
+			},
+			err: (error) => {
+				cloudError = error.message;
+			}
+		});
+		stagedBusy = false;
+	}
+
 	async function saveEditorPolicy() {
 		if (editorBusy || !hasValidatedPending) return;
 		editorBusy = true;
 		cloudError = '';
-		const result = await saveValidatedPolicyDraft();
+		let result: Awaited<ReturnType<typeof saveValidatedPolicyDraft>> | undefined;
+		if (selectedStagedDraft?.hujson === validatedHuJSON) {
+			result = await saveValidatedPolicyDraft({
+				draftId: selectedStagedDraft.id,
+				draftHash: selectedStagedDraft.draftHash
+			});
+		} else {
+			const staged = await stagePolicyDraft({
+				hujson: validatedHuJSON,
+				source: 'ui',
+				summary: 'Staged from policy editor'
+			});
+			await staged.match({
+				ok: async (value) => {
+					result = await saveValidatedPolicyDraft({
+						draftId: value.draft.id,
+						draftHash: value.draft.draftHash
+					});
+				},
+				err: async (error) => {
+					cloudError = error.message;
+				}
+			});
+		}
+		if (!result) {
+			editorBusy = false;
+			return;
+		}
 		await result.match({
 			ok: async (value) => {
+				const savedDraftID = selectedStagedDraft?.id;
 				policy = { tailnet: value.tailnet, hujson: value.hujson };
 				resetEditorFromPolicy();
+				if (savedDraftID) {
+					stagedDrafts = stagedDrafts.filter((draft) => draft.id !== savedDraftID);
+				}
 				editorOpen = false;
 				editorStatus = 'Policy saved.';
 				await evaluatePolicy(value.hujson);
+				await loadStagedDrafts();
 			},
 			err: async (error) => {
 				cloudError = error.message;
@@ -757,6 +856,67 @@
 						</div>
 					{/if}
 
+					{#if !viewport.isMobile && mcpStagedDrafts.length > 0}
+						<div class="staged-drafts" aria-label="MCP staged drafts">
+							<div class="staged-drafts-header">
+								<div>
+									<p class="staged-eyebrow">MCP staged draft available</p>
+									<h2 class="staged-title">{mcpStagedDrafts.length} pending review</h2>
+								</div>
+								<button
+									type="button"
+									class="staged-refresh"
+									onclick={loadStagedDrafts}
+									disabled={stagedBusy}
+								>
+									Refresh
+								</button>
+							</div>
+							<div class="staged-list">
+								{#each mcpStagedDrafts as draft (draft.id)}
+									<article class="staged-item">
+										<div class="staged-item-main">
+											<div class="staged-row">
+												<span class="staged-source">{draft.source}</span>
+												<span class:staged-valid={draft.valid} class:staged-invalid={!draft.valid}>
+													{draft.valid ? 'Validated' : 'Invalid'}
+												</span>
+											</div>
+											<p class="staged-summary">
+												{draft.summary || 'Policy draft staged for review.'}
+											</p>
+											<p class="staged-meta">
+												{draft.evaluation.added.length} added · {draft.evaluation.removed.length} removed
+												·
+												{draft.evaluation.changed.length} changed · {draft.evaluation.broadAccess
+													.length}
+												broad
+											</p>
+										</div>
+										<div class="staged-actions">
+											<button
+												type="button"
+												class="staged-load"
+												onclick={() => loadStagedDraft(draft)}
+												disabled={stagedBusy || !draft.valid}
+											>
+												Load
+											</button>
+											<button
+												type="button"
+												class="staged-discard"
+												onclick={() => discardStagedDraft(draft)}
+												disabled={stagedBusy}
+											>
+												Discard
+											</button>
+										</div>
+									</article>
+								{/each}
+							</div>
+						</div>
+					{/if}
+
 					{#if !viewport.isMobile}
 						<PolicyEditorPanel
 							bind:open={editorOpen}
@@ -767,6 +927,7 @@
 							busy={editorBusy}
 							status={editorStatus}
 							errors={effectiveErrors}
+							stagedDraft={selectedStagedDraft}
 							onValidate={validateEditor}
 							onSave={saveEditorPolicy}
 							onDiscard={discardEditorChanges}
@@ -932,6 +1093,67 @@
 	}
 	.cloud-error-mobile {
 		bottom: calc(8.75rem + env(safe-area-inset-bottom, 0px));
+	}
+	.staged-drafts {
+		@apply absolute bottom-3 left-3 z-[4] grid max-h-[min(24rem,calc(100%-6rem))] w-[min(28rem,calc(100%-1.5rem))] grid-rows-[auto_minmax(0,1fr)] overflow-hidden rounded-lg border border-panel-border bg-panel-bg shadow-[0_14px_34px_rgb(23_33_38/14%)];
+	}
+	.staged-drafts-header {
+		@apply flex items-center justify-between gap-3 border-b border-panel-strong px-3 py-2.5;
+	}
+	.staged-eyebrow {
+		@apply m-0 text-[0.68rem] font-extrabold tracking-wide text-teal uppercase;
+	}
+	.staged-title {
+		@apply m-0 text-sm font-extrabold text-primary;
+	}
+	.staged-refresh,
+	.staged-load,
+	.staged-discard {
+		@apply min-h-8 rounded-md border px-2.5 text-[0.76rem] font-extrabold disabled:cursor-not-allowed disabled:opacity-50;
+	}
+	.staged-refresh {
+		@apply border-panel-border bg-panel-weak text-primary;
+	}
+	.staged-list {
+		@apply min-h-0 overflow-auto p-2;
+	}
+	.staged-item {
+		@apply flex items-start justify-between gap-3 border-b border-panel-strong px-1 py-2 last:border-b-0;
+	}
+	.staged-item-main {
+		@apply min-w-0 flex-1;
+	}
+	.staged-row {
+		@apply mb-1 flex flex-wrap items-center gap-1.5;
+	}
+	.staged-source,
+	.staged-valid,
+	.staged-invalid {
+		@apply rounded-full border px-1.5 py-[0.12rem] text-[0.64rem] font-extrabold uppercase;
+	}
+	.staged-source {
+		@apply border-teal text-teal;
+	}
+	.staged-valid {
+		@apply border-ok text-ok;
+	}
+	.staged-invalid {
+		@apply border-danger text-danger;
+	}
+	.staged-summary {
+		@apply m-0 line-clamp-2 text-[0.8rem] leading-snug font-bold text-primary;
+	}
+	.staged-meta {
+		@apply m-0 mt-1 text-[0.72rem] font-semibold text-secondary;
+	}
+	.staged-actions {
+		@apply flex shrink-0 flex-col gap-1;
+	}
+	.staged-load {
+		@apply border-panel-accent bg-panel-accent text-panel-fg;
+	}
+	.staged-discard {
+		@apply border-danger/35 bg-panel-weak text-danger;
 	}
 	.graph-mobile {
 		padding-bottom: calc(8.75rem + env(safe-area-inset-bottom, 0px));

@@ -208,13 +208,69 @@ paths:
   /api/policy/save:
     post:
       operationId: saveValidatedPolicyDraft
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PolicySaveRequest"
       responses:
         "200":
-          description: Last validated draft was saved.
+          description: Explicit staged draft was saved.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/PolicySaveResponse"
+        "400":
+          description: Draft ID is missing or not staged.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Cloud API authentication has not been enabled.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Staged draft hash is stale or mismatched.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: Save failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/policy/staged:
+    get:
+      operationId: getStagedPolicyDrafts
+      responses:
+        "200":
+          description: Staged policy drafts available for review.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PolicyStagedResponse"
+  /api/policy/stage:
+    post:
+      operationId: stagePolicyDraft
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PolicyStageRequest"
+      responses:
+        "200":
+          description: Draft policy was validated, evaluated, and staged.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PolicyStageResponse"
         "401":
           description: Cloud API authentication has not been enabled.
           content:
@@ -222,7 +278,56 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "502":
-          description: Save failed.
+          description: Draft policy failed validation or Cloud API request failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PolicyValidateResponse"
+        "503":
+          description: Tailscale LocalAPI is unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LocalAPIStatusResponse"
+  /api/policy/staged/{id}:
+    get:
+      operationId: getStagedPolicyDraft
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Staged policy draft with full HuJSON for review.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PolicyStagedDraftResponse"
+        "404":
+          description: Staged draft was not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: discardStagedPolicyDraft
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Staged draft was discarded.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PolicyDiscardStagedResponse"
+        "404":
+          description: Staged draft was not found.
           content:
             application/json:
               schema:
@@ -618,6 +723,24 @@ components:
           type: array
           items:
             type: string
+    PolicyStageRequest:
+      type: object
+      required: [hujson]
+      properties:
+        hujson:
+          type: string
+        source:
+          type: string
+        summary:
+          type: string
+    PolicySaveRequest:
+      type: object
+      required: [draftId, draftHash]
+      properties:
+        draftId:
+          type: string
+        draftHash:
+          type: string
     PolicySaveResponse:
       type: object
       required: [saved, tailnet, hujson]
@@ -627,6 +750,64 @@ components:
         tailnet:
           type: string
         hujson:
+          type: string
+    StagedDraft:
+      type: object
+      required: [id, source, tailnet, baseHash, draftHash, valid, evaluation, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+        source:
+          type: string
+        tailnet:
+          type: string
+        baseHash:
+          type: string
+        draftHash:
+          type: string
+        hujson:
+          type: string
+        valid:
+          type: boolean
+        errors:
+          type: array
+          items:
+            type: string
+        evaluation:
+          $ref: "#/components/schemas/PolicyEvaluateDraftResponse"
+        summary:
+          type: string
+        createdAt:
+          type: string
+        updatedAt:
+          type: string
+    PolicyStageResponse:
+      type: object
+      required: [draft]
+      properties:
+        draft:
+          $ref: "#/components/schemas/StagedDraft"
+    PolicyStagedResponse:
+      type: object
+      required: [drafts]
+      properties:
+        drafts:
+          type: array
+          items:
+            $ref: "#/components/schemas/StagedDraft"
+    PolicyStagedDraftResponse:
+      type: object
+      required: [draft]
+      properties:
+        draft:
+          $ref: "#/components/schemas/StagedDraft"
+    PolicyDiscardStagedResponse:
+      type: object
+      required: [discarded, draftId]
+      properties:
+        discarded:
+          type: boolean
+        draftId:
           type: string
     ErrorResponse:
       type: object

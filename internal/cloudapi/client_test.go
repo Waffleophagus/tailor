@@ -107,7 +107,7 @@ func TestAuthenticateRequiresAPIKeyPrefix(t *testing.T) {
 	}
 }
 
-func TestValidateAndSavePolicyUsesValidatedDraftAndRefreshesPolicy(t *testing.T) {
+func TestValidateAndSavePolicyUsesExplicitDraftAndRefreshesPolicy(t *testing.T) {
 	var validated string
 	var saved string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -149,14 +149,14 @@ func TestValidateAndSavePolicyUsesValidatedDraftAndRefreshesPolicy(t *testing.T)
 	if validated != draft {
 		t.Fatalf("validated = %q, want draft", validated)
 	}
-	refreshed, err := client.SaveValidatedPolicy(context.Background())
+	refreshed, err := client.SavePolicy(context.Background(), draft)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if saved != draft || refreshed != draft {
 		t.Fatalf("save did not use/refresh draft: saved=%q refreshed=%q", saved, refreshed)
 	}
-	if _, err := client.SaveValidatedPolicy(context.Background()); err == nil {
-		t.Fatal("expected second save without validation to fail")
+	if _, err := client.SavePolicy(context.Background(), ""); err == nil {
+		t.Fatal("expected empty explicit draft save to fail")
 	}
 }

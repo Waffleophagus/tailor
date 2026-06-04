@@ -34,11 +34,10 @@ type Client struct {
 }
 
 type Session struct {
-	Tailnet        string
-	APIKey         string
-	Policy         string
-	ValidatedDraft string
-	DevMode        bool
+	Tailnet string
+	APIKey  string
+	Policy  string
+	DevMode bool
 }
 
 type AuthRequest struct {
@@ -207,43 +206,29 @@ func (c *Client) ValidatePolicy(ctx context.Context, draft string) error {
 		if _, err := policy.Parse(draft); err != nil {
 			return err
 		}
-		c.mu.Lock()
-		if c.session != nil {
-			c.session.ValidatedDraft = draft
-		}
-		c.mu.Unlock()
 		return nil
 	}
-	if err := c.sendPolicy(ctx, http.MethodPost, session.Tailnet, session.APIKey, "/validate", draft); err != nil {
-		return err
-	}
-	c.mu.Lock()
-	if c.session != nil {
-		c.session.ValidatedDraft = draft
-	}
-	c.mu.Unlock()
-	return nil
+	return c.sendPolicy(ctx, http.MethodPost, session.Tailnet, session.APIKey, "/validate", draft)
 }
 
-func (c *Client) SaveValidatedPolicy(ctx context.Context) (string, error) {
+func (c *Client) SavePolicy(ctx context.Context, draft string) (string, error) {
 	session, err := c.ensureSession(ctx)
 	if err != nil {
 		return "", err
 	}
-	if strings.TrimSpace(session.ValidatedDraft) == "" {
-		return "", errors.New("validate a draft policy before saving")
+	if strings.TrimSpace(draft) == "" {
+		return "", errors.New("draft policy is required")
 	}
 	if session.DevMode {
 		c.mu.Lock()
 		if c.session != nil {
-			c.session.Policy = c.session.ValidatedDraft
-			c.session.ValidatedDraft = ""
+			c.session.Policy = draft
 		}
 		saved := c.session.Policy
 		c.mu.Unlock()
 		return saved, nil
 	}
-	if err := c.sendPolicy(ctx, http.MethodPost, session.Tailnet, session.APIKey, "", session.ValidatedDraft); err != nil {
+	if err := c.sendPolicy(ctx, http.MethodPost, session.Tailnet, session.APIKey, "", draft); err != nil {
 		return "", err
 	}
 	policy, err := c.fetchPolicy(ctx, session.Tailnet, session.APIKey)
@@ -253,7 +238,6 @@ func (c *Client) SaveValidatedPolicy(ctx context.Context) (string, error) {
 	c.mu.Lock()
 	if c.session != nil {
 		c.session.Policy = policy
-		c.session.ValidatedDraft = ""
 	}
 	c.mu.Unlock()
 	return policy, nil

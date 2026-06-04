@@ -45,7 +45,7 @@ func TestValidateAndSavePolicyInDevMode(t *testing.T) {
 	if err := client.ValidatePolicy(context.Background(), draft); err != nil {
 		t.Fatal(err)
 	}
-	saved, err := client.SaveValidatedPolicy(context.Background())
+	saved, err := client.SavePolicy(context.Background(), draft)
 	if err != nil {
 		t.Fatal(err)
 	}

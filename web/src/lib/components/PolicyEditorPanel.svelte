@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { PolicyResponse } from '../api/schemas';
+	import type { PolicyResponse, StagedDraft } from '../api/schemas';
 
 	let {
 		open = $bindable(false),
@@ -10,6 +10,7 @@
 		busy = false,
 		status = '',
 		errors = [] as string[],
+		stagedDraft,
 		onValidate = () => {},
 		onSave = () => {},
 		onDiscard = () => {},
@@ -23,6 +24,7 @@
 		busy?: boolean;
 		status?: string;
 		errors?: string[];
+		stagedDraft?: StagedDraft;
 		onValidate?: () => void;
 		onSave?: () => void;
 		onDiscard?: () => void;
@@ -37,7 +39,11 @@
 				<p class="eyebrow">ACL policy</p>
 				<h2 class="title">{policy.tailnet}</h2>
 				<p class="hint">
-					Edit HuJSON directly. Validate with Tailscale, then save when the graph looks right.
+					{#if stagedDraft}
+						Review this {stagedDraft.source.toUpperCase()} draft, then save only if it matches your intent.
+					{:else}
+						Edit HuJSON directly. Validate with Tailscale, then save when the graph looks right.
+					{/if}
 				</p>
 			</div>
 			<button
@@ -72,6 +78,9 @@
 			<div class="footer-meta">
 				{#if isDirty}
 					<span class="dirty-pill">Unsaved changes</span>
+				{/if}
+				{#if stagedDraft}
+					<span class="review-pill">Reviewing {stagedDraft.source}</span>
 				{/if}
 				{#if valid === true}
 					<span class="valid-pill">Validated</span>
@@ -154,6 +163,7 @@
 	}
 
 	.dirty-pill,
+	.review-pill,
 	.valid-pill,
 	.invalid-pill {
 		@apply rounded-full border px-2 py-[0.2rem] text-[0.72rem] font-extrabold uppercase;
@@ -161,6 +171,10 @@
 
 	.dirty-pill {
 		@apply border-warn text-warn;
+	}
+
+	.review-pill {
+		@apply border-teal text-teal;
 	}
 
 	.valid-pill {
