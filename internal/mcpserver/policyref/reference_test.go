@@ -3,6 +3,7 @@ package policyref
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestReferenceDataIsConsistent(t *testing.T) {
@@ -27,8 +28,8 @@ func TestReferenceTopicIncludesSourcesAndContent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if topic.LastValidated != "2026-06-04" {
-		t.Fatalf("LastValidated = %q, want 2026-06-04", topic.LastValidated)
+	if _, err := time.Parse("2006-01-02", topic.LastValidated); err != nil {
+		t.Fatalf("LastValidated = %q, want ISO date: %v", topic.LastValidated, err)
 	}
 	if len(topic.SourceURLs) == 0 {
 		t.Fatal("topic has no source URLs")

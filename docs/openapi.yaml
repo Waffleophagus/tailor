@@ -472,6 +472,10 @@ components:
           type: string
         setup:
           $ref: "#/components/schemas/TailscaleSetupInfo"
+        stagedDrafts:
+          type: array
+          items:
+            $ref: "#/components/schemas/StagedDraft"
     CloudAuthRequest:
       type: object
       required: [tailnet, apiKey]

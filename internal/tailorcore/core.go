@@ -30,6 +30,12 @@ type Service struct {
 	stagedDrafts map[string]stagedDraft
 }
 
+const (
+	stagedDraftTTL             = 24 * time.Hour
+	stagedDraftCleanupInterval = time.Hour
+	maxStagedDrafts            = 100
+)
+
 var ErrPolicyFetch = errors.New("policy fetch failed")
 var ErrStagedDraftNotFound = errors.New("staged draft not found")
 var ErrStagedDraftHashMismatch = errors.New("staged draft hash mismatch")
@@ -60,12 +66,14 @@ func New(options Options) *Service {
 	if logger == nil {
 		logger = slog.New(slog.DiscardHandler)
 	}
-	return &Service{
+	service := &Service{
 		logger:       logger,
 		localAPI:     localapi.New(options.LocalAPIEndpoint, localapi.WithLogger(logger)),
 		cloudAPI:     cloudapi.New(cloudapi.WithLogger(logger)),
 		stagedDrafts: map[string]stagedDraft{},
 	}
+	go service.cleanupStagedDrafts()
+	return service
 }
 
 func (s *Service) LocalAPIEndpoint() string {
@@ -146,7 +154,7 @@ func (s *Service) MutatePolicy(ctx context.Context, request api.PolicyMutationRe
 
 func (s *Service) EvaluatePolicyDraft(ctx context.Context, request api.PolicyEvaluateDraftRequest) (api.PolicyEvaluateDraftResponse, error) {
 	if strings.TrimSpace(request.HuJSON) == "" {
-		return api.PolicyEvaluateDraftResponse{}, errors.New("Draft policy is required.")
+		return api.PolicyEvaluateDraftResponse{}, errors.New("draft policy is required")
 	}
 	current, err := s.cloudAPI.Policy(ctx)
 	if err != nil {
@@ -200,9 +208,12 @@ func (s *Service) StagePolicyDraft(ctx context.Context, request api.PolicyStageR
 		Summary:    stageSummary(request.Summary, evaluation),
 		CreatedAt:  now,
 		UpdatedAt:  now,
+		ExpiresAt:  now.Add(stagedDraftTTL),
 	}
 
 	s.mu.Lock()
+	s.evictExpiredStagedDraftsLocked(now)
+	s.evictOldestStagedDraftsLocked(maxStagedDrafts - 1)
 	s.stagedDrafts[draft.ID] = draft
 	s.mu.Unlock()
 
@@ -211,6 +222,7 @@ func (s *Service) StagePolicyDraft(ctx context.Context, request api.PolicyStageR
 
 func (s *Service) StagedDrafts() api.PolicyStagedResponse {
 	s.mu.Lock()
+	s.evictExpiredStagedDraftsLocked(time.Now().UTC())
 	drafts := make([]stagedDraft, 0, len(s.stagedDrafts))
 	for _, draft := range s.stagedDrafts {
 		drafts = append(drafts, draft)
@@ -230,6 +242,7 @@ func (s *Service) StagedDrafts() api.PolicyStagedResponse {
 func (s *Service) StagedDraft(id string) (api.PolicyStagedDraftResponse, error) {
 	id = strings.TrimSpace(id)
 	s.mu.Lock()
+	s.evictExpiredStagedDraftsLocked(time.Now().UTC())
 	draft, exists := s.stagedDrafts[id]
 	s.mu.Unlock()
 	if !exists {
@@ -281,6 +294,7 @@ func (s *Service) stagedDraft(id, draftHash string) (stagedDraft, error) {
 		return stagedDraft{}, ErrStagedDraftNotFound
 	}
 	s.mu.Lock()
+	s.evictExpiredStagedDraftsLocked(time.Now().UTC())
 	draft, exists := s.stagedDrafts[id]
 	s.mu.Unlock()
 	if !exists {
@@ -290,6 +304,38 @@ func (s *Service) stagedDraft(id, draftHash string) (stagedDraft, error) {
 		return stagedDraft{}, ErrStagedDraftHashMismatch
 	}
 	return draft, nil
+}
+
+func (s *Service) cleanupStagedDrafts() {
+	ticker := time.NewTicker(stagedDraftCleanupInterval)
+	defer ticker.Stop()
+	for now := range ticker.C {
+		s.mu.Lock()
+		s.evictExpiredStagedDraftsLocked(now.UTC())
+		s.mu.Unlock()
+	}
+}
+
+func (s *Service) evictExpiredStagedDraftsLocked(now time.Time) {
+	for id, draft := range s.stagedDrafts {
+		if !draft.ExpiresAt.IsZero() && !draft.ExpiresAt.After(now) {
+			delete(s.stagedDrafts, id)
+		}
+	}
+}
+
+func (s *Service) evictOldestStagedDraftsLocked(keep int) {
+	for len(s.stagedDrafts) > keep {
+		var oldestID string
+		var oldestCreatedAt time.Time
+		for id, draft := range s.stagedDrafts {
+			if oldestID == "" || draft.CreatedAt.Before(oldestCreatedAt) {
+				oldestID = id
+				oldestCreatedAt = draft.CreatedAt
+			}
+		}
+		delete(s.stagedDrafts, oldestID)
+	}
 }
 
 func (s *Service) UseDevTailnet() bool {
@@ -398,6 +444,7 @@ type stagedDraft struct {
 	Summary    string
 	CreatedAt  time.Time
 	UpdatedAt  time.Time
+	ExpiresAt  time.Time
 }
 
 func (d stagedDraft) toAPI(includeHuJSON bool) api.StagedDraft {

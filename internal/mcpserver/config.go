@@ -1,6 +1,7 @@
 package mcpserver
 
 import (
+	"crypto/subtle"
 	"log/slog"
 	"net"
 	"net/http"
@@ -84,7 +85,7 @@ func authMiddleware(cfg Config, logger *slog.Logger, next http.Handler) http.Han
 				http.Error(w, "MCP bearer token is required.", http.StatusForbidden)
 				return
 			}
-			if r.Header.Get("Authorization") != "Bearer "+cfg.Token {
+			if !validBearerToken(r.Header.Get("Authorization"), cfg.Token) {
 				logger.Warn("mcp request rejected: invalid bearer token")
 				http.Error(w, "MCP bearer token is required.", http.StatusUnauthorized)
 				return
@@ -128,10 +129,32 @@ func envOr(key, fallback string) string {
 }
 
 func isLoopbackRequest(r *http.Request) bool {
+	if ip := requestHeaderIP(r.Header.Get("X-Forwarded-For")); ip != nil {
+		return ip.IsLoopback()
+	}
+	if ip := requestHeaderIP(r.Header.Get("X-Real-IP")); ip != nil {
+		return ip.IsLoopback()
+	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		host = r.RemoteAddr
 	}
 	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
+}
+
+func validBearerToken(header, token string) bool {
+	expected := "Bearer " + token
+	return len(header) == len(expected) && subtle.ConstantTimeCompare([]byte(header), []byte(expected)) == 1
+}
+
+func requestHeaderIP(value string) net.IP {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	if before, _, found := strings.Cut(value, ","); found {
+		value = strings.TrimSpace(before)
+	}
+	return net.ParseIP(value)
 }
