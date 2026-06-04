@@ -56,7 +56,7 @@ func Handler(core *tailorcore.Service, cfg Config, logger *slog.Logger) http.Han
 		Title:   "Tailor",
 		Version: "dev",
 	}, &mcp.ServerOptions{
-		Instructions: "Inspect Tailor tailnet topology and stage ACL policy drafts for human review. Never save or upload ACL policy to Tailscale.",
+		Instructions: "Inspect Tailor tailnet topology and stage ACL policy drafts for human review. Before modifying policy HuJSON, read the relevant ACL reference topic, inspect the policy map when available, evaluate the draft, then stage it for human review. Never save or upload ACL policy to Tailscale.",
 		Logger:       logger,
 	})
 	registerTools(server, core, cfg)

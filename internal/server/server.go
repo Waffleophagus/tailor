@@ -17,6 +17,7 @@ import (
 	"github.com/Waffleophagus/tailor/internal/frontend"
 	"github.com/Waffleophagus/tailor/internal/localapi"
 	"github.com/Waffleophagus/tailor/internal/mcpserver"
+	"github.com/Waffleophagus/tailor/internal/policy"
 	"github.com/Waffleophagus/tailor/internal/tailorcore"
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
@@ -266,7 +267,11 @@ func (s *Server) handlePolicyValidate(w http.ResponseWriter, r *http.Request) {
 			"error", err.Error(),
 			"request_id", RequestIDFromContext(r.Context()),
 		)
-		writeJSON(w, http.StatusBadGateway, api.PolicyValidateResponse{
+		status := http.StatusBadGateway
+		if errors.Is(err, policy.ErrInvalidPolicy) {
+			status = http.StatusBadRequest
+		}
+		writeJSON(w, status, api.PolicyValidateResponse{
 			Valid:   false,
 			Tailnet: s.core.CloudStatus().Tailnet,
 			Errors:  []string{err.Error()},
@@ -323,7 +328,11 @@ func (s *Server) handlePolicyStage(w http.ResponseWriter, r *http.Request) {
 			"error", err.Error(),
 			"request_id", RequestIDFromContext(r.Context()),
 		)
-		writeJSON(w, http.StatusBadGateway, api.PolicyValidateResponse{
+		status := http.StatusBadGateway
+		if errors.Is(err, policy.ErrInvalidPolicy) {
+			status = http.StatusBadRequest
+		}
+		writeJSON(w, status, api.PolicyValidateResponse{
 			Valid:   false,
 			Tailnet: s.core.CloudStatus().Tailnet,
 			Errors:  []string{err.Error()},
@@ -370,6 +379,11 @@ func (s *Server) handlePolicySave(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, tailorcore.ErrStagedDraftHashMismatch) {
 			logAPIError(s.logger, r, http.StatusConflict, err, "policy save stale draft hash")
 			writeError(w, http.StatusConflict, "Staged draft hash does not match.")
+			return
+		}
+		if errors.Is(err, policy.ErrInvalidPolicy) {
+			logAPIError(s.logger, r, http.StatusBadRequest, err, "policy save invalid draft")
+			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		s.logger.Warn("policy save failed",
@@ -448,6 +462,9 @@ func (s *Server) handleTopology(w http.ResponseWriter, r *http.Request) {
 	)
 	snapshot := s.core.TopologySnapshot(r.Context(), devices)
 	s.attachTopologySetup(&snapshot, true)
+	if s.core.CloudStatus().Authenticated {
+		snapshot.StagedDrafts = s.core.StagedDrafts().Drafts
+	}
 	writeJSON(w, http.StatusOK, snapshot)
 }
 
@@ -537,6 +554,9 @@ func (s *Server) topologySocketMessage(ctx context.Context) api.SocketMessage {
 
 	snapshot := s.core.TopologySnapshot(ctx, devices)
 	s.attachTopologySetup(&snapshot, true)
+	if s.core.CloudStatus().Authenticated {
+		snapshot.StagedDrafts = s.core.StagedDrafts().Drafts
+	}
 	return api.SocketMessage{
 		Type:    api.SocketMessageTopologySnapshot,
 		Payload: snapshot,

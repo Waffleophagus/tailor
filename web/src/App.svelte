@@ -120,6 +120,7 @@
 	const effectiveValid = $derived(validationStale ? null : editorValid);
 	const effectiveErrors = $derived(validationStale ? [] : editorErrors);
 	const effectivePreviewEvaluation = $derived(validationStale ? undefined : previewEvaluation);
+	const stagedPreviewActive = $derived(Boolean(selectedStagedDraft?.valid && previewEvaluation));
 	const hasValidatedPending = $derived(
 		!validationStale && editorValid === true && validatedHuJSON !== ''
 	);
@@ -151,7 +152,8 @@
 			policyEvaluation,
 			editorOpen,
 			editorDirty,
-			hasValidatedPending
+			hasValidatedPending,
+			stagedPreviewActive
 		});
 
 		let rendered: RenderEdge[];
@@ -303,6 +305,7 @@
 				devices = topology.value.devices;
 				edges = topology.value.edges;
 				tailnetName = topology.value.tailnet;
+				stagedDrafts = topology.value.stagedDrafts ?? stagedDrafts;
 				selectedDevice = selectedDevice
 					? (topology.value.devices.find((device) => device.id === selectedDevice?.id) ??
 						topology.value.devices[0])
@@ -558,6 +561,7 @@
 					devices = value.devices;
 					edges = value.edges;
 					tailnetName = value.tailnet;
+					stagedDrafts = value.stagedDrafts ?? stagedDrafts;
 					selectedDevice = selectedDevice
 						? (value.devices.find((device) => device.id === selectedDevice?.id) ?? value.devices[0])
 						: value.devices[0];
@@ -1095,7 +1099,7 @@
 		bottom: calc(8.75rem + env(safe-area-inset-bottom, 0px));
 	}
 	.staged-drafts {
-		@apply absolute bottom-3 left-3 z-[4] grid max-h-[min(24rem,calc(100%-6rem))] w-[min(28rem,calc(100%-1.5rem))] grid-rows-[auto_minmax(0,1fr)] overflow-hidden rounded-lg border border-panel-border bg-panel-bg shadow-[0_14px_34px_rgb(23_33_38/14%)];
+		@apply absolute bottom-3 left-[13.5rem] z-[4] grid max-h-[min(24rem,calc(100%-6rem))] w-[min(28rem,calc(100%-15rem))] grid-rows-[auto_minmax(0,1fr)] overflow-hidden rounded-lg border border-panel-border bg-panel-bg shadow-[0_14px_34px_rgb(23_33_38/14%)];
 	}
 	.staged-drafts-header {
 		@apply flex items-center justify-between gap-3 border-b border-panel-strong px-3 py-2.5;

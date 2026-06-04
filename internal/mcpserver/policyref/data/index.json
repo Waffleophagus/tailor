@@ -1,0 +1,125 @@
+{
+  "version": "2026-06-04",
+  "topics": [
+    {
+      "id": "overview",
+      "title": "Overview",
+      "useWhen": [
+        "Understanding policy file structure",
+        "Choosing grants over legacy ACLs",
+        "Remembering deny-by-default behavior"
+      ],
+      "related": ["hujson_editing", "grants", "legacy_acls", "tests", "gotchas"]
+    },
+    {
+      "id": "hujson_editing",
+      "title": "HuJSON Editing",
+      "useWhen": [
+        "Editing raw policy text",
+        "Preserving comments and trailing commas",
+        "Understanding HuJSON limits"
+      ],
+      "related": ["overview", "examples", "gotchas"]
+    },
+    {
+      "id": "grants",
+      "title": "Grants",
+      "useWhen": [
+        "Adding or changing modern network access rules",
+        "Adding application capabilities",
+        "Using route filtering with via"
+      ],
+      "related": ["selectors", "posture", "tests", "gotchas", "examples"]
+    },
+    {
+      "id": "selectors",
+      "title": "Selectors",
+      "useWhen": [
+        "Choosing legal src or dst selectors",
+        "Editing tag owners, auto approvers, SSH, or tests",
+        "Checking autogroup behavior"
+      ],
+      "related": ["grants", "definitions", "ssh", "automation", "tests", "gotchas"]
+    },
+    {
+      "id": "legacy_acls",
+      "title": "Legacy ACLs",
+      "useWhen": [
+        "Understanding existing acls",
+        "Migrating ACLs to grants",
+        "Editing legacy ACL destination ports"
+      ],
+      "related": ["grants", "selectors", "examples", "gotchas"]
+    },
+    {
+      "id": "ssh",
+      "title": "SSH",
+      "useWhen": [
+        "Adding or modifying Tailscale SSH rules",
+        "Choosing accept versus check",
+        "Writing sshTests"
+      ],
+      "related": ["selectors", "posture", "tests", "gotchas", "examples"]
+    },
+    {
+      "id": "definitions",
+      "title": "Definitions",
+      "useWhen": [
+        "Editing groups, tagOwners, hosts, or ipsets",
+        "Creating reusable selectors",
+        "Checking ownership and nesting restrictions"
+      ],
+      "related": ["selectors", "automation", "examples", "gotchas"]
+    },
+    {
+      "id": "posture",
+      "title": "Posture",
+      "useWhen": [
+        "Adding device posture controls",
+        "Reasoning about srcPosture or defaultSrcPosture",
+        "Checking unset attribute behavior"
+      ],
+      "related": ["grants", "ssh", "selectors", "tests", "gotchas"]
+    },
+    {
+      "id": "automation",
+      "title": "Automation",
+      "useWhen": [
+        "Auto-approving routes, exit nodes, or app connectors",
+        "Managing nodeAttrs",
+        "Enabling Funnel or client network options"
+      ],
+      "related": ["definitions", "selectors", "gotchas", "examples"]
+    },
+    {
+      "id": "tests",
+      "title": "Tests",
+      "useWhen": [
+        "Adding validation tests to policy drafts",
+        "Proving intended allow or deny behavior",
+        "Testing SSH or posture-dependent access"
+      ],
+      "related": ["grants", "ssh", "posture", "selectors", "examples"]
+    },
+    {
+      "id": "gotchas",
+      "title": "Gotchas",
+      "useWhen": [
+        "Running pre-flight checks before evaluating or staging",
+        "Checking common ACL and grant mistakes",
+        "Reviewing subtle selector semantics"
+      ],
+      "related": ["overview", "grants", "selectors", "definitions", "posture", "automation", "tests"]
+    },
+    {
+      "id": "examples",
+      "title": "Examples",
+      "useWhen": [
+        "Looking up compact policy examples by scenario",
+        "Converting examples into draft edits",
+        "Adding tests alongside changes"
+      ],
+      "related": ["grants", "legacy_acls", "ssh", "definitions", "posture", "automation", "tests"]
+    }
+  ]
+}

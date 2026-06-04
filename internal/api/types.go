@@ -81,10 +81,11 @@ type PolicyRef struct {
 }
 
 type TopologyResponse struct {
-	Devices []Device            `json:"devices"`
-	Edges   []Edge              `json:"edges"`
-	Tailnet string              `json:"tailnet"`
-	Setup   *TailscaleSetupInfo `json:"setup,omitempty"`
+	Devices      []Device            `json:"devices"`
+	Edges        []Edge              `json:"edges"`
+	Tailnet      string              `json:"tailnet"`
+	Setup        *TailscaleSetupInfo `json:"setup,omitempty"`
+	StagedDrafts []StagedDraft       `json:"stagedDrafts,omitempty"`
 }
 
 type CloudAuthRequest struct {

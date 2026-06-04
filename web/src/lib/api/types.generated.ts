@@ -372,6 +372,7 @@ interface TopologyResponse {
     edges: Edge[];
     tailnet: string;
     setup?: TailscaleSetupInfo | null;
+    stagedDrafts?: StagedDraft[];
 }
 
 // From api/types.go

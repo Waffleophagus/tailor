@@ -58,13 +58,6 @@ export const edgeSchema = z.object({
 	perspectives: z.array(z.string()).optional()
 });
 
-export const topologyResponseSchema = z.object({
-	devices: z.array(deviceSchema),
-	edges: z.array(edgeSchema),
-	tailnet: z.string(),
-	setup: tailscaleSetupInfoSchema.optional()
-});
-
 export const cloudAuthStatusResponseSchema = z.object({
 	authenticated: z.boolean(),
 	tailnet: z.string().optional(),
@@ -213,6 +206,14 @@ export const policyStagedDraftResponseSchema = z.object({
 export const policyDiscardStagedResponseSchema = z.object({
 	discarded: z.boolean(),
 	draftId: z.string()
+});
+
+export const topologyResponseSchema = z.object({
+	devices: z.array(deviceSchema),
+	edges: z.array(edgeSchema),
+	tailnet: z.string(),
+	setup: tailscaleSetupInfoSchema.optional(),
+	stagedDrafts: z.array(stagedDraftSchema).optional()
 });
 
 export const policySaveResponseSchema = z.object({

@@ -79,6 +79,34 @@ describe('resolveGraphEdgeSource', () => {
 		).toBe('preview');
 	});
 
+	it('uses staged draft preview even when live topology edges are present', () => {
+		expect(
+			resolveGraphEdgeSource({
+				cloudAuthenticated: true,
+				topologyEdges: [sampleEdge({ id: 'live' })],
+				previewEvaluation: evaluationWithAdded(),
+				policyEvaluation: emptyEvaluation(),
+				editorOpen: false,
+				editorDirty: false,
+				hasValidatedPending: false,
+				stagedPreviewActive: true
+			})
+		).toBe('preview');
+
+		const rendered = resolveBaseGraphEdges({
+			cloudAuthenticated: true,
+			topologyEdges: [sampleEdge({ id: 'live' })],
+			previewEvaluation: evaluationWithAdded(),
+			policyEvaluation: emptyEvaluation(),
+			editorOpen: false,
+			editorDirty: false,
+			hasValidatedPending: false,
+			stagedPreviewActive: true
+		});
+
+		expect(rendered?.map((edge) => [edge.id, edge.state])).toEqual([['spawn:link', 'added']]);
+	});
+
 	it('uses saved evaluation while editing without preview', () => {
 		expect(
 			resolveGraphEdgeSource({

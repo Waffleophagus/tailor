@@ -41,6 +41,44 @@ func TestEffectiveAccessEdgesExpandSelectorsAndClassifyPorts(t *testing.T) {
 	assertEdge(t, edges, "bob-laptop", "router", api.AccessScopeHTTP, []string{"443", "80"})
 }
 
+func TestValidateTailscaleConstraintsRejectsSSHCheckWithTagSource(t *testing.T) {
+	raw := `{
+		"ssh": [
+			{
+				"action": "check",
+				"src": ["tag:ci", "group:eng"],
+				"dst": ["tag:prod"],
+				"users": ["autogroup:nonroot"]
+			}
+		]
+	}`
+
+	err := ValidateTailscaleConstraints(raw)
+	if err == nil {
+		t.Fatal("expected invalid policy error")
+	}
+	if !strings.Contains(err.Error(), `ssh[0] uses action "check" with tagged source "tag:ci"`) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateTailscaleConstraintsAllowsSSHAcceptWithTagSource(t *testing.T) {
+	raw := `{
+		"ssh": [
+			{
+				"action": "accept",
+				"src": ["tag:ci"],
+				"dst": ["tag:prod"],
+				"users": ["root"]
+			}
+		]
+	}`
+
+	if err := ValidateTailscaleConstraints(raw); err != nil {
+		t.Fatalf("expected accept rule to be valid: %v", err)
+	}
+}
+
 func TestEffectiveAccessEdgesPerspectiveLimitsSourcesToSubject(t *testing.T) {
 	p := Policy{
 		ACLs: []ACLRule{

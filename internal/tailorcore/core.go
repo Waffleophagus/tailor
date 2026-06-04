@@ -165,6 +165,9 @@ func (s *Service) EvaluatePolicyDraft(ctx context.Context, request api.PolicyEva
 }
 
 func (s *Service) ValidatePolicy(ctx context.Context, hujson string) (api.PolicyValidateResponse, error) {
+	if err := policy.ValidateTailscaleConstraints(hujson); err != nil {
+		return api.PolicyValidateResponse{}, err
+	}
 	if err := s.cloudAPI.ValidatePolicy(ctx, hujson); err != nil {
 		return api.PolicyValidateResponse{}, err
 	}
@@ -252,6 +255,9 @@ func (s *Service) DiscardStagedDraft(id string) (api.PolicyDiscardStagedResponse
 func (s *Service) SaveStagedPolicy(ctx context.Context, request api.PolicySaveRequest) (api.PolicySaveResponse, error) {
 	draft, err := s.stagedDraft(request.DraftID, request.DraftHash)
 	if err != nil {
+		return api.PolicySaveResponse{}, err
+	}
+	if err := policy.ValidateTailscaleConstraints(draft.HuJSON); err != nil {
 		return api.PolicySaveResponse{}, err
 	}
 	saved, err := s.cloudAPI.SavePolicy(ctx, draft.HuJSON)
