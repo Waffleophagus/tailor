@@ -20,7 +20,7 @@ func (s *Server) handleDevSpawnDevices(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	if !s.cloudAPI.Status().DevMode {
+	if !s.core.CloudStatus().DevMode {
 		logAPIError(s.logger, r, http.StatusForbidden, nil, "spawn devices requires demo auth")
 		writeError(w, http.StatusForbidden, "Spawn devices requires demo tailnet auth (tskey-api-tailor-dev).")
 		return
@@ -56,7 +56,7 @@ func (s *Server) handleDevPatchDevices(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	if !s.cloudAPI.Status().DevMode {
+	if !s.core.CloudStatus().DevMode {
 		logAPIError(s.logger, r, http.StatusForbidden, nil, "patch devices requires demo auth")
 		writeError(w, http.StatusForbidden, "Patch devices requires demo tailnet auth (tskey-api-tailor-dev).")
 		return

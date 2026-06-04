@@ -157,6 +157,12 @@ interface LocalAPIStatusResponse {
 }
 
 // From api/types.go
+interface PolicyDiscardStagedResponse {
+    discarded: boolean;
+    draftId: string;
+}
+
+// From api/types.go
 interface PolicyDraftRequest {
     sources: string[];
     destinations: string[];
@@ -251,6 +257,12 @@ interface PolicyResponse {
 }
 
 // From api/types.go
+interface PolicySaveRequest {
+    draftId: string;
+    draftHash: string;
+}
+
+// From api/types.go
 interface PolicySaveResponse {
     saved: boolean;
     tailnet: string;
@@ -276,6 +288,28 @@ interface PolicySectionEntry {
     selectors?: string[];
     // empty interface{} type, falling back to unknown
     value?: unknown;
+}
+
+// From api/types.go
+interface PolicyStageRequest {
+    hujson: string;
+    source?: string;
+    summary?: string;
+}
+
+// From api/types.go
+interface PolicyStageResponse {
+    draft: StagedDraft;
+}
+
+// From api/types.go
+interface PolicyStagedDraftResponse {
+    draft: StagedDraft;
+}
+
+// From api/types.go
+interface PolicyStagedResponse {
+    drafts: StagedDraft[];
 }
 
 // From api/types.go
@@ -311,6 +345,22 @@ const SocketMessageLocalAPIUnavailable = "localapi.unavailable";
 const SocketMessageTopologySnapshot = "topology.snapshot";
 
 // From api/types.go
+interface StagedDraft {
+    id: string;
+    source: string;
+    tailnet: string;
+    baseHash: string;
+    draftHash: string;
+    hujson?: string;
+    valid: boolean;
+    errors?: string[];
+    evaluation: PolicyEvaluateDraftResponse;
+    summary?: string;
+    createdAt: string;
+    updatedAt: string;
+}
+
+// From api/types.go
 interface TailscaleSetupInfo {
     required: boolean;
     hints?: SetupHint[];
@@ -322,6 +372,7 @@ interface TopologyResponse {
     edges: Edge[];
     tailnet: string;
     setup?: TailscaleSetupInfo | null;
+    stagedDrafts?: StagedDraft[];
 }
 
 // From api/types.go

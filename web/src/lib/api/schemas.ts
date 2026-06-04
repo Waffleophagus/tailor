@@ -58,13 +58,6 @@ export const edgeSchema = z.object({
 	perspectives: z.array(z.string()).optional()
 });
 
-export const topologyResponseSchema = z.object({
-	devices: z.array(deviceSchema),
-	edges: z.array(edgeSchema),
-	tailnet: z.string(),
-	setup: tailscaleSetupInfoSchema.optional()
-});
-
 export const cloudAuthStatusResponseSchema = z.object({
 	authenticated: z.boolean(),
 	tailnet: z.string().optional(),
@@ -172,6 +165,57 @@ export const policyValidateResponseSchema = z.object({
 	errors: z.array(z.string()).optional()
 });
 
+export const policyStageRequestSchema = z.object({
+	hujson: z.string(),
+	source: z.string().optional(),
+	summary: z.string().optional()
+});
+
+export const policySaveRequestSchema = z.object({
+	draftId: z.string(),
+	draftHash: z.string()
+});
+
+export const stagedDraftSchema = z.object({
+	id: z.string(),
+	source: z.string(),
+	tailnet: z.string(),
+	baseHash: z.string(),
+	draftHash: z.string(),
+	hujson: z.string().optional(),
+	valid: z.boolean(),
+	errors: z.array(z.string()).optional(),
+	evaluation: policyEvaluateDraftResponseSchema,
+	summary: z.string().optional(),
+	createdAt: z.string(),
+	updatedAt: z.string()
+});
+
+export const policyStageResponseSchema = z.object({
+	draft: stagedDraftSchema
+});
+
+export const policyStagedResponseSchema = z.object({
+	drafts: z.array(stagedDraftSchema)
+});
+
+export const policyStagedDraftResponseSchema = z.object({
+	draft: stagedDraftSchema
+});
+
+export const policyDiscardStagedResponseSchema = z.object({
+	discarded: z.boolean(),
+	draftId: z.string()
+});
+
+export const topologyResponseSchema = z.object({
+	devices: z.array(deviceSchema),
+	edges: z.array(edgeSchema),
+	tailnet: z.string(),
+	setup: tailscaleSetupInfoSchema.optional(),
+	stagedDrafts: z.array(stagedDraftSchema).optional()
+});
+
 export const policySaveResponseSchema = z.object({
 	saved: z.boolean(),
 	tailnet: z.string(),
@@ -254,6 +298,13 @@ export type PolicyDraftResponse = z.infer<typeof policyDraftResponseSchema>;
 export type PolicyEvaluateDraftRequest = z.infer<typeof policyEvaluateDraftRequestSchema>;
 export type PolicyEvaluateDraftResponse = z.infer<typeof policyEvaluateDraftResponseSchema>;
 export type PolicyValidateResponse = z.infer<typeof policyValidateResponseSchema>;
+export type PolicyStageRequest = z.infer<typeof policyStageRequestSchema>;
+export type PolicySaveRequest = z.infer<typeof policySaveRequestSchema>;
+export type StagedDraft = z.infer<typeof stagedDraftSchema>;
+export type PolicyStageResponse = z.infer<typeof policyStageResponseSchema>;
+export type PolicyStagedResponse = z.infer<typeof policyStagedResponseSchema>;
+export type PolicyStagedDraftResponse = z.infer<typeof policyStagedDraftResponseSchema>;
+export type PolicyDiscardStagedResponse = z.infer<typeof policyDiscardStagedResponseSchema>;
 export type PolicySaveResponse = z.infer<typeof policySaveResponseSchema>;
 export type PolicyMutation = z.infer<typeof policyMutationSchema>;
 export type PolicyMutationRequest = z.infer<typeof policyMutationRequestSchema>;

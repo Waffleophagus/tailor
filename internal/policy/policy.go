@@ -2,6 +2,7 @@ package policy
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/netip"
 	"sort"
@@ -17,6 +18,7 @@ type Policy struct {
 	Hosts  map[string]string   `json:"hosts"`
 	ACLs   []ACLRule           `json:"acls"`
 	Grants []Grant             `json:"grants"`
+	SSH    []SSHRule           `json:"ssh"`
 }
 
 type ACLRule struct {
@@ -32,6 +34,15 @@ type Grant struct {
 	IP  []string       `json:"ip"`
 	App map[string]any `json:"app"`
 }
+
+type SSHRule struct {
+	Action string   `json:"action"`
+	Src    []string `json:"src"`
+	Dst    []string `json:"dst"`
+	Users  []string `json:"users"`
+}
+
+var ErrInvalidPolicy = errors.New("invalid policy")
 
 var supportedPolicySections = map[string]string{
 	"acls":          "ACL rules",
@@ -89,6 +100,25 @@ func EffectiveAccessEdges(raw string, devices []api.Device, options EdgeOptions)
 		return nil, err
 	}
 	return ResolveEffectiveAccess(p, devices, options), nil
+}
+
+func ValidateTailscaleConstraints(raw string) error {
+	p, err := Parse(raw)
+	if err != nil {
+		return err
+	}
+	for index, rule := range p.SSH {
+		if strings.TrimSpace(strings.ToLower(rule.Action)) != "check" {
+			continue
+		}
+		for _, src := range rule.Src {
+			src = strings.TrimSpace(src)
+			if strings.HasPrefix(src, "tag:") {
+				return fmt.Errorf("%w: ssh[%d] uses action \"check\" with tagged source %q; Tailscale SSH check rules do not support tags in src. Use action \"accept\" for tagged device sources, or change src to a user, group, or supported autogroup", ErrInvalidPolicy, index, src)
+			}
+		}
+	}
+	return nil
 }
 
 func EvaluateDraft(savedRaw, draftRaw string, devices []api.Device, options EdgeOptions) (api.PolicyEvaluateDraftResponse, error) {

@@ -28,6 +28,15 @@ services:
       # TAILOR_TAILSCALE_MODE: "external"
       # TAILOR_LOCALAPI_SOCKET: "/var/run/tailscale/tailscaled.sock"
 
+      # MCP server (optional):
+      # Expose the MCP endpoint so AI agents can inspect and draft policy changes.
+      # "localhost" = loopback only; "tailnet" = any tailnet client; "public" = internet-facing.
+      # A token is required for tailnet or public exposure.
+      # TAILOR_MCP: "localhost"
+      # TAILOR_MCP_PATH: "/mcp"
+      # TAILOR_MCP_TOKEN: "your-bearer-token-here"
+      # TAILOR_MCP_READONLY: "true"
+
     volumes:
       - ./tailor-logs:/var/log/tailor
 

@@ -4,15 +4,20 @@ import {
 	cloudAuthStatusResponseSchema,
 	errorResponseSchema,
 	policyEvaluateDraftResponseSchema,
+	policyDiscardStagedResponseSchema,
 	policyMapResponseSchema,
 	policyResponseSchema,
 	policyDraftResponseSchema,
+	policyStagedDraftResponseSchema,
+	policyStagedResponseSchema,
+	policyStageResponseSchema,
 	policySaveResponseSchema,
 	policyValidateResponseSchema,
 	type CloudAuthRequest,
 	type CloudAuthStatusResponse,
 	type PolicyDraftRequest,
 	type PolicyDraftResponse,
+	type PolicyDiscardStagedResponse,
 	type PolicyEvaluateDraftRequest,
 	type PolicyEvaluateDraftResponse,
 	policyMutationResponseSchema,
@@ -20,7 +25,12 @@ import {
 	type PolicyMutationResponse,
 	type PolicyMapResponse,
 	type PolicyResponse,
+	type PolicySaveRequest,
 	type PolicySaveResponse,
+	type PolicyStagedDraftResponse,
+	type PolicyStagedResponse,
+	type PolicyStageRequest,
+	type PolicyStageResponse,
 	type PolicyValidateResponse
 } from './schemas';
 
@@ -86,9 +96,45 @@ export async function mutatePolicyDraft(
 	});
 }
 
-export async function saveValidatedPolicyDraft(): Promise<Result<PolicySaveResponse, Error>> {
+export async function stagePolicyDraft(
+	request: PolicyStageRequest
+): Promise<Result<PolicyStageResponse, Error>> {
+	return fetchJSON('/api/policy/stage', policyStageResponseSchema, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(request)
+	});
+}
+
+export async function fetchStagedPolicyDrafts(): Promise<Result<PolicyStagedResponse, Error>> {
+	return fetchJSON('/api/policy/staged', policyStagedResponseSchema);
+}
+
+export async function fetchStagedPolicyDraft(
+	id: string
+): Promise<Result<PolicyStagedDraftResponse, Error>> {
+	return fetchJSON(`/api/policy/staged/${encodeURIComponent(id)}`, policyStagedDraftResponseSchema);
+}
+
+export async function discardStagedPolicyDraft(
+	id: string
+): Promise<Result<PolicyDiscardStagedResponse, Error>> {
+	return fetchJSON(
+		`/api/policy/staged/${encodeURIComponent(id)}`,
+		policyDiscardStagedResponseSchema,
+		{
+			method: 'DELETE'
+		}
+	);
+}
+
+export async function saveValidatedPolicyDraft(
+	request: PolicySaveRequest
+): Promise<Result<PolicySaveResponse, Error>> {
 	return fetchJSON('/api/policy/save', policySaveResponseSchema, {
-		method: 'POST'
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(request)
 	});
 }
 

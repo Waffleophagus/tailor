@@ -69,6 +69,7 @@ export type TopologyResponse = {
     edges: Array<Edge>;
     tailnet: string;
     setup?: TailscaleSetupInfo;
+    stagedDrafts?: Array<StagedDraft>;
 };
 
 export type CloudAuthRequest = {
@@ -195,10 +196,53 @@ export type PolicyValidateResponse = {
     errors?: Array<string>;
 };
 
+export type PolicyStageRequest = {
+    hujson: string;
+    source?: string;
+    summary?: string;
+};
+
+export type PolicySaveRequest = {
+    draftId: string;
+    draftHash: string;
+};
+
 export type PolicySaveResponse = {
     saved: boolean;
     tailnet: string;
     hujson: string;
+};
+
+export type StagedDraft = {
+    id: string;
+    source: string;
+    tailnet: string;
+    baseHash: string;
+    draftHash: string;
+    hujson?: string;
+    valid: boolean;
+    errors?: Array<string>;
+    evaluation: PolicyEvaluateDraftResponse;
+    summary?: string;
+    createdAt: string;
+    updatedAt: string;
+};
+
+export type PolicyStageResponse = {
+    draft: StagedDraft;
+};
+
+export type PolicyStagedResponse = {
+    drafts: Array<StagedDraft>;
+};
+
+export type PolicyStagedDraftResponse = {
+    draft: StagedDraft;
+};
+
+export type PolicyDiscardStagedResponse = {
+    discarded: boolean;
+    draftId: string;
 };
 
 export type ErrorResponse = {
@@ -453,7 +497,7 @@ export type ValidatePolicyDraftResponses = {
 export type ValidatePolicyDraftResponse = ValidatePolicyDraftResponses[keyof ValidatePolicyDraftResponses];
 
 export type SaveValidatedPolicyDraftData = {
-    body?: never;
+    body: PolicySaveRequest;
     path?: never;
     query?: never;
     url: '/api/policy/save';
@@ -461,9 +505,17 @@ export type SaveValidatedPolicyDraftData = {
 
 export type SaveValidatedPolicyDraftErrors = {
     /**
+     * Draft ID is missing or not staged.
+     */
+    400: ErrorResponse;
+    /**
      * Cloud API authentication has not been enabled.
      */
     401: ErrorResponse;
+    /**
+     * Staged draft hash is stale or mismatched.
+     */
+    409: ErrorResponse;
     /**
      * Save failed.
      */
@@ -474,9 +526,112 @@ export type SaveValidatedPolicyDraftError = SaveValidatedPolicyDraftErrors[keyof
 
 export type SaveValidatedPolicyDraftResponses = {
     /**
-     * Last validated draft was saved.
+     * Explicit staged draft was saved.
      */
     200: PolicySaveResponse;
 };
 
 export type SaveValidatedPolicyDraftResponse = SaveValidatedPolicyDraftResponses[keyof SaveValidatedPolicyDraftResponses];
+
+export type GetStagedPolicyDraftsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/policy/staged';
+};
+
+export type GetStagedPolicyDraftsResponses = {
+    /**
+     * Staged policy drafts available for review.
+     */
+    200: PolicyStagedResponse;
+};
+
+export type GetStagedPolicyDraftsResponse = GetStagedPolicyDraftsResponses[keyof GetStagedPolicyDraftsResponses];
+
+export type StagePolicyDraftData = {
+    body: PolicyStageRequest;
+    path?: never;
+    query?: never;
+    url: '/api/policy/stage';
+};
+
+export type StagePolicyDraftErrors = {
+    /**
+     * Cloud API authentication has not been enabled.
+     */
+    401: ErrorResponse;
+    /**
+     * Draft policy failed validation or Cloud API request failed.
+     */
+    502: PolicyValidateResponse;
+    /**
+     * Tailscale LocalAPI is unavailable.
+     */
+    503: LocalApiStatusResponse;
+};
+
+export type StagePolicyDraftError = StagePolicyDraftErrors[keyof StagePolicyDraftErrors];
+
+export type StagePolicyDraftResponses = {
+    /**
+     * Draft policy was validated, evaluated, and staged.
+     */
+    200: PolicyStageResponse;
+};
+
+export type StagePolicyDraftResponse = StagePolicyDraftResponses[keyof StagePolicyDraftResponses];
+
+export type DiscardStagedPolicyDraftData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/policy/staged/{id}';
+};
+
+export type DiscardStagedPolicyDraftErrors = {
+    /**
+     * Staged draft was not found.
+     */
+    404: ErrorResponse;
+};
+
+export type DiscardStagedPolicyDraftError = DiscardStagedPolicyDraftErrors[keyof DiscardStagedPolicyDraftErrors];
+
+export type DiscardStagedPolicyDraftResponses = {
+    /**
+     * Staged draft was discarded.
+     */
+    200: PolicyDiscardStagedResponse;
+};
+
+export type DiscardStagedPolicyDraftResponse = DiscardStagedPolicyDraftResponses[keyof DiscardStagedPolicyDraftResponses];
+
+export type GetStagedPolicyDraftData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/policy/staged/{id}';
+};
+
+export type GetStagedPolicyDraftErrors = {
+    /**
+     * Staged draft was not found.
+     */
+    404: ErrorResponse;
+};
+
+export type GetStagedPolicyDraftError = GetStagedPolicyDraftErrors[keyof GetStagedPolicyDraftErrors];
+
+export type GetStagedPolicyDraftResponses = {
+    /**
+     * Staged policy draft with full HuJSON for review.
+     */
+    200: PolicyStagedDraftResponse;
+};
+
+export type GetStagedPolicyDraftResponse = GetStagedPolicyDraftResponses[keyof GetStagedPolicyDraftResponses];

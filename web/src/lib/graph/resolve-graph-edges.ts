@@ -12,6 +12,7 @@ export interface ResolveGraphEdgesInput {
 	editorOpen: boolean;
 	editorDirty: boolean;
 	hasValidatedPending: boolean;
+	stagedPreviewActive?: boolean;
 }
 
 /** Which edge list `resolveBaseGraphEdges` will use (for tests and debugging). */
@@ -20,7 +21,9 @@ export function resolveGraphEdgeSource(input: ResolveGraphEdgesInput): GraphEdge
 		return 'local';
 	}
 	// Live topology wins unless the user is actively editing / previewing in the policy panel.
-	const editingGraph = input.editorOpen && (input.editorDirty || input.hasValidatedPending);
+	const editingGraph =
+		input.stagedPreviewActive ||
+		(input.editorOpen && (input.editorDirty || input.hasValidatedPending));
 	if (editingGraph && input.previewEvaluation) {
 		return 'preview';
 	}
