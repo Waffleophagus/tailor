@@ -20,7 +20,7 @@ Tailor is a self-hosted visual tool for [Tailscale](https://tailscale.com) admin
 
 Tailor is a single Go binary with an embedded Svelte frontend and an optional MCP endpoint. It connects to Tailscale in two ways:
 
-1. **LocalAPI** — Reads your local `tailscaled` daemon (via Unix socket or TCP) for the live device list. No credentials required. Or you can give it a Tailscale authentication key and Tailor will become it's own node on your tailnet (this is recommended for Docker deployments.)
+1. **LocalAPI** — Reads your local `tailscaled` daemon (via Unix socket or TCP) for the live device list. No credentials required. Or you can give it a Tailscale authentication key and Tailor will become its own node on your tailnet (this is recommended for Docker deployments.)
 2. **Cloud API** *(optional)* — With a Tailscale API key, Tailor fetches your tailnet's ACL policy, resolves effective access into graph edges, and enables editing with validation.
 
 The same Go backend serves both the web UI and the MCP endpoint, so agents see the same live topology and policy data you do in the browser.
