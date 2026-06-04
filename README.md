@@ -137,6 +137,8 @@ Tailor can expose an MCP (Model Context Protocol) server so compatible agents â€
 6. **Stage** â€” The agent submits the draft to Tailor.
 7. **Review** â€” Open the Tailor UI, inspect the staged draft, and save or discard it.
 
+**Note:** You will notice that the agent cannot save to Tailscale directly, this is very intentional. 
+
 ### Security
 
 | Setting | Exposure | Recommended Token |
@@ -146,6 +148,8 @@ Tailor can expose an MCP (Model Context Protocol) server so compatible agents â€
 | `public` | Internet-facing | Required |
 
 Set `TAILOR_MCP_READONLY=true` to prevent agents from staging drafts â€” useful for observability-only setups.
+
+**Reverse proxies:** `localhost` mode only allows connections from the same machine. If Tailor sits behind a reverse proxy or load balancer, the proxy appears as a remote client and requests will be rejected. In that case, use `tailnet` or `public` with a bearer token instead.
 
 ## Configuration
 
