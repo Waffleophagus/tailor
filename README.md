@@ -127,6 +127,31 @@ Tailor can expose an MCP (Model Context Protocol) server so compatible agents �
 - **Evaluate impact** — Before staging, agents preview what would change on the graph: added, removed, and broadened access.
 - **Stage for review** — Agents never save directly. Changes are staged inside Tailor for you to review in the UI and decide whether to apply or discard.
 
+### Setup
+
+1. **Enable the MCP server** by setting `TAILOR_MCP`:
+   - `localhost` — for agents running on the same machine
+   - `tailnet` — for agents anywhere on your tailnet (requires `TAILOR_MCP_TOKEN`)
+   - `public` — for agents over the internet (requires `TAILOR_MCP_TOKEN`)
+
+2. **Set a bearer token** if using `tailnet` or `public`:
+   ```sh
+   TAILOR_MCP_TOKEN="your-secure-random-token"
+   ```
+
+3. **Restart Tailor** to pick up the changes.
+
+4. **Find your MCP URL**:
+   - Local: `http://localhost:8080/mcp`
+   - Tailnet: `https://tailor.<your-tailnet>.ts.net/mcp` (when using embedded mode with Tailscale Serve)
+   - Custom: `http(s)://<your-host>:8080/mcp`
+
+5. **Connect your agent**. Most MCP-compatible clients (Claude Desktop, Cursor, etc.) accept an HTTP SSE endpoint:
+   - URL: your MCP URL from step 4
+   - Headers: `Authorization: Bearer <your-token>` (if required)
+
+6. **Verify it's working** by asking the agent to describe your tailnet topology.
+
 ### Workflow
 
 1. **Enable** — Set `TAILOR_MCP` to `localhost`, `tailnet`, or `public` (see Configuration below).
