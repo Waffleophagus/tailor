@@ -1,5 +1,5 @@
 <p align="center">
-  <video src="demo-video.webm" autoplay loop muted playsinline width="600"></video>
+  <video src="demo-video.mp4" autoplay loop muted playsinline width="600"></video>
 </p>
 
 <h1 align="center">Tailor</h1>
