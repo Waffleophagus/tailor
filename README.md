@@ -1,6 +1,4 @@
-<p align="center">
-  <video src="demo-video.webm" autoplay loop muted playsinline width="600"></video>
-</p>
+https://github.com/user-attachments/assets/385ca1b3-d3f5-44b7-9e8e-10170bee532f
 
 <h1 align="center">Tailor</h1>
 <p align="center"><em>Visualize and edit your Tailscale tailnet's access controls.</em></p>
