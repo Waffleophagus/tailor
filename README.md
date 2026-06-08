@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="tailor-logo.png" alt="Tailor logo" width="180">
+  <video src="demo-video.webm" autoplay loop muted playsinline width="600"></video>
 </p>
 
 <h1 align="center">Tailor</h1>
