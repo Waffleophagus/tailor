@@ -1,5 +1,5 @@
 <p align="center">
-  <video src="demo-video.mp4" autoplay loop muted playsinline width="600"></video>
+  <video src="https://github.com/user-attachments/assets/385ca1b3-d3f5-44b7-9e8e-10170bee532f" autoplay loop muted playsinline width="600"></video>
 </p>
 
 <h1 align="center">Tailor</h1>
