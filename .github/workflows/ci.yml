@@ -35,7 +35,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
 
@@ -119,7 +119,7 @@ jobs:
       packages: write
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
           fetch-depth: 0
@@ -130,13 +130,14 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
 
           git fetch --tags origin
 
           if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
-            tag="${{ inputs.tag }}"
+            tag="$TAG"
           else
             tag="$GITHUB_REF_NAME"
           fi
@@ -151,7 +152,22 @@ jobs:
             exit 1
           fi
 
+          # Verify the tag exists on Forgejo remote (origin is the Forgejo push mirror source)
+          forgejo_sha="$(git ls-remote origin "refs/tags/${tag}^{}" 2>/dev/null | awk '{print $1}' | head -1)"
+          if [ -z "$forgejo_sha" ]; then
+            # Try non-dereferenced form as fallback (lightweight tags)
+            forgejo_sha="$(git ls-remote origin "refs/tags/${tag}" 2>/dev/null | awk '{print $1}' | head -1)"
+          fi
+          if [ -z "$forgejo_sha" ]; then
+            echo "Tag $tag does not exist on the Forgejo remote."
+            exit 1
+          fi
+
           target_sha="$(git rev-parse "${tag}^{commit}")"
+          if [ "$forgejo_sha" != "$target_sha" ]; then
+            echo "Tag $tag on Forgejo remote points to $forgejo_sha, but local tag points to $target_sha."
+            exit 1
+          fi
           head_sha="$(git rev-parse HEAD)"
           if [ "$target_sha" != "$head_sha" ]; then
             echo "Checked out $head_sha, but tag $tag points to $target_sha."
@@ -343,7 +359,7 @@ jobs:
             org.opencontainers.image.version=${{ steps.image-tags.outputs.version }}
 
       - name: Publish release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@c062e08bd532815e2082a85e87e3ef29c3e6d191
         with:
           tag_name: ${{ steps.release.outputs.tag }}
           name: ${{ steps.release.outputs.tag }}
@@ -364,7 +380,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
 
