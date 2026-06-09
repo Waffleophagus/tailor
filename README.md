@@ -216,6 +216,8 @@ pnpm --dir web test:e2e   # demo tailnet (see web/e2e/README.md)
 go test ./... && go test -tags dev ./...
 ```
 
+## PR oddities?
+Ok, this is me trying something out. I [no longer](https://mrshu.github.io/github-statuses/) [trust](https://youtu.be/R7ex-Gt8dtw) [Github](https://dev.to/varshithvhegde/github-broke-git-the-merge-queue-bug-that-silently-deleted-your-code-4f7i). So I am using this repository to learn how to manage code both on and off Github. Feel free to open issues, or a PR! I will happily make it work. But that is why all my PRs are closed without being merged, they are being merged in my personal Forgejo instance.
 
 ## Consider hiring me?
 
