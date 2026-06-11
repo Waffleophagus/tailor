@@ -35,7 +35,7 @@
 	} from './lib/graph/collapse-devices';
 	import { resolveGraphLayoutRoot } from './lib/graph/graph-layout-root';
 	import { resolveBaseGraphEdges } from './lib/graph/resolve-graph-edges';
-	import { buildTagColorMap } from './lib/tag-color';
+	import { buildOwnerColorMap, buildTagColorMap } from './lib/tag-color';
 	import AuthDialog from './lib/components/AuthDialog.svelte';
 	import DeviceDetailsPanel from './lib/components/DeviceDetailsPanel.svelte';
 	import DeviceFiltersPanel from './lib/components/DeviceFiltersPanel.svelte';
@@ -113,9 +113,11 @@
 		})
 	);
 	const tagOptions = $derived(unique(devices.flatMap((device) => device.tags)));
-	const tagColorMap = $derived(buildTagColorMap(tagOptions));
-	const hasUntaggedDevices = $derived(devices.some((device) => device.tags.length === 0));
 	const ownerOptions = $derived(unique(devices.map((device) => device.owner).filter(Boolean)));
+	const tagColorMap = $derived(buildTagColorMap(tagOptions));
+	const ownerColorMap = $derived(buildOwnerColorMap(ownerOptions));
+	const hasUntaggedDevices = $derived(devices.some((device) => device.tags.length === 0));
+	const hasUnownedDevices = $derived(devices.some((device) => !device.owner));
 	const osOptions = $derived(unique(devices.map((device) => device.os).filter(Boolean)));
 	const rootDevice = $derived(devices[0]);
 	const editorDirty = $derived(Boolean(policy && editorHuJSON !== policy.hujson));
@@ -846,6 +848,7 @@
 						{cloudStatus}
 						{colorBy}
 						{tagColorMap}
+						{ownerColorMap}
 						rootDevice={graphRootDevice}
 						onReady={(api) => (graphAPI = api)}
 					/>
@@ -859,6 +862,8 @@
 							{tagColorMap}
 							{hasUntaggedDevices}
 							{ownerOptions}
+							{ownerColorMap}
+							{hasUnownedDevices}
 							{osOptions}
 						/>
 					{/if}
@@ -1000,6 +1005,7 @@
 					{visibleEdges}
 					{colorBy}
 					{tagColorMap}
+					{ownerColorMap}
 				/>
 			{/if}
 		</div>
@@ -1049,6 +1055,7 @@
 					{visibleEdges}
 					bind:colorBy
 					{tagColorMap}
+					{ownerColorMap}
 					showCredit={false}
 					compact
 				/>
@@ -1069,6 +1076,8 @@
 					{tagColorMap}
 					{hasUntaggedDevices}
 					{ownerOptions}
+					{ownerColorMap}
+					{hasUnownedDevices}
 					{osOptions}
 					embedded
 				/>

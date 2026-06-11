@@ -4,7 +4,7 @@
 	import { isAggregateDeviceId } from '../graph/collapse-devices';
 	import type { RenderEdge } from '../graph/engine';
 	import { palette } from './avatar-color';
-	import { getTagColor } from '../tag-color';
+	import { getOwnerColor, getTagColor } from '../tag-color';
 
 	let {
 		selectedDevice = $bindable<Device | undefined>(undefined),
@@ -14,6 +14,7 @@
 		visibleEdges = [],
 		colorBy = $bindable<'status' | 'tag' | 'owner' | 'os'>('status'),
 		tagColorMap = new Map<string, string>(),
+		ownerColorMap = new Map<string, string>(),
 		showCredit = true,
 		compact = false
 	}: {
@@ -24,6 +25,7 @@
 		visibleEdges?: RenderEdge[];
 		colorBy?: 'status' | 'tag' | 'owner' | 'os';
 		tagColorMap?: ReadonlyMap<string, string>;
+		ownerColorMap?: ReadonlyMap<string, string>;
 		showCredit?: boolean;
 		compact?: boolean;
 	} = $props();
@@ -60,8 +62,10 @@
 		if (colorBy === 'tag') {
 			return getTagColor(activeDevice.tags[0], tagColorMap);
 		}
-		const value = colorBy === 'owner' ? activeDevice.owner : activeDevice.os;
-		return palette(value || 'unknown');
+		if (colorBy === 'owner') {
+			return getOwnerColor(activeDevice.owner, ownerColorMap);
+		}
+		return palette(activeDevice.os || 'unknown');
 	});
 
 	function edgeTitle(edge: RenderEdge) {

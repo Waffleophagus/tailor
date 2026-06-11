@@ -9,7 +9,7 @@ import type {
 import type { Device, Edge } from '../api/schemas';
 import type { CloudAuthStatusResponse } from '../api/schemas';
 import { palette } from '../components/avatar-color';
-import { getTagColor } from '../tag-color';
+import { getOwnerColor, getTagColor } from '../tag-color';
 import { isAggregateDeviceId } from './collapse-devices';
 import { edgeClasses } from './edge-classes';
 import { installGraphDebug, uninstallGraphDebug } from './graph-debug';
@@ -31,6 +31,7 @@ export interface SyncOptions {
 	cloudStatus: CloudAuthStatusResponse;
 	colorBy: ColorBy;
 	tagColorMap: ReadonlyMap<string, string>;
+	ownerColorMap: ReadonlyMap<string, string>;
 	rootDevice?: Device;
 	scenarioSourceIds?: ReadonlySet<string>;
 }
@@ -106,8 +107,10 @@ export function createEngine(opts: GraphInitOptions) {
 		if (current.colorBy === 'tag') {
 			return getTagColor(device.tags[0], current.tagColorMap);
 		}
-		const value = current.colorBy === 'owner' ? device.owner : device.os;
-		return palette(value || 'unknown');
+		if (current.colorBy === 'owner') {
+			return getOwnerColor(device.owner, current.ownerColorMap);
+		}
+		return palette(device.os || 'unknown');
 	}
 
 	function isScenarioSource(device: Device) {

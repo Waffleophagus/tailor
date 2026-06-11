@@ -18,7 +18,7 @@ const ownerOsPalette = [
 	'#5973b0'
 ];
 
-export { UNTAGGED_DEVICE_COLOR } from '../tag-color';
+export { NO_OWNER_COLOR, UNTAGGED_DEVICE_COLOR } from '../tag-color';
 
 export function palette(value: string): string {
 	if (Object.prototype.hasOwnProperty.call(osColors, value)) return osColors[value];

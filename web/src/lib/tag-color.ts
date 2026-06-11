@@ -6,6 +6,11 @@ const oklchDistance = differenceEuclidean('oklch');
 /** Fixed color for devices with no tag — reserved and excluded from tag hash collisions. */
 export const UNTAGGED_DEVICE_COLOR = '#788896';
 
+/** Fixed color for devices with no owner (e.g. tag-only devices). */
+export const NO_OWNER_COLOR = '#6b7580';
+
+const FALLBACK_HEX = '#808080';
+
 const GOLDEN_ANGLE = 137.508;
 const HUE_CYCLE_LEN = Math.ceil(360 / GOLDEN_ANGLE);
 const MIN_OKLCH_DISTANCE = 0.025;
@@ -56,7 +61,7 @@ function toOklch(color: OklchColor) {
 }
 
 function oklchToHex(color: OklchColor): string {
-	return formatHex(toOklch(color)) ?? UNTAGGED_DEVICE_COLOR;
+	return formatHex(toOklch(color)) ?? FALLBACK_HEX;
 }
 
 function parsedOklch(hex: string) {
@@ -93,11 +98,14 @@ function spiralCandidate(anchor: OklchColor, attempt: number): OklchColor {
 	};
 }
 
-function reservedAssignedColors(): AssignedColor[] {
-	const parsed = oklchConverter(parse(UNTAGGED_DEVICE_COLOR));
-	if (!parsed || parsed.mode !== 'oklch') return [];
-	const oklch: OklchColor = { l: parsed.l, c: parsed.c, h: parsed.h ?? 0 };
-	return [{ oklch, hex: UNTAGGED_DEVICE_COLOR }];
+function reservedAssignedColors(reservedHex: readonly string[]): AssignedColor[] {
+	const assigned: AssignedColor[] = [];
+	for (const hex of reservedHex) {
+		const parsed = oklchConverter(parse(hex));
+		if (!parsed || parsed.mode !== 'oklch') continue;
+		assigned.push({ oklch: { l: parsed.l, c: parsed.c, h: parsed.h ?? 0 }, hex });
+	}
+	return assigned;
 }
 
 function* searchCandidates(anchor: OklchColor): Generator<OklchColor> {
@@ -114,8 +122,8 @@ function* searchCandidates(anchor: OklchColor): Generator<OklchColor> {
 	}
 }
 
-function resolveTagColor(tag: string, assigned: AssignedColor[]): string {
-	const anchor = hashToOklchAnchor(tag);
+function resolveLabelColor(label: string, assigned: AssignedColor[]): string {
+	const anchor = hashToOklchAnchor(label);
 
 	for (const candidate of searchCandidates(anchor)) {
 		const hex = oklchToHex(candidate);
@@ -135,25 +143,57 @@ function resolveTagColor(tag: string, assigned: AssignedColor[]): string {
 	return hex;
 }
 
-/** Build a stable tag→hex map with perceptual collision resolution. */
-export function buildTagColorMap(tags: readonly string[]): ReadonlyMap<string, string> {
-	const sorted = [...new Set(tags)].sort((a, b) => a.localeCompare(b));
-	const assigned = reservedAssignedColors();
+export interface DistinctColorMapOptions {
+	reservedHex?: readonly string[];
+}
+
+/** Build a stable label→hex map with perceptual collision resolution. */
+export function buildDistinctColorMap(
+	labels: readonly string[],
+	options: DistinctColorMapOptions = {}
+): ReadonlyMap<string, string> {
+	const sorted = [...new Set(labels)].sort((a, b) => a.localeCompare(b));
+	const assigned = reservedAssignedColors(options.reservedHex ?? []);
 	const map = new Map<string, string>();
 
-	for (const tag of sorted) {
-		map.set(tag, resolveTagColor(tag, assigned));
+	for (const label of sorted) {
+		map.set(label, resolveLabelColor(label, assigned));
 	}
 
 	return map;
+}
+
+/** Build a stable tag→hex map with perceptual collision resolution. */
+export function buildTagColorMap(tags: readonly string[]): ReadonlyMap<string, string> {
+	return buildDistinctColorMap(tags, { reservedHex: [UNTAGGED_DEVICE_COLOR] });
+}
+
+/** Build a stable owner→hex map with perceptual collision resolution. */
+export function buildOwnerColorMap(owners: readonly string[]): ReadonlyMap<string, string> {
+	return buildDistinctColorMap(owners, { reservedHex: [NO_OWNER_COLOR] });
+}
+
+export function getLabelColor(
+	label: string | undefined,
+	colorMap: ReadonlyMap<string, string>,
+	fallback: string
+): string {
+	if (!label) return fallback;
+	return colorMap.get(label) ?? fallback;
 }
 
 export function getTagColor(
 	firstTag: string | undefined,
 	tagColorMap: ReadonlyMap<string, string>
 ): string {
-	if (!firstTag) return UNTAGGED_DEVICE_COLOR;
-	return tagColorMap.get(firstTag) ?? UNTAGGED_DEVICE_COLOR;
+	return getLabelColor(firstTag, tagColorMap, UNTAGGED_DEVICE_COLOR);
+}
+
+export function getOwnerColor(
+	owner: string | undefined,
+	ownerColorMap: ReadonlyMap<string, string>
+): string {
+	return getLabelColor(owner, ownerColorMap, NO_OWNER_COLOR);
 }
 
 /** Minimum OKLCH distance between two hex colors (for tests). */
