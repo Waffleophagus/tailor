@@ -484,7 +484,7 @@ func (s *Server) handleTopology(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleTopologySocket(w http.ResponseWriter, r *http.Request) {
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
-		OriginPatterns: []string{"localhost:*", "127.0.0.1:*"},
+		OriginPatterns: topologyWebSocketOriginPatterns(r),
 	})
 	if err != nil {
 		s.logger.Warn("topology websocket accept failed",

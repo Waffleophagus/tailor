@@ -4,6 +4,7 @@
 	import { isAggregateDeviceId } from '../graph/collapse-devices';
 	import type { RenderEdge } from '../graph/engine';
 	import { palette } from './avatar-color';
+	import { getOwnerColor, getTagColor } from '../tag-color';
 	import DeviceDetailsPanel from './DeviceDetailsPanel.svelte';
 	import ResizableSidebar from './ResizableSidebar.svelte';
 
@@ -14,7 +15,9 @@
 		devices = [],
 		aggregateMeta = new Map<string, DeviceAggregateMeta>(),
 		visibleEdges = [],
-		colorBy = $bindable<'status' | 'tag' | 'owner' | 'os'>('status')
+		colorBy = $bindable<'status' | 'tag' | 'owner' | 'os'>('status'),
+		tagColorMap = new Map<string, string>(),
+		ownerColorMap = new Map<string, string>()
 	}: {
 		open?: boolean;
 		selectedDevice?: Device;
@@ -23,6 +26,8 @@
 		aggregateMeta?: Map<string, DeviceAggregateMeta>;
 		visibleEdges?: RenderEdge[];
 		colorBy?: 'status' | 'tag' | 'owner' | 'os';
+		tagColorMap?: ReadonlyMap<string, string>;
+		ownerColorMap?: ReadonlyMap<string, string>;
 	} = $props();
 
 	const selectedAggregate = $derived(
@@ -44,13 +49,13 @@
 		if (colorBy === 'status') {
 			return activeDevice.online ? '#41a86f' : '#9aa7a1';
 		}
-		const value =
-			colorBy === 'tag'
-				? (activeDevice.tags[0] ?? 'untagged')
-				: colorBy === 'owner'
-					? activeDevice.owner
-					: activeDevice.os;
-		return palette(value || 'unknown');
+		if (colorBy === 'tag') {
+			return getTagColor(activeDevice.tags[0], tagColorMap);
+		}
+		if (colorBy === 'owner') {
+			return getOwnerColor(activeDevice.owner, ownerColorMap);
+		}
+		return palette(activeDevice.os || 'unknown');
 	});
 </script>
 
@@ -62,6 +67,8 @@
 		{aggregateMeta}
 		{visibleEdges}
 		bind:colorBy
+		{tagColorMap}
+		{ownerColorMap}
 	/>
 	{#snippet collapsed()}
 		<button class="sidebar-icon" title="Details panel" type="button" onclick={() => (open = true)}>

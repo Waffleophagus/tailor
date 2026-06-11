@@ -1,12 +1,17 @@
 <script lang="ts">
 	import { palette } from './avatar-color';
+	import { NO_OWNER_COLOR, UNTAGGED_DEVICE_COLOR } from '../tag-color';
 
 	let {
 		colorBy = $bindable<'status' | 'tag' | 'owner' | 'os'>('status'),
 		authenticated = false,
 		graphMode = $bindable<'focused' | 'all'>('all'),
 		tagOptions = [] as string[],
+		tagColorMap = new Map<string, string>(),
+		hasUntaggedDevices = false,
 		ownerOptions = [] as string[],
+		ownerColorMap = new Map<string, string>(),
+		hasUnownedDevices = false,
 		osOptions = [] as string[],
 		embedded = false
 	}: {
@@ -14,7 +19,11 @@
 		authenticated?: boolean;
 		graphMode?: 'focused' | 'all';
 		tagOptions?: string[];
+		tagColorMap?: ReadonlyMap<string, string>;
+		hasUntaggedDevices?: boolean;
 		ownerOptions?: string[];
+		ownerColorMap?: ReadonlyMap<string, string>;
+		hasUnownedDevices?: boolean;
 		osOptions?: string[];
 		embedded?: boolean;
 	} = $props();
@@ -31,9 +40,34 @@
 				{ color: '#9aa7a1', label: 'Offline' }
 			];
 		}
-		const options = colorBy === 'tag' ? tagOptions : colorBy === 'owner' ? ownerOptions : osOptions;
+		if (colorBy === 'tag') {
+			const sortedTags = [...tagOptions].sort((a, b) => a.localeCompare(b));
+			const entries: ColorEntry[] = [];
+			if (hasUntaggedDevices) {
+				entries.push({ color: UNTAGGED_DEVICE_COLOR, label: 'No tag' });
+			}
+			for (const tag of sortedTags) {
+				const color = tagColorMap.get(tag);
+				if (!color) continue;
+				entries.push({ color, label: tag });
+			}
+			return entries;
+		}
+		if (colorBy === 'owner') {
+			const sortedOwners = [...ownerOptions].sort((a, b) => a.localeCompare(b));
+			const entries: ColorEntry[] = [];
+			if (hasUnownedDevices) {
+				entries.push({ color: NO_OWNER_COLOR, label: 'No owner' });
+			}
+			for (const owner of sortedOwners) {
+				const color = ownerColorMap.get(owner);
+				if (!color) continue;
+				entries.push({ color, label: owner });
+			}
+			return entries;
+		}
 		const maxVisible = 8;
-		const visible = options.slice(0, maxVisible);
+		const visible = osOptions.slice(0, maxVisible);
 		return visible.map((value) => ({
 			color: palette(value || 'unknown'),
 			label: value || 'unknown'
@@ -52,6 +86,9 @@
 		if (graphMode === 'focused') return `ACL focus\u00a0\u2014\u00a0focused`;
 		return 'ACL access scope';
 	});
+
+	const tagLegendCount = $derived(tagOptions.length);
+	const ownerLegendCount = $derived(ownerOptions.length);
 </script>
 
 <div
@@ -138,6 +175,16 @@
 				<span title={entry.label}>{entry.label}</span>
 			</div>
 		{/each}
+		{#if colorBy === 'tag' && tagLegendCount > 10}
+			<div class="mt-1 text-[0.55rem] font-semibold tracking-wide text-muted uppercase">
+				{tagLegendCount} tags
+			</div>
+		{/if}
+		{#if colorBy === 'owner' && ownerLegendCount > 10}
+			<div class="mt-1 text-[0.55rem] font-semibold tracking-wide text-muted uppercase">
+				{ownerLegendCount} owners
+			</div>
+		{/if}
 	</div>
 </div>
 

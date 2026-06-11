@@ -35,6 +35,7 @@
 	} from './lib/graph/collapse-devices';
 	import { resolveGraphLayoutRoot } from './lib/graph/graph-layout-root';
 	import { resolveBaseGraphEdges } from './lib/graph/resolve-graph-edges';
+	import { buildOwnerColorMap, buildTagColorMap } from './lib/tag-color';
 	import AuthDialog from './lib/components/AuthDialog.svelte';
 	import DeviceDetailsPanel from './lib/components/DeviceDetailsPanel.svelte';
 	import DeviceFiltersPanel from './lib/components/DeviceFiltersPanel.svelte';
@@ -113,6 +114,10 @@
 	);
 	const tagOptions = $derived(unique(devices.flatMap((device) => device.tags)));
 	const ownerOptions = $derived(unique(devices.map((device) => device.owner).filter(Boolean)));
+	const tagColorMap = $derived(buildTagColorMap(tagOptions));
+	const ownerColorMap = $derived(buildOwnerColorMap(ownerOptions));
+	const hasUntaggedDevices = $derived(devices.some((device) => device.tags.length === 0));
+	const hasUnownedDevices = $derived(devices.some((device) => !device.owner));
 	const osOptions = $derived(unique(devices.map((device) => device.os).filter(Boolean)));
 	const rootDevice = $derived(devices[0]);
 	const editorDirty = $derived(Boolean(policy && editorHuJSON !== policy.hujson));
@@ -210,9 +215,8 @@
 		selectedDevice = member ?? devices[0];
 	});
 
-	function scheduleTopologyPolicySync() {
-		const savedPolicy = policy;
-		if (!cloudStatus.authenticated || !savedPolicy || editorDirty || hasValidatedPending) {
+	function scheduleTopologyRefresh() {
+		if (!cloudStatus.authenticated) {
 			return;
 		}
 		if (topologyEvalTimer !== undefined) {
@@ -220,8 +224,30 @@
 		}
 		topologyEvalTimer = window.setTimeout(() => {
 			topologyEvalTimer = undefined;
-			void evaluatePolicy(savedPolicy.hujson);
+			void runTopologyRefresh();
 		}, 300);
+	}
+
+	async function runTopologyRefresh() {
+		if (!cloudStatus.authenticated) {
+			return;
+		}
+
+		if (hasValidatedPending && !validationStale && validatedHuJSON) {
+			await evaluatePolicy(validatedHuJSON, true);
+			return;
+		}
+
+		if (stagedPreviewActive && editorHuJSON && !validationStale) {
+			await evaluatePolicy(editorHuJSON, true);
+			return;
+		}
+
+		const savedPolicy = policy;
+		if (!savedPolicy || editorDirty || hasValidatedPending) {
+			return;
+		}
+		await evaluatePolicy(savedPolicy.hujson);
 	}
 
 	function unique(values: string[]) {
@@ -574,7 +600,7 @@
 					selectedDevice = selectedDevice
 						? (value.devices.find((device) => device.id === selectedDevice?.id) ?? value.devices[0])
 						: value.devices[0];
-					scheduleTopologyPolicySync();
+					scheduleTopologyRefresh();
 				},
 				onUnavailable: (status) => {
 					tailscaleSetup = status.setup ?? undefined;
@@ -821,6 +847,8 @@
 						{showLabels}
 						{cloudStatus}
 						{colorBy}
+						{tagColorMap}
+						{ownerColorMap}
 						rootDevice={graphRootDevice}
 						onReady={(api) => (graphAPI = api)}
 					/>
@@ -831,7 +859,11 @@
 							authenticated={cloudStatus.authenticated}
 							bind:graphMode
 							{tagOptions}
+							{tagColorMap}
+							{hasUntaggedDevices}
 							{ownerOptions}
+							{ownerColorMap}
+							{hasUnownedDevices}
 							{osOptions}
 						/>
 					{/if}
@@ -972,6 +1004,8 @@
 					{aggregateMeta}
 					{visibleEdges}
 					{colorBy}
+					{tagColorMap}
+					{ownerColorMap}
 				/>
 			{/if}
 		</div>
@@ -1020,6 +1054,8 @@
 					{aggregateMeta}
 					{visibleEdges}
 					bind:colorBy
+					{tagColorMap}
+					{ownerColorMap}
 					showCredit={false}
 					compact
 				/>
@@ -1037,7 +1073,11 @@
 					authenticated={cloudStatus.authenticated}
 					bind:graphMode
 					{tagOptions}
+					{tagColorMap}
+					{hasUntaggedDevices}
 					{ownerOptions}
+					{ownerColorMap}
+					{hasUnownedDevices}
 					{osOptions}
 					embedded
 				/>

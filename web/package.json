@@ -58,6 +58,7 @@
 	"dependencies": {
 		"@hey-api/client-fetch": "^0.13.1",
 		"better-result": "^2.9.2",
+		"culori": "^4.0.2",
 		"cytoscape": "^3.33.4",
 		"zod": "^4.4.3"
 	}

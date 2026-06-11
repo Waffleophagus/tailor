@@ -8,12 +8,23 @@ export const osColors: Record<string, string> = {
 	tvos: '#FA6C1B'
 };
 
+const ownerOsPalette = [
+	'#438aa1',
+	'#a5663f',
+	'#7c6fb0',
+	'#b0892f',
+	'#5d7f73',
+	'#b45f74',
+	'#5973b0'
+];
+
+export { NO_OWNER_COLOR, UNTAGGED_DEVICE_COLOR } from '../tag-color';
+
 export function palette(value: string): string {
 	if (Object.prototype.hasOwnProperty.call(osColors, value)) return osColors[value];
-	const colors = ['#438aa1', '#a5663f', '#7c6fb0', '#b0892f', '#5d7f73', '#b45f74', '#5973b0'];
 	let hash = 0;
 	for (let i = 0; i < value.length; i += 1) {
-		hash = (hash + value.charCodeAt(i) * (i + 1)) % colors.length;
+		hash = (hash + value.charCodeAt(i) * (i + 1)) % ownerOsPalette.length;
 	}
-	return colors[hash];
+	return ownerOsPalette[hash];
 }

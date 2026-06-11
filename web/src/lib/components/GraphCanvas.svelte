@@ -17,6 +17,8 @@
 		showLabels = true,
 		cloudStatus = { authenticated: false, hasPolicy: false } as CloudAuthStatusResponse,
 		colorBy = 'status' as ColorBy,
+		tagColorMap = new Map<string, string>(),
+		ownerColorMap = new Map<string, string>(),
 		rootDevice,
 		scenarioSourceIds,
 		onNodeSelect = (device: Device) => {
@@ -38,6 +40,8 @@
 		showLabels: boolean;
 		cloudStatus: CloudAuthStatusResponse;
 		colorBy: ColorBy;
+		tagColorMap: ReadonlyMap<string, string>;
+		ownerColorMap: ReadonlyMap<string, string>;
 		rootDevice?: Device;
 		scenarioSourceIds?: ReadonlySet<string>;
 		onNodeSelect?: (device: Device) => void;
@@ -79,6 +83,8 @@
 				showLabels,
 				cloudStatus,
 				colorBy,
+				tagColorMap,
+				ownerColorMap,
 				rootDevice,
 				scenarioSourceIds,
 				onNodeSelect,
@@ -107,6 +113,8 @@
 			showLabels,
 			cloudStatus,
 			colorBy,
+			tagColorMap,
+			ownerColorMap,
 			rootDevice,
 			scenarioSourceIds
 		});
