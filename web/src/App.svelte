@@ -210,9 +210,8 @@
 		selectedDevice = member ?? devices[0];
 	});
 
-	function scheduleTopologyPolicySync() {
-		const savedPolicy = policy;
-		if (!cloudStatus.authenticated || !savedPolicy || editorDirty || hasValidatedPending) {
+	function scheduleTopologyRefresh() {
+		if (!cloudStatus.authenticated) {
 			return;
 		}
 		if (topologyEvalTimer !== undefined) {
@@ -220,8 +219,30 @@
 		}
 		topologyEvalTimer = window.setTimeout(() => {
 			topologyEvalTimer = undefined;
-			void evaluatePolicy(savedPolicy.hujson);
+			void runTopologyRefresh();
 		}, 300);
+	}
+
+	async function runTopologyRefresh() {
+		if (!cloudStatus.authenticated) {
+			return;
+		}
+
+		if (hasValidatedPending && !validationStale && validatedHuJSON) {
+			await evaluatePolicy(validatedHuJSON, true);
+			return;
+		}
+
+		if (stagedPreviewActive && editorHuJSON && !validationStale) {
+			await evaluatePolicy(editorHuJSON, true);
+			return;
+		}
+
+		const savedPolicy = policy;
+		if (!savedPolicy || editorDirty || hasValidatedPending) {
+			return;
+		}
+		await evaluatePolicy(savedPolicy.hujson);
 	}
 
 	function unique(values: string[]) {
@@ -574,7 +595,7 @@
 					selectedDevice = selectedDevice
 						? (value.devices.find((device) => device.id === selectedDevice?.id) ?? value.devices[0])
 						: value.devices[0];
-					scheduleTopologyPolicySync();
+					scheduleTopologyRefresh();
 				},
 				onUnavailable: (status) => {
 					tailscaleSetup = status.setup ?? undefined;
