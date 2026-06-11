@@ -35,6 +35,7 @@
 	} from './lib/graph/collapse-devices';
 	import { resolveGraphLayoutRoot } from './lib/graph/graph-layout-root';
 	import { resolveBaseGraphEdges } from './lib/graph/resolve-graph-edges';
+	import { buildTagColorMap } from './lib/tag-color';
 	import AuthDialog from './lib/components/AuthDialog.svelte';
 	import DeviceDetailsPanel from './lib/components/DeviceDetailsPanel.svelte';
 	import DeviceFiltersPanel from './lib/components/DeviceFiltersPanel.svelte';
@@ -112,6 +113,8 @@
 		})
 	);
 	const tagOptions = $derived(unique(devices.flatMap((device) => device.tags)));
+	const tagColorMap = $derived(buildTagColorMap(tagOptions));
+	const hasUntaggedDevices = $derived(devices.some((device) => device.tags.length === 0));
 	const ownerOptions = $derived(unique(devices.map((device) => device.owner).filter(Boolean)));
 	const osOptions = $derived(unique(devices.map((device) => device.os).filter(Boolean)));
 	const rootDevice = $derived(devices[0]);
@@ -842,6 +845,7 @@
 						{showLabels}
 						{cloudStatus}
 						{colorBy}
+						{tagColorMap}
 						rootDevice={graphRootDevice}
 						onReady={(api) => (graphAPI = api)}
 					/>
@@ -852,6 +856,8 @@
 							authenticated={cloudStatus.authenticated}
 							bind:graphMode
 							{tagOptions}
+							{tagColorMap}
+							{hasUntaggedDevices}
 							{ownerOptions}
 							{osOptions}
 						/>
@@ -993,6 +999,7 @@
 					{aggregateMeta}
 					{visibleEdges}
 					{colorBy}
+					{tagColorMap}
 				/>
 			{/if}
 		</div>
@@ -1041,6 +1048,7 @@
 					{aggregateMeta}
 					{visibleEdges}
 					bind:colorBy
+					{tagColorMap}
 					showCredit={false}
 					compact
 				/>
@@ -1058,6 +1066,8 @@
 					authenticated={cloudStatus.authenticated}
 					bind:graphMode
 					{tagOptions}
+					{tagColorMap}
+					{hasUntaggedDevices}
 					{ownerOptions}
 					{osOptions}
 					embedded

@@ -1,11 +1,14 @@
 <script lang="ts">
 	import { palette } from './avatar-color';
+	import { UNTAGGED_DEVICE_COLOR } from '../tag-color';
 
 	let {
 		colorBy = $bindable<'status' | 'tag' | 'owner' | 'os'>('status'),
 		authenticated = false,
 		graphMode = $bindable<'focused' | 'all'>('all'),
 		tagOptions = [] as string[],
+		tagColorMap = new Map<string, string>(),
+		hasUntaggedDevices = false,
 		ownerOptions = [] as string[],
 		osOptions = [] as string[],
 		embedded = false
@@ -14,6 +17,8 @@
 		authenticated?: boolean;
 		graphMode?: 'focused' | 'all';
 		tagOptions?: string[];
+		tagColorMap?: ReadonlyMap<string, string>;
+		hasUntaggedDevices?: boolean;
 		ownerOptions?: string[];
 		osOptions?: string[];
 		embedded?: boolean;
@@ -31,7 +36,20 @@
 				{ color: '#9aa7a1', label: 'Offline' }
 			];
 		}
-		const options = colorBy === 'tag' ? tagOptions : colorBy === 'owner' ? ownerOptions : osOptions;
+		if (colorBy === 'tag') {
+			const sortedTags = [...tagOptions].sort((a, b) => a.localeCompare(b));
+			const entries: ColorEntry[] = [];
+			if (hasUntaggedDevices) {
+				entries.push({ color: UNTAGGED_DEVICE_COLOR, label: 'No tag' });
+			}
+			for (const tag of sortedTags) {
+				const color = tagColorMap.get(tag);
+				if (!color) continue;
+				entries.push({ color, label: tag });
+			}
+			return entries;
+		}
+		const options = colorBy === 'owner' ? ownerOptions : osOptions;
 		const maxVisible = 8;
 		const visible = options.slice(0, maxVisible);
 		return visible.map((value) => ({
@@ -52,6 +70,8 @@
 		if (graphMode === 'focused') return `ACL focus\u00a0\u2014\u00a0focused`;
 		return 'ACL access scope';
 	});
+
+	const tagLegendCount = $derived(tagOptions.length);
 </script>
 
 <div
@@ -138,6 +158,11 @@
 				<span title={entry.label}>{entry.label}</span>
 			</div>
 		{/each}
+		{#if colorBy === 'tag' && tagLegendCount > 10}
+			<div class="mt-1 text-[0.55rem] font-semibold tracking-wide text-muted uppercase">
+				{tagLegendCount} tags
+			</div>
+		{/if}
 	</div>
 </div>
 

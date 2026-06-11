@@ -4,6 +4,7 @@
 	import { isAggregateDeviceId } from '../graph/collapse-devices';
 	import type { RenderEdge } from '../graph/engine';
 	import { palette } from './avatar-color';
+	import { getTagColor } from '../tag-color';
 
 	let {
 		selectedDevice = $bindable<Device | undefined>(undefined),
@@ -12,6 +13,7 @@
 		aggregateMeta = new Map<string, DeviceAggregateMeta>(),
 		visibleEdges = [],
 		colorBy = $bindable<'status' | 'tag' | 'owner' | 'os'>('status'),
+		tagColorMap = new Map<string, string>(),
 		showCredit = true,
 		compact = false
 	}: {
@@ -21,6 +23,7 @@
 		aggregateMeta?: Map<string, DeviceAggregateMeta>;
 		visibleEdges?: RenderEdge[];
 		colorBy?: 'status' | 'tag' | 'owner' | 'os';
+		tagColorMap?: ReadonlyMap<string, string>;
 		showCredit?: boolean;
 		compact?: boolean;
 	} = $props();
@@ -54,12 +57,10 @@
 		if (colorBy === 'status') {
 			return activeDevice.online ? '#41a86f' : '#9aa7a1';
 		}
-		const value =
-			colorBy === 'tag'
-				? (activeDevice.tags[0] ?? 'untagged')
-				: colorBy === 'owner'
-					? activeDevice.owner
-					: activeDevice.os;
+		if (colorBy === 'tag') {
+			return getTagColor(activeDevice.tags[0], tagColorMap);
+		}
+		const value = colorBy === 'owner' ? activeDevice.owner : activeDevice.os;
 		return palette(value || 'unknown');
 	});
 
