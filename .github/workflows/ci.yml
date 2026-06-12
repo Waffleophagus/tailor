@@ -26,7 +26,9 @@ permissions:
 env:
   # Primary OCI registry host or prefix (Forgejo/Gitea/Codeberg/etc.).
   # The release job also mirrors to ghcr.io/<owner>/<repo> when running on GitHub.
-  CONTAINER_REGISTRY: ${{ vars.CONTAINER_REGISTRY || 'ghcr.io' }}
+  # Do not use `||` here: Forgejo runner 0.6.1 formats a non-empty string
+  # fallback as `%!t(string=...)`. GitHub publishing defaults to ghcr.io below.
+  CONTAINER_REGISTRY: ${{ vars.CONTAINER_REGISTRY }}
   # Demo tailnet only — never runs production ACL save E2E (see test:e2e:production).
   TAILSCALE_API_KEY: tskey-api-tailor-dev
 
@@ -210,6 +212,11 @@ jobs:
           tag="${{ steps.release.outputs.tag }}"
           version="${{ steps.release.outputs.version }}"
           repo="$(echo "$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]')"
+          registry="${CONTAINER_REGISTRY}"
+
+          if [ -z "$registry" ] && [ "$GITHUB_SERVER_URL" = "https://github.com" ]; then
+            registry="ghcr.io"
+          fi
 
           echo "version=${version}" >> "$GITHUB_OUTPUT"
 
@@ -229,9 +236,9 @@ jobs:
             done
           }
 
-          if [ "${CONTAINER_REGISTRY}" != "ghcr.io" ] && [ -n "${REGISTRY_TOKEN:-}" ]; then
+          if [ -n "$registry" ] && [ "$registry" != "ghcr.io" ] && [ -n "${REGISTRY_TOKEN:-}" ]; then
             primary_publish=true
-            add_tags "${CONTAINER_REGISTRY}/${repo}"
+            add_tags "${registry}/${repo}"
           fi
 
           if [ "${GITHUB_SERVER_URL}" = "https://github.com" ]; then
@@ -359,16 +366,139 @@ jobs:
             org.opencontainers.image.version=${{ steps.image-tags.outputs.version }}
 
       - name: Publish release
-        uses: softprops/action-gh-release@c062e08bd532815e2082a85e87e3ef29c3e6d191
-        with:
-          tag_name: ${{ steps.release.outputs.tag }}
-          name: ${{ steps.release.outputs.tag }}
-          target_commitish: ${{ steps.release.outputs.target_sha }}
-          generate_release_notes: true
-          draft: ${{ github.event_name == 'workflow_dispatch' && inputs.draft || false }}
-          files: |
-            dist/release/*
-          fail_on_unmatched_files: true
+        shell: bash
+        env:
+          API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.release.outputs.tag }}
+          TARGET_SHA: ${{ steps.release.outputs.target_sha }}
+          DRAFT: ${{ github.event_name == 'workflow_dispatch' && inputs.draft || false }}
+        run: |
+          set -euo pipefail
+
+          api="${GITHUB_API_URL:-${GITHUB_SERVER_URL}/api/v1}"
+          repo_api="${api}/repos/${GITHUB_REPOSITORY}"
+          auth_header="Authorization: token ${API_TOKEN}"
+
+          if release="$(
+            curl --fail --silent --show-error \
+              -H "$auth_header" \
+              -H "Accept: application/json" \
+              "${repo_api}/releases/tags/${TAG}" 2>/dev/null
+          )"; then
+            :
+          else
+            release=""
+          fi
+
+          if [ -n "$release" ]; then
+            release_id="$(jq -r '.id' <<< "$release")"
+            is_draft="$(jq -r '.draft' <<< "$release")"
+            if [ "$is_draft" != "true" ]; then
+              echo "Published release $TAG already exists; refusing to overwrite it."
+              exit 1
+            fi
+
+            payload="$(
+              jq -n \
+                --arg tag "$TAG" \
+                --arg name "$TAG" \
+                --arg target "$TARGET_SHA" \
+                --argjson draft "$DRAFT" \
+                '{
+                  tag_name: $tag,
+                  name: $name,
+                  target_commitish: $target,
+                  draft: $draft,
+                  prerelease: false
+                }'
+            )"
+            release="$(
+              curl --fail-with-body --silent --show-error \
+                --request PATCH \
+                -H "$auth_header" \
+                -H "Content-Type: application/json" \
+                --data "$payload" \
+                "${repo_api}/releases/${release_id}"
+            )"
+          else
+            payload="$(
+              jq -n \
+                --arg tag "$TAG" \
+                --arg name "$TAG" \
+                --arg target "$TARGET_SHA" \
+                --argjson draft "$DRAFT" \
+                --argjson generate_notes "$([ "$GITHUB_SERVER_URL" = "https://github.com" ] && echo true || echo false)" \
+                '{
+                  tag_name: $tag,
+                  name: $name,
+                  target_commitish: $target,
+                  draft: $draft,
+                  prerelease: false,
+                  generate_release_notes: $generate_notes
+                }'
+            )"
+            release="$(
+              curl --fail-with-body --silent --show-error \
+                --request POST \
+                -H "$auth_header" \
+                -H "Content-Type: application/json" \
+                --data "$payload" \
+                "${repo_api}/releases"
+            )"
+          fi
+
+          release_id="$(jq -r '.id' <<< "$release")"
+          upload_url="$(jq -r '.upload_url // empty' <<< "$release" | sed 's/{.*$//')"
+          if [ -z "$upload_url" ]; then
+            upload_url="${repo_api}/releases/${release_id}/assets"
+          fi
+
+          shopt -s nullglob
+          files=(dist/release/*)
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "No release files matched dist/release/*."
+            exit 1
+          fi
+
+          assets="$(
+            curl --fail-with-body --silent --show-error \
+              -H "$auth_header" \
+              -H "Accept: application/json" \
+              "${repo_api}/releases/${release_id}/assets"
+          )"
+
+          for file in "${files[@]}"; do
+            name="$(basename "$file")"
+            existing_id="$(jq -r --arg name "$name" '.[] | select(.name == $name) | .id' <<< "$assets" | head -1)"
+            if [ -n "$existing_id" ]; then
+              if [ "$GITHUB_SERVER_URL" = "https://github.com" ]; then
+                delete_url="${repo_api}/releases/assets/${existing_id}"
+              else
+                delete_url="${repo_api}/releases/${release_id}/assets/${existing_id}"
+              fi
+              curl --fail-with-body --silent --show-error \
+                --request DELETE -H "$auth_header" "$delete_url"
+            fi
+
+            encoded_name="$(jq -rn --arg value "$name" '$value|@uri')"
+            if [ "$GITHUB_SERVER_URL" = "https://github.com" ]; then
+              curl --fail-with-body --silent --show-error \
+                --request POST \
+                -H "$auth_header" \
+                -H "Content-Type: application/octet-stream" \
+                --data-binary "@${file}" \
+                "${upload_url}?name=${encoded_name}" \
+                >/dev/null
+            else
+              curl --fail-with-body --silent --show-error \
+                --request POST \
+                -H "$auth_header" \
+                --form "attachment=@${file}" \
+                "${upload_url}?name=${encoded_name}" \
+                >/dev/null
+            fi
+            echo "Uploaded $name"
+          done
 
   optional-platform-tests:
     if: github.server_url == 'https://github.com'
