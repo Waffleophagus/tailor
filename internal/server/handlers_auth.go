@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 
@@ -27,7 +28,8 @@ func (s *Server) handleCloudAuth(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		statusCode := http.StatusBadGateway
-		if strings.Contains(err.Error(), "required") {
+		var apiErr *cloudapi.Error
+		if errors.As(err, &apiErr) && apiErr.StatusCode >= 400 && apiErr.StatusCode < 500 {
 			statusCode = http.StatusBadRequest
 		}
 		s.logger.Warn("cloud auth failed",

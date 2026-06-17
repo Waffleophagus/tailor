@@ -37,10 +37,9 @@ func TestStatusRecorderForwardsHijack(t *testing.T) {
 func TestStatusRecorderUnwrapReturnsUnderlyingWriter(t *testing.T) {
 	underlying := httptest.NewRecorder()
 	rec := &statusRecorder{ResponseWriter: underlying, status: http.StatusOK}
-	if unwrapped, ok := any(rec).(interface{ Unwrap() http.ResponseWriter }); ok {
-		if unwrapped.Unwrap() != underlying {
-			t.Fatal("Unwrap should return the underlying writer")
-		}
+	unwrapped := any(rec).(interface{ Unwrap() http.ResponseWriter })
+	if unwrapped.Unwrap() != underlying {
+		t.Fatal("Unwrap should return the underlying writer")
 	}
 }
 

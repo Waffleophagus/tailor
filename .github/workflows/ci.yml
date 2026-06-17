@@ -379,16 +379,25 @@ jobs:
           repo_api="${api}/repos/${GITHUB_REPOSITORY}"
           auth_header="Authorization: token ${API_TOKEN}"
 
+          release_stderr="$(mktemp)"
           if release="$(
             curl --fail --silent --show-error \
               -H "$auth_header" \
               -H "Accept: application/json" \
-              "${repo_api}/releases/tags/${TAG}" 2>/dev/null
+              "${repo_api}/releases/tags/${TAG}" 2>"$release_stderr"
           )"; then
             :
           else
-            release=""
+            curl_status="$?"
+            if grep -q "404" "$release_stderr"; then
+              release=""
+            else
+              cat "$release_stderr" >&2
+              rm -f "$release_stderr"
+              exit "$curl_status"
+            fi
           fi
+          rm -f "$release_stderr"
 
           if [ -n "$release" ]; then
             release_id="$(jq -r '.id' <<< "$release")"

@@ -262,8 +262,8 @@ func (s *Server) handlePolicySave(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if errors.Is(err, tailorcore.ErrStagedDraftNotFound) {
-			logAPIError(s.logger, r, http.StatusBadRequest, err, "policy save draft not found")
-			writeError(w, http.StatusBadRequest, "Choose a staged draft before saving.")
+			logAPIError(s.logger, r, http.StatusNotFound, err, "policy save draft not found")
+			writeError(w, http.StatusNotFound, "Choose a staged draft before saving.")
 			return
 		}
 		if errors.Is(err, tailorcore.ErrStagedDraftHashMismatch) {
