@@ -61,7 +61,7 @@ func (c *Client) Endpoint() string {
 func (c *Client) Status(ctx context.Context) ([]api.Device, error) {
 	status, err := c.localClient.Status(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrUnavailable, err)
+		return nil, fmt.Errorf("%w: %w", ErrUnavailable, err)
 	}
 
 	return DevicesFromIPNStatus(status), nil
@@ -83,7 +83,7 @@ func (c *Client) StatusLogged(ctx context.Context, operation string) ([]api.Devi
 func (c *Client) TailnetName(ctx context.Context) (string, error) {
 	status, err := c.localClient.StatusWithoutPeers(ctx)
 	if err != nil {
-		return "", fmt.Errorf("%w: %v", ErrUnavailable, err)
+		return "", fmt.Errorf("%w: %w", ErrUnavailable, err)
 	}
 	// Prefer the DNS suffix (e.g. "triceratops-gecko.ts.net") — this is what
 	// Tailscale's Cloud API expects for /api/v2/tailnet/{name}/acl calls.

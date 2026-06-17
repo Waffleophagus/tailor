@@ -66,7 +66,7 @@ func (e *Error) Error() string {
 
 func New(options ...Option) *Client {
 	c := &Client{
-		httpClient: http.DefaultClient,
+		httpClient: &http.Client{Timeout: 30 * time.Second},
 		baseURL:    DefaultBaseURL,
 		logger:     slog.New(slog.DiscardHandler),
 	}
@@ -247,7 +247,9 @@ func (c *Client) SavePolicy(ctx context.Context, draft string) (string, error) {
 }
 
 func (c *Client) ensureSession(ctx context.Context) (*Session, error) {
-	_ = ctx
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.session == nil {

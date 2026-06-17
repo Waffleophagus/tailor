@@ -34,12 +34,12 @@ func TestStatusRecorderForwardsHijack(t *testing.T) {
 	}
 }
 
-func TestStatusRecorderUnwrapReturnsSelf(t *testing.T) {
-	rec := &statusRecorder{ResponseWriter: httptest.NewRecorder(), status: http.StatusOK}
-	if unwrapped, ok := any(rec).(interface{ Unwrap() http.ResponseWriter }); ok {
-		if unwrapped.Unwrap() != rec {
-			t.Fatal("Unwrap should return the statusRecorder, not the underlying writer")
-		}
+func TestStatusRecorderUnwrapReturnsUnderlyingWriter(t *testing.T) {
+	underlying := httptest.NewRecorder()
+	rec := &statusRecorder{ResponseWriter: underlying, status: http.StatusOK}
+	unwrapped := any(rec).(interface{ Unwrap() http.ResponseWriter })
+	if unwrapped.Unwrap() != underlying {
+		t.Fatal("Unwrap should return the underlying writer")
 	}
 }
 

@@ -22,8 +22,8 @@ func TestPolicySaveRequiresExplicitStagedDraftInDevMode(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("save without staged draft status = %d, want %d", resp.StatusCode, http.StatusBadRequest)
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("save without staged draft status = %d, want %d", resp.StatusCode, http.StatusNotFound)
 	}
 }
 

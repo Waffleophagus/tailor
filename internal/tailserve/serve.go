@@ -17,6 +17,7 @@ import (
 
 const defaultHTTPSPort = 443
 const httpRedirectPort = 80
+const configureMaxAttempts = 30
 
 // Mode controls whether Tailor configures Tailscale Serve on startup.
 type Mode string
@@ -69,11 +70,13 @@ func ConfigureWhenReady(ctx context.Context, opts Options) {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 
-	for {
+	var lastErr error
+	for attempt := 1; attempt <= configureMaxAttempts; attempt++ {
 		if err := tryConfigure(ctx, lc, proxyURL, httpsPort, logger); err == nil {
 			return
 		} else if mode == ModeOn {
-			logger.Warn("tailscale serve not ready yet", "error", err)
+			lastErr = err
+			logger.Warn("tailscale serve not ready yet", "attempt", attempt, "max_attempts", configureMaxAttempts, "error", err)
 		}
 
 		select {
@@ -84,6 +87,11 @@ func ConfigureWhenReady(ctx context.Context, opts Options) {
 			return
 		case <-ticker.C:
 		}
+	}
+
+	if mode == ModeOn {
+		logger.Error("tailscale serve setup failed after retries", "attempts", configureMaxAttempts, "error", lastErr)
+		panic(fmt.Sprintf("tailscale serve setup failed after %d attempts: %v", configureMaxAttempts, lastErr))
 	}
 }
 
