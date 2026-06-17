@@ -63,9 +63,9 @@ func (r *statusRecorder) Flush() {
 	}
 }
 
-// Unwrap returns the wrapper so feature detection uses statusRecorder's methods.
+// Unwrap returns the underlying writer for middleware feature detection.
 func (r *statusRecorder) Unwrap() http.ResponseWriter {
-	return r
+	return r.ResponseWriter
 }
 
 // AccessMiddleware logs API requests with method, path, status, duration, and request ID.
