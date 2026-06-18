@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/Waffleophagus/tailor/internal/authz"
+	"tailscale.com/client/local"
 	"tailscale.com/client/tailscale/apitype"
 	"tailscale.com/tailcfg"
 )
@@ -91,5 +92,14 @@ func TestIdentityMiddlewareAttachesFullRoleFromCapability(t *testing.T) {
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("status = %d, want 204", rec.Code)
+	}
+}
+
+func TestResolveAppCapabilitySkipsTailnetStatusOutsideTailnetMode(t *testing.T) {
+	var typedNil *local.Client
+	opts := AuthOptions{TailnetStatus: typedNil}
+
+	if got := opts.resolveAppCapability(context.Background(), nil); got != "" {
+		t.Fatalf("capability = %q, want empty outside tailnet mode", got)
 	}
 }

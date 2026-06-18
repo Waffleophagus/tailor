@@ -168,6 +168,9 @@ func (opts *AuthOptions) resolveAppCapability(ctx context.Context, logger *slog.
 	if strings.TrimSpace(opts.AppCapability) != "" {
 		return strings.TrimSpace(opts.AppCapability)
 	}
+	if !opts.TailnetMode {
+		return ""
+	}
 
 	opts.mu.Lock()
 	cached := opts.resolvedCapability
