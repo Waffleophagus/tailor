@@ -250,10 +250,18 @@ If validation or save fails, create a 15-minute browser-only bootstrap session f
 
 ## Implementation Plan
 
-1. Add a tailnet runtime module.
-   - Host adapter wraps the existing LocalAPI client.
-   - tsnet adapter owns `tsnet.Server`, `LocalClient`, listeners, and `WhoIs`.
-   - `tailorcore.Service` depends on the runtime interface instead of constructing `localapi.Client` directly.
+1. Keep tailnet runtime wiring at the process boundary.
+   - `cmd/tailor` selects host LocalAPI or embedded tsnet mode and owns the
+     `tsnet.Server`, listeners, and lifecycle.
+   - In embedded mode, `cmd/tailor` obtains tsnet's `LocalClient` and passes it
+     to the existing LocalAPI adapter used by `tailorcore.Service`.
+   - The HTTP server receives the narrower `WhoIs` and tailnet-status
+     dependencies needed for request identity and capability resolution.
+   - Do not introduce one shared runtime interface spanning LocalAPI access,
+     request identity, listeners, and lifecycle. Those responsibilities have
+     different consumers, and keeping them separate makes the boundaries more
+     explicit. Add narrower interfaces only when a consumer or test requires
+     one.
 
 2. Serve Docker deployments directly through tsnet.
    - Use `TAILSCALE_AUTHKEY` or `TS_AUTHKEY`.

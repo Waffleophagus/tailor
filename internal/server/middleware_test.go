@@ -3,9 +3,11 @@ package server
 import (
 	"bufio"
 	"context"
+	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/Waffleophagus/tailor/internal/authz"
@@ -92,6 +94,69 @@ func TestIdentityMiddlewareAttachesFullRoleFromCapability(t *testing.T) {
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("status = %d, want 204", rec.Code)
+	}
+}
+
+func TestIdentityMiddlewareRejectsUnauthenticatedPageWithTailnetGuidance(t *testing.T) {
+	nextCalled := false
+	handler := IdentityMiddleware(nil, &AuthOptions{
+		TailnetMode: true,
+		WhoIsClient: fakeWhoIsClient{err: errors.New("no tailnet identity")},
+	}, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		nextCalled = true
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "203.0.113.10:1234"
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", rec.Code)
+	}
+	if nextCalled {
+		t.Fatal("unauthenticated request reached application handler")
+	}
+	if body := rec.Body.String(); !strings.Contains(body, "This Tailor instance is private") ||
+		!strings.Contains(body, "No topology or policy data was loaded") ||
+		!strings.Contains(body, "MagicDNS address") {
+		t.Fatalf("response did not contain tailnet guidance: %q", body)
+	}
+	if contentType := rec.Header().Get("Content-Type"); !strings.HasPrefix(contentType, "text/html") {
+		t.Fatalf("content type = %q, want HTML", contentType)
+	}
+}
+
+func TestIdentityMiddlewareRejectsUnauthenticatedAPIWithoutHTML(t *testing.T) {
+	handler := IdentityMiddleware(nil, &AuthOptions{
+		TailnetMode: true,
+		WhoIsClient: fakeWhoIsClient{err: errors.New("no tailnet identity")},
+	}, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("unauthenticated request reached application handler")
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/health", nil)
+	req.RemoteAddr = "203.0.113.10:1234"
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", rec.Code)
+	}
+	if strings.Contains(rec.Body.String(), "<!doctype html>") {
+		t.Fatal("API rejection should not return the browser access page")
+	}
+}
+
+func TestIdentityMiddlewareFailsClosedWithoutWhoIsClient(t *testing.T) {
+	handler := IdentityMiddleware(nil, &AuthOptions{TailnetMode: true}, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("request reached application handler without WhoIs client")
+	}))
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", rec.Code)
 	}
 }
 
