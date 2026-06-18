@@ -172,6 +172,9 @@ func cloudAuthStatusResponse(r *http.Request, s *Server, status cloudapi.AuthSta
 	}
 
 	appCapability := s.auth.resolveAppCapability(r.Context(), s.logger)
+	if status.DevMode {
+		appCapability = "tailor.demo.tailor.ts.net/cap/admin"
+	}
 	hasGrant := false
 	if status.Authenticated && status.HasPolicy && appCapability != "" {
 		if raw, err := s.core.CloudPolicy(r.Context()); err == nil {
@@ -181,7 +184,7 @@ func cloudAuthStatusResponse(r *http.Request, s *Server, status cloudapi.AuthSta
 
 	bootstrapActive, bootstrapExpiresAt := s.bootstrapState(r, loginName, nodeName)
 	canEdit := authz.Allowed(r.Context(), authz.PermissionWritePolicy)
-	needsSetup := s.auth.TailnetMode && status.Authenticated && !status.DevMode && appCapability != "" && !hasGrant && !bootstrapActive
+	needsSetup := status.Authenticated && appCapability != "" && !hasGrant && !bootstrapActive && (status.DevMode || s.auth.TailnetMode)
 
 	response := api.CloudAuthStatusResponse{
 		Authenticated:         status.Authenticated,

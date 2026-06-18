@@ -16,11 +16,10 @@ func (s *Server) handleSetupGrantRecommendation(w http.ResponseWriter, r *http.R
 		return
 	}
 	status := s.core.CloudStatus()
-	if status.DevMode {
-		writeError(w, http.StatusBadRequest, "Setup grant recommendation is not available in demo mode.")
-		return
-	}
 	appCapability := s.auth.resolveAppCapability(r.Context(), s.logger)
+	if status.DevMode {
+		appCapability = "tailor.demo.tailor.ts.net/cap/admin"
+	}
 	if appCapability == "" {
 		writeError(w, http.StatusBadRequest, "Tailor app capability is unavailable. Set TAILOR_APP_CAPABILITY or wait for MagicDNS.")
 		return
@@ -50,13 +49,35 @@ func (s *Server) handleSetupGrantSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	status := s.core.CloudStatus()
-	if status.DevMode {
-		writeError(w, http.StatusBadRequest, "Setup grant save is not available in demo mode.")
-		return
-	}
 	appCapability := s.auth.resolveAppCapability(r.Context(), s.logger)
+	if status.DevMode {
+		appCapability = "tailor.demo.tailor.ts.net/cap/admin"
+	}
 	if appCapability == "" {
 		writeError(w, http.StatusBadRequest, "Tailor app capability is unavailable. Set TAILOR_APP_CAPABILITY or wait for MagicDNS.")
+		return
+	}
+	if status.DevMode {
+		grant := policy.RecommendedSetupGrant(appCapability)
+		var request api.SetupGrantRequest
+		if r.ContentLength > 0 {
+			if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&request); err != nil {
+				writeError(w, http.StatusBadRequest, "Request body must be valid JSON.")
+				return
+			}
+			if request.Grant != nil {
+				grant = *request.Grant
+			}
+		}
+		writeJSON(w, http.StatusOK, api.SetupGrantResponse{
+			Tailnet:               status.Tailnet,
+			AppCapability:         appCapability,
+			HasAppCapabilityGrant: true,
+			CallerRole:            "full",
+			CanEditPolicy:         true,
+			StatusMessage:         "Demo access grant applied. No tailnet policy was changed.",
+			SetupGrantSnippet:     policy.FormatGrantSnippet(grant),
+		})
 		return
 	}
 
