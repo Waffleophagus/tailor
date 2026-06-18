@@ -12,10 +12,12 @@ import (
 	"github.com/Waffleophagus/tailor/internal/frontend"
 	"github.com/Waffleophagus/tailor/internal/mcpserver"
 	"github.com/Waffleophagus/tailor/internal/tailorcore"
+	"tailscale.com/client/local"
 )
 
 type Options struct {
 	LocalAPIEndpoint string
+	LocalClient      *local.Client
 	Logger           *slog.Logger
 }
 
@@ -38,6 +40,7 @@ func New(options ...Options) http.Handler {
 	deployEnv := deploy.Detect()
 	core := tailorcore.New(tailorcore.Options{
 		LocalAPIEndpoint: opts.LocalAPIEndpoint,
+		LocalClient:      opts.LocalClient,
 		Logger:           logger,
 	})
 	server := &Server{

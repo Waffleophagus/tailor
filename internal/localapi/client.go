@@ -51,6 +51,21 @@ func New(socketPath string, options ...ClientOption) *Client {
 	return c
 }
 
+func NewWithLocalClient(localClient *local.Client, endpoint string, options ...ClientOption) *Client {
+	if localClient == nil {
+		return New(endpoint, options...)
+	}
+	c := &Client{
+		socketOverride: endpoint,
+		localClient:    localClient,
+		logger:         slog.New(slog.DiscardHandler),
+	}
+	for _, option := range options {
+		option(c)
+	}
+	return c
+}
+
 func (c *Client) Endpoint() string {
 	if c.socketOverride != "" {
 		return c.socketOverride

@@ -1,16 +1,16 @@
 services:
   tailor:
     build: .
-    # Optional when using TAILSCALE_AUTHKEY — Tailor is reachable on the tailnet
-    # at https://<TAILSCALE_HOSTNAME>.<your-tailnet>.ts.net/ via Tailscale Serve.
+    # Optional when using TAILSCALE_AUTHKEY or TS_AUTHKEY — Tailor is reachable
+    # on the tailnet at https://<TAILSCALE_HOSTNAME>.<your-tailnet>.ts.net/.
     ports:
       - "8080:8080"
     environment:
       TAILOR_ADDR: ":8080"
       TAILOR_LOG_DIR: /var/log/tailor
 
-      # auto chooses embedded mode unless you provide an external LocalAPI socket.
-      # Use "embedded" to force the container to run its own tailscaled, or
+      # auto chooses embedded tsnet mode unless you provide an external LocalAPI socket.
+      # Use "embedded" to force Tailor to join the tailnet directly, or
       # "external" to force Tailor to use a mounted host socket.
       TAILOR_TAILSCALE_MODE: "auto"
 
@@ -18,9 +18,10 @@ services:
       # Set an auth key when you want this container to join the tailnet as its
       # own Tailscale node. Create one in the Tailscale admin console.
       # TAILSCALE_AUTHKEY: "tskey-auth-..."
+      # TS_AUTHKEY: "tskey-auth-..."
       # TAILSCALE_HOSTNAME: "tailor"
       # Then open https://tailor.<your-tailnet>.ts.net/ (no :8080 needed).
-      # TAILSCALE_UP_EXTRA_ARGS: "--advertise-tags=tag:tailor"
+      # TS_ADVERTISE_TAGS: "tag:tailor-acl-service"
 
       # Host socket mode:
       # Uncomment this plus the volume below to piggyback on the host's Linux
@@ -38,6 +39,7 @@ services:
       # TAILOR_MCP_READONLY: "true"
 
     volumes:
+      - ./tailor-state:/var/lib/tailor-tsnet
       - ./tailor-logs:/var/log/tailor
 
     # Host socket mode volume:

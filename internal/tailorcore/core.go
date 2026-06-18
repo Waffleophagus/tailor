@@ -19,6 +19,7 @@ import (
 	"github.com/Waffleophagus/tailor/internal/localapi"
 	"github.com/Waffleophagus/tailor/internal/policy"
 	"github.com/Waffleophagus/tailor/internal/topology"
+	"tailscale.com/client/local"
 )
 
 type Service struct {
@@ -63,6 +64,7 @@ func (e PolicyFetchError) Is(target error) bool {
 
 type Options struct {
 	LocalAPIEndpoint string
+	LocalClient      *local.Client
 	Logger           *slog.Logger
 }
 
@@ -73,7 +75,7 @@ func New(options Options) *Service {
 	}
 	service := &Service{
 		logger:       logger,
-		localAPI:     localapi.New(options.LocalAPIEndpoint, localapi.WithLogger(logger)),
+		localAPI:     localapi.NewWithLocalClient(options.LocalClient, options.LocalAPIEndpoint, localapi.WithLogger(logger)),
 		cloudAPI:     cloudapi.New(cloudapi.WithLogger(logger)),
 		stagedDrafts: map[string]stagedDraft{},
 		cleanupDone:  make(chan struct{}),

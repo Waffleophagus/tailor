@@ -8,9 +8,8 @@ import (
 )
 
 // topologyWebSocketOriginPatterns authorizes browser WebSocket handshakes.
-// Tailscale Serve and other reverse proxies forward to loopback while the
-// browser Origin still names the public MagicDNS host — the static localhost
-// patterns alone reject those connections.
+// Reverse proxies can forward to loopback while the browser Origin still names
+// the public host, so static localhost patterns alone reject those connections.
 func topologyWebSocketOriginPatterns(r *http.Request) []string {
 	patterns := []string{"localhost:*", "127.0.0.1:*", "[::1]:*"}
 

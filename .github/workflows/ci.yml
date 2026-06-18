@@ -108,10 +108,15 @@ jobs:
   release:
     needs: test
     # Forgejo is the source of truth for release tags. Its push mirror delivers
-    # the same immutable tag to GitHub, where this job publishes the release.
+    # the same immutable tag to GitHub, where this job publishes the stable
+    # release. Forgejo branch pushes also publish a rolling dev prerelease.
     if: >-
       github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
+      (github.event_name == 'push' &&
+        startsWith(github.ref, 'refs/heads/') &&
+        github.ref_name != 'main' &&
+        github.server_url != 'https://github.com')
     runs-on: ubuntu-latest
     concurrency:
       group: release-${{ github.repository }}
@@ -127,7 +132,7 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
-      - name: Resolve release tag
+      - name: Resolve release context
         id: release
         shell: bash
         env:
@@ -138,45 +143,60 @@ jobs:
 
           git fetch --tags origin
 
+          dev_release=false
+          prerelease=false
+
           if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
             tag="$TAG"
-          else
+            stable_release=true
+          elif printf '%s\n' "$GITHUB_REF" | grep -Eq '^refs/tags/v'; then
             tag="$GITHUB_REF_NAME"
+            stable_release=true
+          else
+            tag="dev"
+            stable_release=false
+            dev_release=true
+            prerelease=true
           fi
 
-          if ! printf '%s\n' "$tag" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
-            echo "Release tags must be stable semver tags such as v0.1.7."
-            exit 1
+          if [ "$stable_release" = "true" ]; then
+            if ! printf '%s\n' "$tag" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+              echo "Release tags must be stable semver tags such as v0.1.7."
+              exit 1
+            fi
+
+            if ! git show-ref --verify --quiet "refs/tags/${tag}"; then
+              echo "Tag $tag does not exist. Create it in Forgejo and let the push mirror copy it."
+              exit 1
+            fi
+
+            # Verify the tag exists on Forgejo remote (origin is the Forgejo push mirror source)
+            forgejo_sha="$(git ls-remote origin "refs/tags/${tag}^{}" 2>/dev/null | awk '{print $1}' | head -1)"
+            if [ -z "$forgejo_sha" ]; then
+              # Try non-dereferenced form as fallback (lightweight tags)
+              forgejo_sha="$(git ls-remote origin "refs/tags/${tag}" 2>/dev/null | awk '{print $1}' | head -1)"
+            fi
+            if [ -z "$forgejo_sha" ]; then
+              echo "Tag $tag does not exist on the Forgejo remote."
+              exit 1
+            fi
+
+            target_sha="$(git rev-parse "${tag}^{commit}")"
+            if [ "$forgejo_sha" != "$target_sha" ]; then
+              echo "Tag $tag on Forgejo remote points to $forgejo_sha, but local tag points to $target_sha."
+              exit 1
+            fi
+          else
+            target_sha="$(git rev-parse HEAD)"
           fi
 
-          if ! git show-ref --verify --quiet "refs/tags/${tag}"; then
-            echo "Tag $tag does not exist. Create it in Forgejo and let the push mirror copy it."
-            exit 1
-          fi
-
-          # Verify the tag exists on Forgejo remote (origin is the Forgejo push mirror source)
-          forgejo_sha="$(git ls-remote origin "refs/tags/${tag}^{}" 2>/dev/null | awk '{print $1}' | head -1)"
-          if [ -z "$forgejo_sha" ]; then
-            # Try non-dereferenced form as fallback (lightweight tags)
-            forgejo_sha="$(git ls-remote origin "refs/tags/${tag}" 2>/dev/null | awk '{print $1}' | head -1)"
-          fi
-          if [ -z "$forgejo_sha" ]; then
-            echo "Tag $tag does not exist on the Forgejo remote."
-            exit 1
-          fi
-
-          target_sha="$(git rev-parse "${tag}^{commit}")"
-          if [ "$forgejo_sha" != "$target_sha" ]; then
-            echo "Tag $tag on Forgejo remote points to $forgejo_sha, but local tag points to $target_sha."
-            exit 1
-          fi
           head_sha="$(git rev-parse HEAD)"
           if [ "$target_sha" != "$head_sha" ]; then
             echo "Checked out $head_sha, but tag $tag points to $target_sha."
             exit 1
           fi
 
-          if [ "${GITHUB_SERVER_URL}" = "https://github.com" ]; then
+          if [ "$stable_release" = "true" ] && [ "${GITHUB_SERVER_URL}" = "https://github.com" ]; then
             release="$(
               gh api --paginate "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
                 --jq ".[] | select(.tag_name == \"${tag}\") | [.draft, .target_commitish] | @tsv" \
@@ -195,11 +215,18 @@ jobs:
             fi
           fi
 
-          version="${tag#v}"
+          if [ "$dev_release" = "true" ]; then
+            version="dev"
+          else
+            version="${tag#v}"
+          fi
           echo "version=${version}" >> "$GITHUB_OUTPUT"
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
           echo "target_sha=${target_sha}" >> "$GITHUB_OUTPUT"
-          echo "Release: ${tag} at ${target_sha} (draft=${{ inputs.draft || false }})"
+          echo "stable_release=${stable_release}" >> "$GITHUB_OUTPUT"
+          echo "dev_release=${dev_release}" >> "$GITHUB_OUTPUT"
+          echo "prerelease=${prerelease}" >> "$GITHUB_OUTPUT"
+          echo "Release: ${tag} at ${target_sha} (draft=${{ inputs.draft || false }}, prerelease=${prerelease})"
 
       - name: Compute container image tags
         id: image-tags
@@ -225,7 +252,7 @@ jobs:
           primary_publish=false
           ghcr_publish=false
 
-          add_tags() {
+          add_stable_tags() {
             local image="$1"
             for suffix in "$version" "$tag" latest; do
               local full="${image}:${suffix}"
@@ -234,6 +261,23 @@ jobs:
                 tags+=("$full")
               fi
             done
+          }
+
+          add_dev_tags() {
+            local image="$1"
+            local full="${image}:dev"
+            if [ -z "${seen[$full]+x}" ]; then
+              seen["$full"]=1
+              tags+=("$full")
+            fi
+          }
+
+          add_tags() {
+            if [ "${{ steps.release.outputs.dev_release }}" = "true" ]; then
+              add_dev_tags "$1"
+            else
+              add_stable_tags "$1"
+            fi
           }
 
           if [ -n "$registry" ] && [ "$registry" != "ghcr.io" ] && [ -n "${REGISTRY_TOKEN:-}" ]; then
@@ -331,6 +375,14 @@ jobs:
 
           ls -la "$staging"
 
+      - name: Move rolling dev tag
+        if: steps.release.outputs.dev_release == 'true'
+        run: |
+          git config user.name "forgejo-actions"
+          git config user.email "forgejo-actions@users.noreply.local"
+          git tag --force dev "${{ steps.release.outputs.target_sha }}"
+          git push --force origin refs/tags/dev
+
       - name: Verify release tag
         run: |
           test "$(git rev-parse "${{ steps.release.outputs.tag }}^{commit}")" = \
@@ -372,6 +424,7 @@ jobs:
           TAG: ${{ steps.release.outputs.tag }}
           TARGET_SHA: ${{ steps.release.outputs.target_sha }}
           DRAFT: ${{ github.event_name == 'workflow_dispatch' && inputs.draft || false }}
+          PRERELEASE: ${{ steps.release.outputs.prerelease }}
         run: |
           set -euo pipefail
 
@@ -402,7 +455,7 @@ jobs:
           if [ -n "$release" ]; then
             release_id="$(jq -r '.id' <<< "$release")"
             is_draft="$(jq -r '.draft' <<< "$release")"
-            if [ "$is_draft" != "true" ]; then
+            if [ "$is_draft" != "true" ] && [ "$PRERELEASE" != "true" ]; then
               echo "Published release $TAG already exists; refusing to overwrite it."
               exit 1
             fi
@@ -413,12 +466,13 @@ jobs:
                 --arg name "$TAG" \
                 --arg target "$TARGET_SHA" \
                 --argjson draft "$DRAFT" \
+                --argjson prerelease "$PRERELEASE" \
                 '{
                   tag_name: $tag,
                   name: $name,
                   target_commitish: $target,
                   draft: $draft,
-                  prerelease: false
+                  prerelease: $prerelease
                 }'
             )"
             release="$(
@@ -436,13 +490,14 @@ jobs:
                 --arg name "$TAG" \
                 --arg target "$TARGET_SHA" \
                 --argjson draft "$DRAFT" \
+                --argjson prerelease "$PRERELEASE" \
                 --argjson generate_notes "$([ "$GITHUB_SERVER_URL" = "https://github.com" ] && echo true || echo false)" \
                 '{
                   tag_name: $tag,
                   name: $name,
                   target_commitish: $target,
                   draft: $draft,
-                  prerelease: false,
+                  prerelease: $prerelease,
                   generate_release_notes: $generate_notes
                 }'
             )"
