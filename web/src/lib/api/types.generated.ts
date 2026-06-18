@@ -40,6 +40,15 @@ interface CloudAuthStatusResponse {
     tailnet?: string;
     hasPolicy: boolean;
     devMode?: boolean;
+    callerRole?: string;
+    canEditPolicy: boolean;
+    hasAppCapabilityGrant?: boolean;
+    appCapability?: string;
+    needsSetupGrant?: boolean;
+    bootstrapActive?: boolean;
+    bootstrapExpiresAt?: string;
+    statusMessage?: string;
+    setupGrantSnippet?: string;
 }
 
 // From api/types.go
@@ -322,6 +331,24 @@ interface PolicyValidateResponse {
     valid: boolean;
     tailnet: string;
     errors?: string[];
+}
+
+// From api/types.go
+interface SetupGrantRequest {
+    grant?: GrantDraft | null;
+}
+
+// From api/types.go
+interface SetupGrantResponse {
+    tailnet?: string;
+    appCapability?: string;
+    hasAppCapabilityGrant: boolean;
+    callerRole?: string;
+    canEditPolicy: boolean;
+    bootstrapActive?: boolean;
+    bootstrapExpiresAt?: string;
+    statusMessage?: string;
+    setupGrantSnippet?: string;
 }
 
 // From api/types.go

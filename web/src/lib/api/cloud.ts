@@ -13,8 +13,10 @@ import {
 	policyStageResponseSchema,
 	policySaveResponseSchema,
 	policyValidateResponseSchema,
+	setupGrantResponseSchema,
 	type CloudAuthRequest,
 	type CloudAuthStatusResponse,
+	type SetupGrantResponse,
 	type PolicyDraftRequest,
 	type PolicyDraftResponse,
 	type PolicyDiscardStagedResponse,
@@ -45,6 +47,31 @@ export async function authenticateCloud(
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify(request)
+	});
+}
+
+export async function saveSetupGrant(options?: {
+	editedSnippet?: string;
+}): Promise<Result<SetupGrantResponse, Error>> {
+	let body: string | undefined;
+	if (options?.editedSnippet) {
+		try {
+			const parsed = JSON.parse(options.editedSnippet) as {
+				grants?: unknown[];
+				src?: unknown;
+			};
+			const grant = Array.isArray(parsed.grants) ? parsed.grants[0] : parsed;
+			body = JSON.stringify({ grant });
+		} catch (e) {
+			return Result.err(
+				new Error(`Invalid JSON in edited grant: ${e instanceof Error ? e.message : String(e)}`)
+			);
+		}
+	}
+	return fetchJSON('/api/cloud/setup-grant', setupGrantResponseSchema, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body
 	});
 }
 

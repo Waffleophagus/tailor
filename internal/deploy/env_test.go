@@ -18,6 +18,26 @@ func TestWantsHostSocket(t *testing.T) {
 	}
 }
 
+func TestDetectAuthKeyEnvAliases(t *testing.T) {
+	t.Setenv("TAILSCALE_AUTHKEY", "")
+	t.Setenv("TS_AUTHKEY", "")
+
+	if hasAuthKey() {
+		t.Fatal("empty auth key env should not be detected")
+	}
+
+	t.Setenv("TS_AUTHKEY", "tskey-auth-test")
+	if !hasAuthKey() {
+		t.Fatal("TS_AUTHKEY should be detected")
+	}
+
+	t.Setenv("TS_AUTHKEY", "")
+	t.Setenv("TAILSCALE_AUTHKEY", "tskey-auth-test")
+	if !hasAuthKey() {
+		t.Fatal("TAILSCALE_AUTHKEY should be detected")
+	}
+}
+
 func TestNeedsTailscaleSetup(t *testing.T) {
 	base := Environment{InContainer: true}
 

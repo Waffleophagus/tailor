@@ -94,10 +94,35 @@ type CloudAuthRequest struct {
 }
 
 type CloudAuthStatusResponse struct {
-	Authenticated bool   `json:"authenticated"`
-	Tailnet       string `json:"tailnet,omitempty"`
-	HasPolicy     bool   `json:"hasPolicy"`
-	DevMode       bool   `json:"devMode,omitempty"`
+	Authenticated         bool   `json:"authenticated"`
+	Tailnet               string `json:"tailnet,omitempty"`
+	HasPolicy             bool   `json:"hasPolicy"`
+	DevMode               bool   `json:"devMode,omitempty"`
+	CallerRole            string `json:"callerRole,omitempty"`
+	CanEditPolicy         bool   `json:"canEditPolicy"`
+	HasAppCapabilityGrant bool   `json:"hasAppCapabilityGrant,omitempty"`
+	AppCapability         string `json:"appCapability,omitempty"`
+	NeedsSetupGrant       bool   `json:"needsSetupGrant,omitempty"`
+	BootstrapActive       bool   `json:"bootstrapActive,omitempty"`
+	BootstrapExpiresAt    string `json:"bootstrapExpiresAt,omitempty"`
+	StatusMessage         string `json:"statusMessage,omitempty"`
+	SetupGrantSnippet     string `json:"setupGrantSnippet,omitempty"`
+}
+
+type SetupGrantRequest struct {
+	Grant *GrantDraft `json:"grant,omitempty"`
+}
+
+type SetupGrantResponse struct {
+	Tailnet            string `json:"tailnet,omitempty"`
+	AppCapability      string `json:"appCapability,omitempty"`
+	HasAppCapabilityGrant bool `json:"hasAppCapabilityGrant"`
+	CallerRole         string `json:"callerRole,omitempty"`
+	CanEditPolicy      bool   `json:"canEditPolicy"`
+	BootstrapActive    bool   `json:"bootstrapActive,omitempty"`
+	BootstrapExpiresAt string `json:"bootstrapExpiresAt,omitempty"`
+	StatusMessage      string `json:"statusMessage,omitempty"`
+	SetupGrantSnippet  string `json:"setupGrantSnippet,omitempty"`
 }
 
 type PolicyResponse struct {

@@ -7,10 +7,10 @@ import (
 
 // Environment describes how Tailor was started (Docker, Tailscale mode, credentials).
 type Environment struct {
-	InContainer       bool
-	TailscaleMode     string
-	HasAuthKey        bool
-	WantsHostSocket   bool
+	InContainer         bool
+	TailscaleMode       string
+	HasAuthKey          bool
+	WantsHostSocket     bool
 	LikelyDockerDesktop bool
 }
 
@@ -24,11 +24,16 @@ func Detect() Environment {
 	env := Environment{
 		InContainer:     inContainer(),
 		TailscaleMode:   mode,
-		HasAuthKey:      strings.TrimSpace(os.Getenv("TAILSCALE_AUTHKEY")) != "",
+		HasAuthKey:      hasAuthKey(),
 		WantsHostSocket: wantsHostSocket(mode),
 	}
 	env.LikelyDockerDesktop = env.InContainer && likelyDockerDesktopKernel()
 	return env
+}
+
+func hasAuthKey() bool {
+	return strings.TrimSpace(os.Getenv("TAILSCALE_AUTHKEY")) != "" ||
+		strings.TrimSpace(os.Getenv("TS_AUTHKEY")) != ""
 }
 
 // NeedsTailscaleSetup reports whether the deployment cannot show a useful tailnet yet.
@@ -111,7 +116,7 @@ func (e Environment) hints(localAPIAvailable bool) []SetupHint {
 	if e.WantsHostSocket {
 		msg := "Host socket mode only works on Linux when you mount the host tailscaled.sock into the container."
 		if e.LikelyDockerDesktop {
-			msg += " On Docker Desktop (Windows or macOS) that socket is not available — use TAILSCALE_AUTHKEY instead."
+			msg += " On Docker Desktop (Windows or macOS) that socket is not available; use TAILSCALE_AUTHKEY or TS_AUTHKEY instead."
 		}
 		hints = append(hints, SetupHint{ID: "host-socket", Message: msg})
 	}
@@ -119,15 +124,15 @@ func (e Environment) hints(localAPIAvailable bool) []SetupHint {
 	if !e.HasAuthKey {
 		hints = append(hints, SetupHint{
 			ID: "auth-key",
-			Message: "Set TAILSCALE_AUTHKEY to a tskey-auth-… key so this container joins your tailnet as its own node. " +
-				"Optional: TAILSCALE_HOSTNAME=tailor. Tailor then exposes HTTPS via Tailscale Serve at https://tailor.<your-tailnet>.ts.net/.",
+			Message: "Set TAILSCALE_AUTHKEY or TS_AUTHKEY to a tskey-auth-... key so Tailor joins your tailnet as its own node. " +
+				"Optional: TAILSCALE_HOSTNAME=tailor. Tailor then serves HTTPS directly at https://tailor.<your-tailnet>.ts.net/.",
 		})
 	}
 
 	if !localAPIAvailable && !e.WantsHostSocket {
 		hints = append(hints, SetupHint{
-			ID: "localapi-wait",
-			Message: "Tailscale is starting inside the container. After you set TAILSCALE_AUTHKEY, restart the container.",
+			ID:      "localapi-wait",
+			Message: "Tailscale is starting inside Tailor. After you set TAILSCALE_AUTHKEY or TS_AUTHKEY, restart Tailor.",
 		})
 	}
 

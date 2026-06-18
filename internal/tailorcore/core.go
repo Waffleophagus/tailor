@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Waffleophagus/tailor/internal/api"
@@ -19,12 +20,15 @@ import (
 	"github.com/Waffleophagus/tailor/internal/localapi"
 	"github.com/Waffleophagus/tailor/internal/policy"
 	"github.com/Waffleophagus/tailor/internal/topology"
+	"tailscale.com/client/local"
 )
 
 type Service struct {
-	logger   *slog.Logger
-	localAPI *localapi.Client
-	cloudAPI *cloudapi.Client
+	logger      *slog.Logger
+	localAPI    *localapi.Client
+	cloudAPI    *cloudapi.Client
+	policyCache policy.Cache
+	warmups     atomic.Int32
 
 	mu           sync.Mutex
 	stagedDrafts map[string]stagedDraft
@@ -38,6 +42,7 @@ const (
 	stagedDraftTTL             = 24 * time.Hour
 	stagedDraftCleanupInterval = time.Hour
 	maxStagedDrafts            = 100
+	policyCacheWarmupTimeout   = 5 * time.Minute
 )
 
 var ErrPolicyFetch = errors.New("policy fetch failed")
@@ -63,6 +68,8 @@ func (e PolicyFetchError) Is(target error) bool {
 
 type Options struct {
 	LocalAPIEndpoint string
+	LocalClient      *local.Client
+	CloudAPIOptions  []cloudapi.Option
 	Logger           *slog.Logger
 }
 
@@ -73,8 +80,8 @@ func New(options Options) *Service {
 	}
 	service := &Service{
 		logger:       logger,
-		localAPI:     localapi.New(options.LocalAPIEndpoint, localapi.WithLogger(logger)),
-		cloudAPI:     cloudapi.New(cloudapi.WithLogger(logger)),
+		localAPI:     localapi.NewWithLocalClient(options.LocalClient, options.LocalAPIEndpoint, localapi.WithLogger(logger)),
+		cloudAPI:     cloudapi.New(append(options.CloudAPIOptions, cloudapi.WithLogger(logger))...),
 		stagedDrafts: map[string]stagedDraft{},
 		cleanupDone:  make(chan struct{}),
 		cleanupStop:  make(chan struct{}),
@@ -98,8 +105,69 @@ func (s *Service) CloudStatus() cloudapi.AuthStatus {
 	return s.cloudAPI.Status()
 }
 
+func (s *Service) CloudPolicy(ctx context.Context) (string, error) {
+	return s.cloudAPI.Policy(ctx)
+}
+
+func (s *Service) RefreshCloudPolicy(ctx context.Context) (string, error) {
+	raw, err := s.cloudAPI.RefreshPolicy(ctx)
+	if err == nil {
+		s.policyCache.Invalidate()
+	}
+	return raw, err
+}
+
+func (s *Service) ValidateCloudPolicy(ctx context.Context, draft string) error {
+	return s.cloudAPI.ValidatePolicy(ctx, draft)
+}
+
+func (s *Service) SaveCloudPolicy(ctx context.Context, draft string) (string, error) {
+	raw, err := s.cloudAPI.SavePolicy(ctx, draft)
+	if err == nil {
+		s.policyCache.Invalidate()
+	}
+	return raw, err
+}
+
 func (s *Service) AuthenticateCloud(ctx context.Context, request cloudapi.AuthRequest) (cloudapi.AuthStatus, error) {
-	return s.cloudAPI.Authenticate(ctx, request)
+	status, err := s.cloudAPI.Authenticate(ctx, request)
+	if err == nil {
+		s.policyCache.Invalidate()
+		s.warmups.Add(1)
+		go s.warmPolicyCache()
+	}
+	return status, err
+}
+
+func (s *Service) warmPolicyCache() {
+	defer s.warmups.Add(-1)
+
+	ctx, cancel := context.WithTimeout(context.Background(), policyCacheWarmupTimeout)
+	defer cancel()
+
+	rawPolicy, err := s.cloudAPI.Policy(ctx)
+	if err != nil {
+		s.logger.Debug("policy cache warmup failed", "stage", "policy", "error", err.Error())
+		return
+	}
+	if _, err := s.policyCache.StructuredMap(rawPolicy); err != nil {
+		s.logger.Debug("policy cache warmup failed", "stage", "structured_map", "error", err.Error())
+		return
+	}
+	devices, err := s.TopologyDevicesLogged(ctx, "policy_cache_warmup")
+	if err != nil {
+		s.logger.Debug("policy cache warmup failed", "stage", "devices", "error", err.Error())
+		return
+	}
+	if _, err := s.policyCache.EffectiveAccessEdges(rawPolicy, devices, policy.EdgeOptions{}); err != nil {
+		s.logger.Debug("policy cache warmup failed", "stage", "effective_edges", "error", err.Error())
+		return
+	}
+	s.logger.Debug("policy cache warmup complete", "devices", len(devices))
+}
+
+func (s *Service) PolicyCacheWarming() bool {
+	return s.warmups.Load() > 0
 }
 
 func (s *Service) Policy(ctx context.Context) (api.PolicyResponse, error) {
@@ -118,7 +186,7 @@ func (s *Service) PolicyMap(ctx context.Context) (api.PolicyMapResponse, error) 
 	if err != nil {
 		return api.PolicyMapResponse{}, err
 	}
-	policyMap, err := policy.StructuredMap(rawPolicy)
+	policyMap, err := s.policyCache.StructuredMap(rawPolicy)
 	if err != nil {
 		return api.PolicyMapResponse{}, err
 	}
@@ -298,6 +366,7 @@ func (s *Service) SaveStagedPolicy(ctx context.Context, request api.PolicySaveRe
 	if err != nil {
 		return api.PolicySaveResponse{}, err
 	}
+	s.policyCache.Invalidate()
 	s.mu.Lock()
 	delete(s.stagedDrafts, draft.ID)
 	s.mu.Unlock()
@@ -398,7 +467,7 @@ func (s *Service) TopologySnapshot(ctx context.Context, devices []api.Device) ap
 	if status := s.cloudAPI.Status(); status.Authenticated && status.HasPolicy {
 		rawPolicy, err := s.cloudAPI.Policy(ctx)
 		if err == nil {
-			if accessEdges, err := policy.EffectiveAccessEdges(rawPolicy, devices, policy.EdgeOptions{}); err == nil {
+			if accessEdges, err := s.policyCache.EffectiveAccessEdges(rawPolicy, devices, policy.EdgeOptions{}); err == nil {
 				edges = accessEdges
 			} else {
 				s.logger.Debug("effective access edges failed", "error", err.Error())

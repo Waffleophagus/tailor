@@ -9,3 +9,7 @@ bun.lockb
 src/lib/api/client/
 src/lib/api/topology.ts
 src/lib/api/types.generated.ts
+
+# Test artifacts
+test-results/
+playwright-report/

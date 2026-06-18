@@ -1,7 +1,6 @@
 package mcpserver
 
 import (
-	"crypto/subtle"
 	"log/slog"
 	"net"
 	"net/http"
@@ -9,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Waffleophagus/tailor/internal/authz"
 	"github.com/Waffleophagus/tailor/internal/tailorcore"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -19,13 +19,11 @@ const (
 	ExposureOff       Exposure = "off"
 	ExposureLocalhost Exposure = "localhost"
 	ExposureTailnet   Exposure = "tailnet"
-	ExposurePublic    Exposure = "public"
 )
 
 type Config struct {
 	Exposure Exposure
 	Path     string
-	Token    string
 	ReadOnly bool
 }
 
@@ -33,16 +31,12 @@ func ConfigFromEnv() Config {
 	return Config{
 		Exposure: parseExposure(os.Getenv("TAILOR_MCP")),
 		Path:     envOr("TAILOR_MCP_PATH", "/mcp"),
-		Token:    strings.TrimSpace(os.Getenv("TAILOR_MCP_TOKEN")),
 		ReadOnly: parseBool(os.Getenv("TAILOR_MCP_READONLY")),
 	}
 }
 
 func (c Config) Enabled() bool {
 	if c.Exposure == ExposureOff {
-		return false
-	}
-	if c.Exposure != ExposureLocalhost && c.Token == "" {
 		return false
 	}
 	return true
@@ -79,15 +73,10 @@ func authMiddleware(cfg Config, logger *slog.Logger, next http.Handler) http.Han
 			http.Error(w, "MCP is only available to localhost clients.", http.StatusForbidden)
 			return
 		}
-		if cfg.Exposure != ExposureLocalhost {
-			if cfg.Token == "" {
-				logger.Warn("mcp request rejected: missing token configuration")
-				http.Error(w, "MCP bearer token is required.", http.StatusForbidden)
-				return
-			}
-			if !validBearerToken(r.Header.Get("Authorization"), cfg.Token) {
-				logger.Warn("mcp request rejected: invalid bearer token")
-				http.Error(w, "MCP bearer token is required.", http.StatusUnauthorized)
+		if cfg.Exposure == ExposureTailnet {
+			if _, ok := authz.IdentityFromContext(r.Context()); !ok {
+				logger.Warn("mcp request rejected: missing tailnet identity")
+				http.Error(w, "MCP tailnet exposure requires tsnet identity.", http.StatusForbidden)
 				return
 			}
 		}
@@ -101,8 +90,6 @@ func parseExposure(raw string) Exposure {
 		return ExposureLocalhost
 	case "tailnet":
 		return ExposureTailnet
-	case "public":
-		return ExposurePublic
 	default:
 		return ExposureOff
 	}
@@ -135,9 +122,4 @@ func isLoopbackRequest(r *http.Request) bool {
 	}
 	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
-}
-
-func validBearerToken(header, token string) bool {
-	expected := "Bearer " + token
-	return len(header) == len(expected) && subtle.ConstantTimeCompare([]byte(header), []byte(expected)) == 1
 }

@@ -8,7 +8,6 @@ import (
 func TestConfigFromEnvDefaultsOff(t *testing.T) {
 	t.Setenv("TAILOR_MCP", "")
 	t.Setenv("TAILOR_MCP_PATH", "")
-	t.Setenv("TAILOR_MCP_TOKEN", "")
 	t.Setenv("TAILOR_MCP_READONLY", "")
 
 	cfg := ConfigFromEnv()
@@ -23,13 +22,15 @@ func TestConfigFromEnvDefaultsOff(t *testing.T) {
 	}
 }
 
-func TestPublicExposureRequiresToken(t *testing.T) {
+func TestPublicExposureIsUnsupported(t *testing.T) {
 	t.Setenv("TAILOR_MCP", "public")
-	t.Setenv("TAILOR_MCP_TOKEN", "")
 
 	cfg := ConfigFromEnv()
+	if cfg.Exposure != ExposureOff {
+		t.Fatalf("exposure = %q, want %q", cfg.Exposure, ExposureOff)
+	}
 	if cfg.Enabled() {
-		t.Fatal("public MCP config without token should be disabled")
+		t.Fatal("public MCP exposure should be disabled")
 	}
 }
 
@@ -44,36 +45,17 @@ func TestLocalhostHeaderDoesNotEnableMCP(t *testing.T) {
 	}
 }
 
-func TestTailnetWithoutTokenDisabled(t *testing.T) {
+func TestTailnetExposureEnabledWithoutToken(t *testing.T) {
 	t.Setenv("TAILOR_MCP", "tailnet")
 	t.Setenv("TAILOR_MCP_PATH", "custom-mcp")
-	t.Setenv("TAILOR_MCP_TOKEN", "")
 	t.Setenv("TAILOR_MCP_READONLY", "true")
 
 	cfg := ConfigFromEnv()
 	if cfg.Exposure != ExposureTailnet {
 		t.Fatalf("exposure = %q, want %q", cfg.Exposure, ExposureTailnet)
 	}
-	if cfg.Enabled() {
-		t.Fatal("tailnet MCP config without token should be disabled")
-	}
-	if cfg.Path != "/custom-mcp" {
-		t.Fatalf("path = %q, want /custom-mcp", cfg.Path)
-	}
-	if !cfg.ReadOnly {
-		t.Fatal("readonly should parse true")
-	}
-}
-
-func TestTailnetExposureEnabledWithToken(t *testing.T) {
-	t.Setenv("TAILOR_MCP", "tailnet")
-	t.Setenv("TAILOR_MCP_PATH", "custom-mcp")
-	t.Setenv("TAILOR_MCP_TOKEN", "secret")
-	t.Setenv("TAILOR_MCP_READONLY", "true")
-
-	cfg := ConfigFromEnv()
 	if !cfg.Enabled() {
-		t.Fatal("tailnet MCP config with token should be enabled")
+		t.Fatal("tailnet MCP config without token should be enabled for tsnet identity auth")
 	}
 	if cfg.Path != "/custom-mcp" {
 		t.Fatalf("path = %q, want /custom-mcp", cfg.Path)

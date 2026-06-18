@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/Waffleophagus/tailor/internal/api"
+	"github.com/Waffleophagus/tailor/internal/authz"
 	"github.com/Waffleophagus/tailor/internal/cloudapi"
 	"github.com/Waffleophagus/tailor/internal/localapi"
 	"github.com/Waffleophagus/tailor/internal/policy"
@@ -13,6 +14,9 @@ import (
 )
 
 func (s *Server) handlePolicy(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, authz.PermissionReadPolicy, "Your current tailnet identity is view-only.") {
+		return
+	}
 	response, err := s.core.Policy(r.Context())
 	if err != nil {
 		if errors.Is(err, cloudapi.ErrNotAuthenticated) {
@@ -28,6 +32,9 @@ func (s *Server) handlePolicy(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handlePolicyMap(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, authz.PermissionReadPolicy, "Your current tailnet identity is view-only.") {
+		return
+	}
 	policyMap, err := s.core.PolicyMap(r.Context())
 	if err != nil {
 		if errors.Is(err, cloudapi.ErrNotAuthenticated) {
@@ -43,6 +50,9 @@ func (s *Server) handlePolicyMap(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handlePolicyDraft(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, authz.PermissionWritePolicy, "Your current tailnet identity is view-only.") {
+		return
+	}
 	var request api.PolicyDraftRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&request); err != nil {
 		logAPIError(s.logger, r, http.StatusBadRequest, err, "invalid policy draft JSON")
@@ -74,6 +84,9 @@ func (s *Server) handlePolicyDraft(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handlePolicyMutate(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, authz.PermissionWritePolicy, "Your current tailnet identity is view-only.") {
+		return
+	}
 	var request api.PolicyMutationRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 10<<20)).Decode(&request); err != nil {
 		logAPIError(s.logger, r, http.StatusBadRequest, err, "invalid policy mutate JSON")
@@ -100,6 +113,9 @@ func (s *Server) handlePolicyMutate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handlePolicyEvaluateDraft(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, authz.PermissionWritePolicy, "Your current tailnet identity is view-only.") {
+		return
+	}
 	var request api.PolicyEvaluateDraftRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 10<<20)).Decode(&request); err != nil {
 		logAPIError(s.logger, r, http.StatusBadRequest, err, "invalid evaluate draft JSON")
@@ -130,6 +146,9 @@ func (s *Server) handlePolicyEvaluateDraft(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *Server) handlePolicyValidate(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, authz.PermissionWritePolicy, "Your current tailnet identity is view-only.") {
+		return
+	}
 	var request api.PolicyValidateRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 10<<20)).Decode(&request); err != nil {
 		logAPIError(s.logger, r, http.StatusBadRequest, err, "invalid policy validate JSON")
@@ -163,6 +182,9 @@ func (s *Server) handlePolicyValidate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handlePolicyStaged(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, authz.PermissionReadPolicy, "Your current tailnet identity is view-only.") {
+		return
+	}
 	if !s.requireCloudAuth(w, r, "staged policy list requires auth") {
 		return
 	}
@@ -170,6 +192,9 @@ func (s *Server) handlePolicyStaged(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handlePolicyStagedDraft(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, authz.PermissionReadPolicy, "Your current tailnet identity is view-only.") {
+		return
+	}
 	if !s.requireCloudAuth(w, r, "staged policy fetch requires auth") {
 		return
 	}
@@ -188,6 +213,9 @@ func (s *Server) handlePolicyStagedDraft(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) handlePolicyStage(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, authz.PermissionWritePolicy, "Your current tailnet identity is view-only.") {
+		return
+	}
 	var request api.PolicyStageRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 10<<20)).Decode(&request); err != nil {
 		logAPIError(s.logger, r, http.StatusBadRequest, err, "invalid policy stage JSON")
@@ -230,6 +258,9 @@ func (s *Server) handlePolicyStage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handlePolicyDiscardStaged(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, authz.PermissionWritePolicy, "Your current tailnet identity is view-only.") {
+		return
+	}
 	if !s.requireCloudAuth(w, r, "staged policy discard requires auth") {
 		return
 	}
@@ -248,6 +279,9 @@ func (s *Server) handlePolicyDiscardStaged(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *Server) handlePolicySave(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, authz.PermissionWritePolicy, "Your current tailnet identity is view-only.") {
+		return
+	}
 	var request api.PolicySaveRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&request); err != nil {
 		logAPIError(s.logger, r, http.StatusBadRequest, err, "invalid policy save JSON")
