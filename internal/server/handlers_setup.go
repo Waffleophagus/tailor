@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"time"
@@ -98,7 +99,42 @@ func (s *Server) handleSetupGrantSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Policy propagation is asynchronous. Briefly re-check WhoIs so the common
+	// case unlocks immediately without requiring a browser refresh.
+	if identity, ok := s.waitForAdminCapability(r.Context(), r.RemoteAddr, appCapability); ok {
+		r = r.WithContext(authz.WithIdentity(r.Context(), identity))
+	}
 	writeJSON(w, http.StatusOK, setupGrantResponse(r, s, appCapability, true))
+}
+
+const (
+	setupCapabilityPollTimeout  = 3 * time.Second
+	setupCapabilityPollInterval = 200 * time.Millisecond
+)
+
+func (s *Server) waitForAdminCapability(ctx context.Context, remoteAddr, appCapability string) (authz.TailnetIdentity, bool) {
+	if !s.auth.TailnetMode || s.auth.WhoIsClient == nil {
+		return authz.TailnetIdentity{}, false
+	}
+	pollCtx, cancel := context.WithTimeout(ctx, setupCapabilityPollTimeout)
+	defer cancel()
+
+	var last authz.TailnetIdentity
+	for {
+		who, err := s.auth.WhoIsClient.WhoIs(pollCtx, remoteAddr)
+		if err == nil {
+			last = identityFromWhoIs(who, appCapability)
+			if last.Role == authz.RoleFull {
+				return last, true
+			}
+		}
+
+		select {
+		case <-pollCtx.Done():
+			return last, false
+		case <-time.After(setupCapabilityPollInterval):
+		}
+	}
 }
 
 func (s *Server) issueBootstrapFallback(w http.ResponseWriter, r *http.Request, grant api.GrantDraft) {

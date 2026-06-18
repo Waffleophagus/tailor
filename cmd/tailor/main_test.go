@@ -102,7 +102,7 @@ func TestAdvertiseTags(t *testing.T) {
 	t.Setenv("TAILSCALE_UP_EXTRA_ARGS", "")
 
 	want := []string{"tag:tailor-acl-service", "tag:tailor-acl-editor"}
-	if got := advertiseTags(); !reflect.DeepEqual(got, want) {
+	if got := advertiseTags(true); !reflect.DeepEqual(got, want) {
 		t.Fatalf("advertiseTags = %#v, want %#v", got, want)
 	}
 }
@@ -112,13 +112,26 @@ func TestAdvertiseTagsFallbacks(t *testing.T) {
 	t.Setenv("TAILSCALE_ADVERTISE_TAGS", "tag:tailor-acl-service")
 	t.Setenv("TAILSCALE_UP_EXTRA_ARGS", "")
 
-	if got := advertiseTags(); !reflect.DeepEqual(got, []string{"tag:tailor-acl-service"}) {
+	if got := advertiseTags(true); !reflect.DeepEqual(got, []string{"tag:tailor-acl-service"}) {
 		t.Fatalf("TAILSCALE_ADVERTISE_TAGS fallback = %#v", got)
 	}
 
 	t.Setenv("TAILSCALE_ADVERTISE_TAGS", "")
 	t.Setenv("TAILSCALE_UP_EXTRA_ARGS", "--accept-dns=false --advertise-tags tag:one,tag:two")
-	if got := advertiseTags(); !reflect.DeepEqual(got, []string{"tag:one", "tag:two"}) {
+	if got := advertiseTags(true); !reflect.DeepEqual(got, []string{"tag:one", "tag:two"}) {
 		t.Fatalf("TAILSCALE_UP_EXTRA_ARGS fallback = %#v", got)
+	}
+}
+
+func TestAdvertiseTagsDefaultsServiceTagOnlyInContainer(t *testing.T) {
+	t.Setenv("TS_ADVERTISE_TAGS", "")
+	t.Setenv("TAILSCALE_ADVERTISE_TAGS", "")
+	t.Setenv("TAILSCALE_UP_EXTRA_ARGS", "")
+
+	if got := advertiseTags(true); !reflect.DeepEqual(got, []string{"tag:tailor-acl-service"}) {
+		t.Fatalf("container defaults = %#v, want service tag", got)
+	}
+	if got := advertiseTags(false); got != nil {
+		t.Fatalf("host defaults = %#v, want nil", got)
 	}
 }
