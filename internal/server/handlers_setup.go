@@ -86,7 +86,10 @@ func (s *Server) handleSetupGrantSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	raw, err := s.core.CloudPolicy(r.Context())
+	// The recommendation may have been open while another editor changed the
+	// tailnet policy. Bypass the authenticated session's cached policy before
+	// appending so those changes are preserved.
+	raw, err := s.core.RefreshCloudPolicy(r.Context())
 	if err != nil {
 		logAPIError(s.logger, r, http.StatusBadGateway, err, "policy fetch failed for setup grant save")
 		writeError(w, http.StatusBadGateway, err.Error())

@@ -104,6 +104,10 @@ func (s *Service) CloudPolicy(ctx context.Context) (string, error) {
 	return s.cloudAPI.Policy(ctx)
 }
 
+func (s *Service) RefreshCloudPolicy(ctx context.Context) (string, error) {
+	return s.cloudAPI.RefreshPolicy(ctx)
+}
+
 func (s *Service) ValidateCloudPolicy(ctx context.Context, draft string) error {
 	return s.cloudAPI.ValidatePolicy(ctx, draft)
 }
