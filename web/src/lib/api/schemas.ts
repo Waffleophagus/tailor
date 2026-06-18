@@ -62,7 +62,9 @@ export const cloudAuthStatusResponseSchema = z.object({
 	authenticated: z.boolean(),
 	tailnet: z.string().optional(),
 	hasPolicy: z.boolean(),
-	devMode: z.boolean().optional()
+	devMode: z.boolean().optional(),
+	callerRole: z.enum(['full', 'viewer']).optional(),
+	canEditPolicy: z.boolean().default(false)
 });
 
 export const cloudAuthRequestSchema = z.object({

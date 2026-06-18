@@ -2,12 +2,15 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -54,6 +57,7 @@ func main() {
 	var tsnetServer *tsnet.Server
 	var tsnetLocalClient *local.Client
 	if shouldUseTsnet(deployEnv) {
+		configureTSNetForceLogin(deployEnv, tsnetStateDir(), logger)
 		tsnetServer = newTSNetServer(logger)
 		var err error
 		tsnetLocalClient, err = tsnetServer.LocalClient()
@@ -68,6 +72,10 @@ func main() {
 	handler := server.New(server.Options{
 		LocalAPIEndpoint: localAPIEndpoint,
 		LocalClient:      tsnetLocalClient,
+		WhoIsClient:      tsnetLocalClient,
+		TailnetStatus:    tsnetLocalClient,
+		TailnetMode:      tsnetServer != nil,
+		AppCapability:    os.Getenv("TAILOR_APP_CAPABILITY"),
 		Logger:           logger,
 	})
 
@@ -100,12 +108,20 @@ func main() {
 
 	if tsnetServer != nil {
 		go func() {
+			certDomain, err := prepareTSNetHTTPS(context.Background(), tsnetServer, tsnetLocalClient, logger)
+			if err != nil {
+				errs <- fmt.Errorf("tsnet https setup: %w", err)
+				return
+			}
 			ln, err := tsnetServer.ListenTLS("tcp", tsnetListenAddr())
 			if err != nil {
 				errs <- fmt.Errorf("tsnet listen: %w", err)
 				return
 			}
-			logger.Info("tsnet https server listening", "addr", ln.Addr().String())
+			logger.Info("tsnet https server listening",
+				"addr", ln.Addr().String(),
+				"url", "https://"+certDomain+"/",
+			)
 			srv := &http.Server{
 				Handler:           handler,
 				ReadTimeout:       15 * time.Second,
@@ -142,14 +158,38 @@ func shouldUseTsnet(env deploy.Environment) bool {
 	return env.HasAuthKey || strings.TrimSpace(os.Getenv("TS_AUTHKEY")) != ""
 }
 
+func configureTSNetForceLogin(env deploy.Environment, stateDir string, logger *slog.Logger) {
+	if !env.HasAuthKey && strings.TrimSpace(os.Getenv("TS_AUTHKEY")) == "" {
+		return
+	}
+	if strings.TrimSpace(os.Getenv("TSNET_FORCE_LOGIN")) != "" {
+		return
+	}
+	if hasTSNetMachineState(stateDir) {
+		return
+	}
+	if err := os.Setenv("TSNET_FORCE_LOGIN", "1"); err != nil {
+		logger.Warn("could not set TSNET_FORCE_LOGIN", "error", err)
+		return
+	}
+	logger.Info("tsnet force login enabled for auth-key deployment")
+}
+
+func hasTSNetMachineState(stateDir string) bool {
+	stateFile := filepath.Join(stateDir, "tailscaled.state")
+	data, err := os.ReadFile(stateFile)
+	if err != nil || len(data) == 0 {
+		return false
+	}
+	var state map[string]json.RawMessage
+	if err := json.Unmarshal(data, &state); err != nil {
+		return false
+	}
+	machineKey := state["_machinekey"]
+	return len(machineKey) > 0 && string(machineKey) != "null"
+}
+
 func newTSNetServer(logger *slog.Logger) *tsnet.Server {
-	stateDir := strings.TrimSpace(os.Getenv("TS_STATE_DIR"))
-	if stateDir == "" {
-		stateDir = strings.TrimSpace(os.Getenv("TAILSCALE_STATE_DIR"))
-	}
-	if stateDir == "" {
-		stateDir = "/var/lib/tailor-tsnet"
-	}
 	hostname := strings.TrimSpace(os.Getenv("TS_HOSTNAME"))
 	if hostname == "" {
 		hostname = strings.TrimSpace(os.Getenv("TAILSCALE_HOSTNAME"))
@@ -163,7 +203,7 @@ func newTSNetServer(logger *slog.Logger) *tsnet.Server {
 	}
 
 	return &tsnet.Server{
-		Dir:           stateDir,
+		Dir:           tsnetStateDir(),
 		Hostname:      hostname,
 		AuthKey:       authKey,
 		AdvertiseTags: advertiseTags(),
@@ -171,6 +211,48 @@ func newTSNetServer(logger *slog.Logger) *tsnet.Server {
 			logger.Info("tsnet", "message", fmt.Sprintf(format, args...))
 		},
 	}
+}
+
+func tsnetStateDir() string {
+	stateDir := strings.TrimSpace(os.Getenv("TS_STATE_DIR"))
+	if stateDir == "" {
+		stateDir = strings.TrimSpace(os.Getenv("TAILSCALE_STATE_DIR"))
+	}
+	if stateDir == "" {
+		stateDir = "/var/lib/tailor-tsnet"
+	}
+	return stateDir
+}
+
+func prepareTSNetHTTPS(ctx context.Context, server *tsnet.Server, client *local.Client, logger *slog.Logger) (string, error) {
+	if server == nil || client == nil {
+		return "", errors.New("missing tsnet server or local client")
+	}
+	status, err := server.Up(ctx)
+	if err != nil {
+		return "", err
+	}
+	if status.CurrentTailnet == nil || !status.CurrentTailnet.MagicDNSEnabled {
+		return "", errors.New("MagicDNS is required for https://<hostname>.<tailnet>.ts.net/; enable MagicDNS in Tailscale DNS settings")
+	}
+	if len(status.CertDomains) == 0 {
+		return "", errors.New("Tailscale HTTPS certificates are not enabled for this tailnet; enable HTTPS certificates in Tailscale DNS settings")
+	}
+	certDomain := status.CertDomains[0]
+	if status.Self != nil && strings.TrimSpace(status.Self.DNSName) != "" {
+		selfDNS := strings.TrimSuffix(strings.TrimSpace(status.Self.DNSName), ".")
+		for _, domain := range status.CertDomains {
+			if domain == selfDNS {
+				certDomain = domain
+				break
+			}
+		}
+	}
+	logger.Info("prewarming tsnet https certificate", "domain", certDomain)
+	if _, err := client.GetCertificate(&tls.ClientHelloInfo{ServerName: certDomain}); err != nil {
+		return "", fmt.Errorf("prewarm certificate for %s: %w", certDomain, err)
+	}
+	return certDomain, nil
 }
 
 func tsnetListenAddr() string {

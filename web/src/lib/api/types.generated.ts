@@ -40,6 +40,8 @@ interface CloudAuthStatusResponse {
     tailnet?: string;
     hasPolicy: boolean;
     devMode?: boolean;
+    callerRole?: string;
+    canEditPolicy: boolean;
 }
 
 // From api/types.go
@@ -382,4 +384,3 @@ interface UnresolvedSelector {
     selector: string;
     role: string;
 }
-

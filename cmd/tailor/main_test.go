@@ -1,6 +1,9 @@
 package main
 
 import (
+	"log/slog"
+	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 
@@ -27,6 +30,52 @@ func TestShouldUseTsnet(t *testing.T) {
 	}
 	if shouldUseTsnet(deploy.Environment{TailscaleMode: "auto", WantsHostSocket: true, HasAuthKey: true}) {
 		t.Fatal("host socket mode should not use tsnet")
+	}
+}
+
+func TestConfigureTSNetForceLoginForAuthKeyDeployment(t *testing.T) {
+	t.Setenv("TSNET_FORCE_LOGIN", "")
+	configureTSNetForceLogin(deploy.Environment{HasAuthKey: true}, t.TempDir(), slog.New(slog.NewTextHandler(os.Stderr, nil)))
+
+	if got := os.Getenv("TSNET_FORCE_LOGIN"); got != "1" {
+		t.Fatalf("TSNET_FORCE_LOGIN = %q, want 1", got)
+	}
+}
+
+func TestConfigureTSNetForceLoginIgnoresEmptyStateStore(t *testing.T) {
+	stateDir := t.TempDir()
+	stateFile := filepath.Join(stateDir, "tailscaled.state")
+	if err := os.WriteFile(stateFile, []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TSNET_FORCE_LOGIN", "")
+	configureTSNetForceLogin(deploy.Environment{HasAuthKey: true}, stateDir, slog.New(slog.NewTextHandler(os.Stderr, nil)))
+
+	if got := os.Getenv("TSNET_FORCE_LOGIN"); got != "1" {
+		t.Fatalf("TSNET_FORCE_LOGIN = %q, want 1 for empty state store", got)
+	}
+}
+
+func TestConfigureTSNetForceLoginPreservesExistingMachineState(t *testing.T) {
+	stateDir := t.TempDir()
+	stateFile := filepath.Join(stateDir, "tailscaled.state")
+	if err := os.WriteFile(stateFile, []byte(`{"_machinekey":"privkey:test"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TSNET_FORCE_LOGIN", "")
+	configureTSNetForceLogin(deploy.Environment{HasAuthKey: true}, stateDir, slog.New(slog.NewTextHandler(os.Stderr, nil)))
+
+	if got := os.Getenv("TSNET_FORCE_LOGIN"); got != "" {
+		t.Fatalf("TSNET_FORCE_LOGIN = %q, want empty when machine state exists", got)
+	}
+}
+
+func TestConfigureTSNetForceLoginPreservesExplicitValue(t *testing.T) {
+	t.Setenv("TSNET_FORCE_LOGIN", "0")
+	configureTSNetForceLogin(deploy.Environment{HasAuthKey: true}, t.TempDir(), slog.New(slog.NewTextHandler(os.Stderr, nil)))
+
+	if got := os.Getenv("TSNET_FORCE_LOGIN"); got != "0" {
+		t.Fatalf("TSNET_FORCE_LOGIN = %q, want explicit value preserved", got)
 	}
 }
 

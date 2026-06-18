@@ -85,6 +85,8 @@ export type CloudAuthStatusResponse = {
      * True when authenticated with the in-memory demo tailnet key.
      */
     devMode?: boolean;
+    callerRole?: string;
+    canEditPolicy: boolean;
 };
 
 export type PolicyResponse = {

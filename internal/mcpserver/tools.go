@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"github.com/Waffleophagus/tailor/internal/api"
+	"github.com/Waffleophagus/tailor/internal/authz"
 	"github.com/Waffleophagus/tailor/internal/cloudapi"
 	"github.com/Waffleophagus/tailor/internal/mcpserver/policyref"
 	"github.com/Waffleophagus/tailor/internal/tailorcore"
@@ -82,6 +83,9 @@ func registerTools(server *mcp.Server, core *tailorcore.Service, cfg Config) {
 		Title:       "Get Policy",
 		Description: "Fetch the current ACL policy HuJSON when Cloud API authentication is enabled.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ getPolicyInput) (*mcp.CallToolResult, getPolicyOutput, error) {
+		if !authz.Allowed(ctx, authz.PermissionReadPolicy) {
+			return nil, getPolicyOutput{}, errors.New("Tailor policy access is view-only for the current tailnet identity.")
+		}
 		response, err := core.Policy(ctx)
 		if err != nil {
 			if errors.Is(err, cloudapi.ErrNotAuthenticated) {
@@ -97,6 +101,9 @@ func registerTools(server *mcp.Server, core *tailorcore.Service, cfg Config) {
 		Title:       "Get Policy Map",
 		Description: "Fetch the current ACL policy HuJSON plus structured section inventory, entries, unsupported sections, and raw section values.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ getPolicyMapInput) (*mcp.CallToolResult, api.PolicyMapResponse, error) {
+		if !authz.Allowed(ctx, authz.PermissionReadPolicy) {
+			return nil, api.PolicyMapResponse{}, errors.New("Tailor policy access is view-only for the current tailnet identity.")
+		}
 		response, err := core.PolicyMap(ctx)
 		if err != nil {
 			if errors.Is(err, cloudapi.ErrNotAuthenticated) {
@@ -139,6 +146,9 @@ func registerTools(server *mcp.Server, core *tailorcore.Service, cfg Config) {
 		Title:       "Evaluate Policy Draft",
 		Description: "Compare a HuJSON ACL draft against the current policy and topology without staging or saving it. Use ACL reference topics for syntax questions before evaluating.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input evaluatePolicyDraftInput) (*mcp.CallToolResult, api.PolicyEvaluateDraftResponse, error) {
+		if !authz.Allowed(ctx, authz.PermissionWritePolicy) {
+			return nil, api.PolicyEvaluateDraftResponse{}, errors.New("Tailor policy editing is view-only for the current tailnet identity.")
+		}
 		output, err := core.EvaluatePolicyDraft(ctx, api.PolicyEvaluateDraftRequest{
 			HuJSON:      input.HuJSON,
 			Perspective: input.Perspective,
@@ -155,6 +165,9 @@ func registerTools(server *mcp.Server, core *tailorcore.Service, cfg Config) {
 		Title:       "Stage Policy Draft",
 		Description: "Validate and evaluate a HuJSON ACL draft, then stage it for explicit human review in the Tailor UI. Evaluate drafts first when possible. This never saves or uploads policy to Tailscale.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input stagePolicyDraftInput) (*mcp.CallToolResult, api.PolicyStageResponse, error) {
+		if !authz.Allowed(ctx, authz.PermissionUseMCPWrite) {
+			return nil, api.PolicyStageResponse{}, errors.New("Tailor MCP write access is view-only for the current tailnet identity.")
+		}
 		output, err := core.StagePolicyDraft(ctx, api.PolicyStageRequest{
 			HuJSON:  input.HuJSON,
 			Source:  "mcp",

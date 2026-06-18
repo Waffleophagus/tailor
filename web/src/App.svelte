@@ -57,7 +57,8 @@
 	let selectedEdge = $state<RenderEdge | undefined>();
 	let cloudStatus = $state<CloudAuthStatusResponse>({
 		authenticated: false,
-		hasPolicy: false
+		hasPolicy: false,
+		canEditPolicy: false
 	});
 	let cloudError = $state('');
 	let policy = $state<PolicyResponse | undefined>();
@@ -118,6 +119,7 @@
 	const ownerColorMap = $derived(buildOwnerColorMap(ownerOptions));
 	const hasUntaggedDevices = $derived(devices.some((device) => device.tags.length === 0));
 	const hasUnownedDevices = $derived(devices.some((device) => !device.owner));
+	const canEditPolicy = $derived(cloudStatus.authenticated && cloudStatus.canEditPolicy);
 	const osOptions = $derived(unique(devices.map((device) => device.os).filter(Boolean)));
 	const rootDevice = $derived(devices[0]);
 	const editorDirty = $derived(Boolean(policy && editorHuJSON !== policy.hujson));
@@ -216,7 +218,7 @@
 	});
 
 	function scheduleTopologyRefresh() {
-		if (!cloudStatus.authenticated) {
+		if (!canEditPolicy) {
 			return;
 		}
 		if (topologyEvalTimer !== undefined) {
@@ -229,7 +231,7 @@
 	}
 
 	async function runTopologyRefresh() {
-		if (!cloudStatus.authenticated) {
+		if (!canEditPolicy) {
 			return;
 		}
 
@@ -364,7 +366,7 @@
 	}
 
 	async function loadStagedDrafts() {
-		if (!cloudStatus.authenticated) return;
+		if (!canEditPolicy) return;
 		const result = await fetchStagedPolicyDrafts();
 		result.match({
 			ok: (value) => {
@@ -577,7 +579,7 @@
 				}
 			});
 
-			if (cloudStatus.authenticated) {
+			if (canEditPolicy) {
 				await loadPolicy();
 			}
 
@@ -679,7 +681,7 @@
 				class:app-header-actions-mobile={viewport.isMobile}
 			>
 				{#if !viewport.isMobile}
-					{#if cloudStatus.authenticated}
+					{#if canEditPolicy}
 						{#if hasValidatedPending}
 							<button
 								class="btn-save"
@@ -692,6 +694,8 @@
 						{/if}
 						<button class="btn-primary" type="button" onclick={openPolicyEditor}>Edit policy</button
 						>
+					{:else if cloudStatus.authenticated}
+						<span class="view-only-pill">View-only</span>
 					{:else}
 						<button class="btn-primary" type="button" onclick={() => (phase2Open = true)}>
 							Enable ACL Editing
@@ -765,7 +769,7 @@
 									<span class="hud-chip hud-chip-warn">Preview</span>
 								{/if}
 							</div>
-							{#if cloudStatus.authenticated && graphMode === 'focused' && graphRootDevice}
+							{#if canEditPolicy && graphMode === 'focused' && graphRootDevice}
 								<div class="hud-row">
 									<span
 										class="hud-chip hud-chip-focus"
@@ -788,14 +792,14 @@
 							{#if effectivePreviewEvaluation}
 								<span class="hud-chip hud-chip-warn">Preview</span>
 							{/if}
-							{#if cloudStatus.authenticated && graphMode === 'focused' && graphRootDevice}
+							{#if canEditPolicy && graphMode === 'focused' && graphRootDevice}
 								<span class="hud-chip"
 									><strong class="hud-chip-strong"
 										>{graphRootDevice.name || graphRootDevice.ip}</strong
 									> focus</span
 								>
 							{/if}
-							{#if cloudStatus.authenticated}
+							{#if canEditPolicy}
 								<div class="mode-toggle">
 									{#each ['focused', 'all'] as mode (mode)}
 										<button
@@ -856,7 +860,7 @@
 					{#if !viewport.isMobile}
 						<GraphLegend
 							{colorBy}
-							authenticated={cloudStatus.authenticated}
+							authenticated={canEditPolicy}
 							bind:graphMode
 							{tagOptions}
 							{tagColorMap}
@@ -984,7 +988,7 @@
 				{#if viewport.isMobile}
 					<MobileGraphBar
 						hasSelection={hasMobileSelection}
-						cloudAuthenticated={cloudStatus.authenticated}
+						cloudAuthenticated={canEditPolicy}
 						bind:graphMode
 						activeSheet={mobileSheet}
 						onOpenSheet={openMobileSheet}
@@ -1070,7 +1074,7 @@
 			{#if mobileSheet === 'legend'}
 				<GraphLegend
 					{colorBy}
-					authenticated={cloudStatus.authenticated}
+					authenticated={canEditPolicy}
 					bind:graphMode
 					{tagOptions}
 					{tagColorMap}
@@ -1104,6 +1108,9 @@
 	}
 	.btn-save {
 		@apply min-h-[2.35rem] rounded-md border border-ok bg-ok/10 px-3 py-[0.45rem] text-sm font-extrabold text-ok transition-[background-color,border-color,color,transform] duration-[160ms] ease-out hover:-translate-y-px hover:bg-ok/15 disabled:transform-none disabled:cursor-not-allowed disabled:opacity-[0.58];
+	}
+	.view-only-pill {
+		@apply inline-flex min-h-[2.35rem] items-center rounded-md border border-status-border bg-status-bg px-3 py-[0.45rem] text-sm font-extrabold text-status-text;
 	}
 	.graph-hud {
 		@apply absolute top-3 left-3 z-[2] flex w-fit max-w-[calc(100%-1.5rem)] flex-wrap items-center gap-[0.4rem] rounded-lg border border-graph-border bg-graph-hud-bg p-[0.35rem] shadow-[0_10px_26px_rgb(23_33_38/8%)];

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Waffleophagus/tailor/internal/authz"
 	"github.com/Waffleophagus/tailor/internal/tailorcore"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -42,7 +43,7 @@ func (c Config) Enabled() bool {
 	if c.Exposure == ExposureOff {
 		return false
 	}
-	if c.Exposure != ExposureLocalhost && c.Token == "" {
+	if c.Exposure == ExposurePublic && c.Token == "" {
 		return false
 	}
 	return true
@@ -79,7 +80,14 @@ func authMiddleware(cfg Config, logger *slog.Logger, next http.Handler) http.Han
 			http.Error(w, "MCP is only available to localhost clients.", http.StatusForbidden)
 			return
 		}
-		if cfg.Exposure != ExposureLocalhost {
+		if cfg.Exposure == ExposureTailnet {
+			if _, ok := authz.IdentityFromContext(r.Context()); !ok {
+				logger.Warn("mcp request rejected: missing tailnet identity")
+				http.Error(w, "MCP tailnet exposure requires tsnet identity.", http.StatusForbidden)
+				return
+			}
+		}
+		if cfg.Exposure == ExposurePublic {
 			if cfg.Token == "" {
 				logger.Warn("mcp request rejected: missing token configuration")
 				http.Error(w, "MCP bearer token is required.", http.StatusForbidden)

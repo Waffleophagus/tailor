@@ -98,6 +98,8 @@ type CloudAuthStatusResponse struct {
 	Tailnet       string `json:"tailnet,omitempty"`
 	HasPolicy     bool   `json:"hasPolicy"`
 	DevMode       bool   `json:"devMode,omitempty"`
+	CallerRole    string `json:"callerRole,omitempty"`
+	CanEditPolicy bool   `json:"canEditPolicy"`
 }
 
 type PolicyResponse struct {

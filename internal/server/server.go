@@ -1,23 +1,40 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/Waffleophagus/tailor/internal/api"
+	"github.com/Waffleophagus/tailor/internal/authz"
 	"github.com/Waffleophagus/tailor/internal/cloudapi"
 	"github.com/Waffleophagus/tailor/internal/deploy"
 	"github.com/Waffleophagus/tailor/internal/frontend"
 	"github.com/Waffleophagus/tailor/internal/mcpserver"
 	"github.com/Waffleophagus/tailor/internal/tailorcore"
 	"tailscale.com/client/local"
+	"tailscale.com/client/tailscale/apitype"
+	"tailscale.com/ipn/ipnstate"
 )
+
+type WhoIsClient interface {
+	WhoIs(ctx context.Context, remoteAddr string) (*apitype.WhoIsResponse, error)
+}
+
+type TailnetStatusClient interface {
+	StatusWithoutPeers(ctx context.Context) (*ipnstate.Status, error)
+}
 
 type Options struct {
 	LocalAPIEndpoint string
 	LocalClient      *local.Client
+	WhoIsClient      WhoIsClient
+	TailnetStatus    TailnetStatusClient
+	TailnetMode      bool
+	AppCapability    string
 	Logger           *slog.Logger
 }
 
@@ -25,6 +42,7 @@ type Server struct {
 	logger *slog.Logger
 	core   *tailorcore.Service
 	deploy deploy.Environment
+	auth   AuthOptions
 }
 
 func New(options ...Options) http.Handler {
@@ -47,6 +65,12 @@ func New(options ...Options) http.Handler {
 		logger: logger,
 		core:   core,
 		deploy: deployEnv,
+		auth: AuthOptions{
+			TailnetMode:   opts.TailnetMode,
+			WhoIsClient:   opts.WhoIsClient,
+			TailnetStatus: opts.TailnetStatus,
+			AppCapability: appCapability(opts.AppCapability),
+		},
 	}
 
 	mux := http.NewServeMux()
@@ -70,6 +94,7 @@ func New(options ...Options) http.Handler {
 	server.registerDevRoutes(mux)
 
 	mcpConfig := mcpserver.ConfigFromEnv()
+	server.auth.MCPPath = mcpConfig.Path
 	if mcpConfig.Enabled() {
 		logger.Info("remote mcp enabled",
 			"exposure", string(mcpConfig.Exposure),
@@ -82,7 +107,7 @@ func New(options ...Options) http.Handler {
 	spa := spaHandler(http.FileServer(frontend.FileSystem()))
 	mux.Handle("/", spa)
 
-	return AccessMiddleware(logger, mux)
+	return AccessMiddleware(logger, IdentityMiddleware(logger, server.auth, mux))
 }
 
 func (s *Server) writeLocalAPIUnavailable(w http.ResponseWriter, r *http.Request, status int, err error, message string) {
@@ -121,13 +146,35 @@ func (s *Server) requireCloudAuth(w http.ResponseWriter, r *http.Request, logMes
 	return false
 }
 
-func cloudAuthStatusResponse(status cloudapi.AuthStatus) api.CloudAuthStatusResponse {
+func (s *Server) requirePermission(w http.ResponseWriter, r *http.Request, permission authz.Permission, message string) bool {
+	if authz.Allowed(r.Context(), permission) {
+		return true
+	}
+	logAPIError(s.logger, r, http.StatusForbidden, nil, string(permission)+" denied")
+	writeError(w, http.StatusForbidden, message)
+	return false
+}
+
+func cloudAuthStatusResponse(r *http.Request, status cloudapi.AuthStatus) api.CloudAuthStatusResponse {
+	role := "full"
+	if identity, ok := authz.IdentityFromContext(r.Context()); ok {
+		role = string(identity.Role)
+	}
 	return api.CloudAuthStatusResponse{
 		Authenticated: status.Authenticated,
 		Tailnet:       status.Tailnet,
 		HasPolicy:     status.HasPolicy,
 		DevMode:       status.DevMode,
+		CallerRole:    role,
+		CanEditPolicy: authz.Allowed(r.Context(), authz.PermissionWritePolicy),
 	}
+}
+
+func appCapability(configured string) string {
+	if strings.TrimSpace(configured) != "" {
+		return strings.TrimSpace(configured)
+	}
+	return strings.TrimSpace(os.Getenv("TAILOR_APP_CAPABILITY"))
 }
 
 func spaHandler(fileServer http.Handler) http.Handler {

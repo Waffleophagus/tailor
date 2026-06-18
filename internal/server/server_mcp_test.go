@@ -25,7 +25,7 @@ func TestMCPEndpointDisabledByDefault(t *testing.T) {
 }
 
 func TestMCPRemoteEndpointRequiresBearerToken(t *testing.T) {
-	t.Setenv("TAILOR_MCP", "tailnet")
+	t.Setenv("TAILOR_MCP", "public")
 	t.Setenv("TAILOR_MCP_TOKEN", "secret")
 
 	mux := httptest.NewServer(New())
@@ -42,7 +42,7 @@ func TestMCPRemoteEndpointRequiresBearerToken(t *testing.T) {
 }
 
 func TestMCPRemoteEndpointAcceptsBearerToken(t *testing.T) {
-	t.Setenv("TAILOR_MCP", "tailnet")
+	t.Setenv("TAILOR_MCP", "public")
 	t.Setenv("TAILOR_MCP_TOKEN", "secret")
 
 	mux := httptest.NewServer(New())
