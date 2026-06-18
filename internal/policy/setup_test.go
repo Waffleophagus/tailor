@@ -32,6 +32,38 @@ func TestHasTailorAppCapabilityGrant(t *testing.T) {
 	}
 }
 
+func TestValidateSetupGrantRejectsUnrelatedGrant(t *testing.T) {
+	grant := RecommendedSetupGrant("other.example.ts.net/cap/admin")
+	if err := ValidateSetupGrant(grant, testCapability); err == nil {
+		t.Fatal("unrelated capability should be rejected")
+	}
+}
+
+func TestValidateSetupGrantRejectsWrongDestination(t *testing.T) {
+	grant := RecommendedSetupGrant(testCapability)
+	grant.Dst = []string{"tag:database"}
+	if err := ValidateSetupGrant(grant, testCapability); err == nil {
+		t.Fatal("non-service destination should be rejected")
+	}
+}
+
+func TestValidateSetupGrantRejectsAdditionalPolicyScope(t *testing.T) {
+	grant := RecommendedSetupGrant(testCapability)
+	grant.Dst = append(grant.Dst, "tag:database")
+	grant.App["other.example.ts.net/cap/admin"] = []map[string]any{{"actions": []string{"admin"}}}
+	if err := ValidateSetupGrant(grant, testCapability); err == nil {
+		t.Fatal("additional destinations or capabilities should be rejected")
+	}
+}
+
+func TestValidateSetupGrantAcceptsEditedSources(t *testing.T) {
+	grant := RecommendedSetupGrant(testCapability)
+	grant.Src = []string{"group:security"}
+	if err := ValidateSetupGrant(grant, testCapability); err != nil {
+		t.Fatalf("valid edited setup grant rejected: %v", err)
+	}
+}
+
 func TestRecommendedSetupGrant(t *testing.T) {
 	grant := RecommendedSetupGrant(testCapability)
 	if len(grant.Src) != 2 || grant.Dst[0] != TailorACLServiceTag {

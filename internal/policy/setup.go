@@ -2,10 +2,30 @@ package policy
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 
 	"github.com/Waffleophagus/tailor/internal/api"
 )
+
+// ValidateSetupGrant limits the pre-authorization write path to a grant that
+// administers this Tailor instance through its service tag.
+func ValidateSetupGrant(grant api.GrantDraft, capability string) error {
+	capability = strings.TrimSpace(capability)
+	if len(grant.Dst) != 1 || strings.TrimSpace(grant.Dst[0]) != TailorACLServiceTag {
+		return errors.New("setup grant must target only tag:tailor-acl-service")
+	}
+	if len(grant.Src) == 0 {
+		return errors.New("setup grant must include at least one source")
+	}
+	if len(grant.IP) != 1 || strings.TrimSpace(grant.IP[0]) != "tcp:443" {
+		return errors.New("setup grant must target only tcp:443")
+	}
+	if len(grant.App) != 1 || !grantHasAdminAction(grant.App, capability) {
+		return errors.New("setup grant must grant the resolved Tailor admin capability")
+	}
+	return nil
+}
 
 const TailorACLServiceTag = "tag:tailor-acl-service"
 

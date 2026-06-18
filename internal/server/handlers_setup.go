@@ -49,6 +49,10 @@ func (s *Server) handleSetupGrantSave(w http.ResponseWriter, r *http.Request) {
 	if !s.requireCloudAuth(w, r, "cloud auth required for setup grant save") {
 		return
 	}
+	if s.auth.TailnetMode && !s.consumeSetupSession(r) {
+		writeError(w, http.StatusForbidden, "Re-enter the Cloud API key before applying the Tailor access grant.")
+		return
+	}
 	status := s.core.CloudStatus()
 	appCapability := s.auth.resolveAppCapability(r.Context(), s.logger)
 	if status.DevMode {
@@ -105,6 +109,11 @@ func (s *Server) handleSetupGrantSave(w http.ResponseWriter, r *http.Request) {
 			grant = *request.Grant
 		}
 	}
+	if err := policy.ValidateSetupGrant(grant, appCapability); err != nil {
+		logAPIError(s.logger, r, http.StatusBadRequest, err, "invalid setup grant")
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	updated, err := policy.AppendSetupGrant(raw, grant)
 	if err != nil {
@@ -134,6 +143,17 @@ func (s *Server) handleSetupGrantSave(w http.ResponseWriter, r *http.Request) {
 		r = r.WithContext(authz.WithIdentity(r.Context(), identity))
 	}
 	writeJSON(w, http.StatusOK, setupGrantResponse(r, s, appCapability, true))
+}
+
+func (s *Server) consumeSetupSession(r *http.Request) bool {
+	if s.setup == nil {
+		return false
+	}
+	identity, ok := authz.IdentityFromContext(r.Context())
+	if !ok {
+		return false
+	}
+	return s.setup.Consume(setupTokenFromRequest(r), identity.LoginName, identity.NodeName)
 }
 
 func (s *Server) activateServiceTag(ctx context.Context) error {

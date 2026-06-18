@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/Waffleophagus/tailor/internal/api"
+	"github.com/Waffleophagus/tailor/internal/authz"
 	"github.com/Waffleophagus/tailor/internal/cloudapi"
 )
 
@@ -48,5 +49,12 @@ func (s *Server) handleCloudAuth(w http.ResponseWriter, r *http.Request) {
 		"dev_mode", status.DevMode,
 		"request_id", RequestIDFromContext(r.Context()),
 	)
+	if s.auth.TailnetMode && s.setup != nil {
+		identity, ok := authz.IdentityFromContext(r.Context())
+		if ok {
+			token, expiresAt := s.setup.Create(identity.LoginName, identity.NodeName)
+			setSetupCookie(w, token, expiresAt)
+		}
+	}
 	writeJSON(w, http.StatusOK, cloudAuthStatusResponse(r, s, status))
 }

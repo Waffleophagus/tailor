@@ -53,6 +53,7 @@ type Server struct {
 	auth         AuthOptions
 	tailnetPrefs TailnetPrefsClient
 	bootstrap    *BootstrapSessions
+	setup        *SetupSessions
 }
 
 func New(options ...Options) http.Handler {
@@ -83,6 +84,7 @@ func New(options ...Options) http.Handler {
 		},
 		tailnetPrefs: opts.LocalClient,
 		bootstrap:    NewBootstrapSessions(),
+		setup:        NewSetupSessions(),
 	}
 
 	mux := http.NewServeMux()
