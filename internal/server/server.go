@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/Waffleophagus/tailor/internal/api"
 	"github.com/Waffleophagus/tailor/internal/authz"
@@ -14,6 +15,7 @@ import (
 	"github.com/Waffleophagus/tailor/internal/deploy"
 	"github.com/Waffleophagus/tailor/internal/frontend"
 	"github.com/Waffleophagus/tailor/internal/mcpserver"
+	"github.com/Waffleophagus/tailor/internal/policy"
 	"github.com/Waffleophagus/tailor/internal/tailorcore"
 	"tailscale.com/client/local"
 	"tailscale.com/client/tailscale/apitype"
@@ -39,10 +41,11 @@ type Options struct {
 }
 
 type Server struct {
-	logger *slog.Logger
-	core   *tailorcore.Service
-	deploy deploy.Environment
-	auth   AuthOptions
+	logger    *slog.Logger
+	core      *tailorcore.Service
+	deploy    deploy.Environment
+	auth      AuthOptions
+	bootstrap *BootstrapSessions
 }
 
 func New(options ...Options) http.Handler {
@@ -71,6 +74,7 @@ func New(options ...Options) http.Handler {
 			TailnetStatus: opts.TailnetStatus,
 			AppCapability: appCapability(opts.AppCapability),
 		},
+		bootstrap: NewBootstrapSessions(),
 	}
 
 	mux := http.NewServeMux()
@@ -80,6 +84,8 @@ func New(options ...Options) http.Handler {
 	mux.HandleFunc("GET /api/topology/socket", server.handleTopologySocket)
 	mux.HandleFunc("GET /api/cloud/status", server.handleCloudStatus)
 	mux.HandleFunc("POST /api/cloud/auth", server.handleCloudAuth)
+	mux.HandleFunc("GET /api/cloud/setup-grant", server.handleSetupGrantRecommendation)
+	mux.HandleFunc("POST /api/cloud/setup-grant", server.handleSetupGrantSave)
 	mux.HandleFunc("GET /api/policy", server.handlePolicy)
 	mux.HandleFunc("GET /api/policy/map", server.handlePolicyMap)
 	mux.HandleFunc("POST /api/policy/draft", server.handlePolicyDraft)
@@ -107,7 +113,7 @@ func New(options ...Options) http.Handler {
 	spa := spaHandler(http.FileServer(frontend.FileSystem()))
 	mux.Handle("/", spa)
 
-	return AccessMiddleware(logger, IdentityMiddleware(logger, &server.auth, mux))
+	return AccessMiddleware(logger, BootstrapMiddleware(server, IdentityMiddleware(logger, &server.auth, mux)))
 }
 
 func (s *Server) writeLocalAPIUnavailable(w http.ResponseWriter, r *http.Request, status int, err error, message string) {
@@ -155,19 +161,79 @@ func (s *Server) requirePermission(w http.ResponseWriter, r *http.Request, permi
 	return false
 }
 
-func cloudAuthStatusResponse(r *http.Request, status cloudapi.AuthStatus) api.CloudAuthStatusResponse {
+func cloudAuthStatusResponse(r *http.Request, s *Server, status cloudapi.AuthStatus) api.CloudAuthStatusResponse {
 	role := "full"
+	loginName := ""
+	nodeName := ""
 	if identity, ok := authz.IdentityFromContext(r.Context()); ok {
 		role = string(identity.Role)
+		loginName = identity.LoginName
+		nodeName = identity.NodeName
 	}
-	return api.CloudAuthStatusResponse{
-		Authenticated: status.Authenticated,
-		Tailnet:       status.Tailnet,
-		HasPolicy:     status.HasPolicy,
-		DevMode:       status.DevMode,
-		CallerRole:    role,
-		CanEditPolicy: authz.Allowed(r.Context(), authz.PermissionWritePolicy),
+
+	appCapability := s.auth.resolveAppCapability(r.Context(), s.logger)
+	hasGrant := false
+	if status.Authenticated && status.HasPolicy && appCapability != "" {
+		if raw, err := s.core.CloudPolicy(r.Context()); err == nil {
+			hasGrant = policy.HasTailorAppCapabilityGrant(raw, appCapability)
+		}
 	}
+
+	bootstrapActive, bootstrapExpiresAt := s.bootstrapState(r, loginName, nodeName)
+	canEdit := authz.Allowed(r.Context(), authz.PermissionWritePolicy)
+	needsSetup := s.auth.TailnetMode && status.Authenticated && !status.DevMode && appCapability != "" && !hasGrant && !bootstrapActive
+
+	response := api.CloudAuthStatusResponse{
+		Authenticated:         status.Authenticated,
+		Tailnet:               status.Tailnet,
+		HasPolicy:             status.HasPolicy,
+		DevMode:               status.DevMode,
+		CallerRole:            role,
+		CanEditPolicy:         canEdit,
+		HasAppCapabilityGrant: hasGrant,
+		AppCapability:         appCapability,
+		NeedsSetupGrant:       needsSetup,
+		BootstrapActive:       bootstrapActive,
+		BootstrapExpiresAt:    bootstrapExpiresAt,
+	}
+
+	if needsSetup {
+		grant := policy.RecommendedSetupGrant(appCapability)
+		response.SetupGrantSnippet = policy.FormatGrantSnippet(grant)
+	}
+
+	response.StatusMessage = cloudStatusMessage(response)
+	return response
+}
+
+func cloudStatusMessage(status api.CloudAuthStatusResponse) string {
+	switch {
+	case status.BootstrapActive:
+		return "Tailor could not apply the app capability grant automatically. ACL editing is temporarily available in this browser session. Add the grant below to your tailnet policy and restart Tailor to use grant-based access without a time limit."
+	case status.NeedsSetupGrant:
+		return "Tailor should add an app capability grant so ACL editing access is controlled by your tailnet policy."
+	case status.Authenticated && status.CallerRole == "viewer" && status.HasAppCapabilityGrant:
+		return "API key accepted, but your current device or user is view-only."
+	case status.Authenticated && status.CallerRole == "viewer":
+		return "Tailor access was configured, but your current device or user is view-only."
+	default:
+		return ""
+	}
+}
+
+func (s *Server) bootstrapState(r *http.Request, loginName, nodeName string) (active bool, expiresAt string) {
+	if s.bootstrap == nil {
+		return false, ""
+	}
+	token := bootstrapTokenFromRequest(r)
+	if token == "" {
+		return false, ""
+	}
+	valid, expiry := s.bootstrap.Valid(token, loginName, nodeName)
+	if !valid {
+		return false, ""
+	}
+	return true, expiry.Format(time.RFC3339)
 }
 
 func appCapability(configured string) string {

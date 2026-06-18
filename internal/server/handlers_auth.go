@@ -11,7 +11,7 @@ import (
 )
 
 func (s *Server) handleCloudStatus(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, cloudAuthStatusResponse(r, s.core.CloudStatus()))
+	writeJSON(w, http.StatusOK, cloudAuthStatusResponse(r, s, s.core.CloudStatus()))
 }
 
 func (s *Server) handleCloudAuth(w http.ResponseWriter, r *http.Request) {
@@ -48,5 +48,5 @@ func (s *Server) handleCloudAuth(w http.ResponseWriter, r *http.Request) {
 		"dev_mode", status.DevMode,
 		"request_id", RequestIDFromContext(r.Context()),
 	)
-	writeJSON(w, http.StatusOK, cloudAuthStatusResponse(r, status))
+	writeJSON(w, http.StatusOK, cloudAuthStatusResponse(r, s, status))
 }

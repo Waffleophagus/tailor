@@ -10,7 +10,10 @@ import (
 
 type contextKey int
 
-const identityKey contextKey = iota
+const (
+	identityKey contextKey = iota
+	bootstrapKey
+)
 
 type Role string
 
@@ -76,11 +79,29 @@ func HasAdminAction(capMap tailcfg.PeerCapMap, capability string) bool {
 	return false
 }
 
+func WithBootstrap(ctx context.Context) context.Context {
+	return context.WithValue(ctx, bootstrapKey, true)
+}
+
+func HasBootstrap(ctx context.Context) bool {
+	active, ok := ctx.Value(bootstrapKey).(bool)
+	return ok && active
+}
+
 func Allowed(ctx context.Context, permission Permission) bool {
 	switch permission {
 	case PermissionViewTopology:
 		return true
-	case PermissionReadPolicy, PermissionWritePolicy, PermissionUseMCPWrite:
+	case PermissionReadPolicy, PermissionWritePolicy:
+		if HasBootstrap(ctx) {
+			return true
+		}
+		identity, ok := IdentityFromContext(ctx)
+		if !ok {
+			return true
+		}
+		return identity.Role == RoleFull
+	case PermissionUseMCPWrite:
 		identity, ok := IdentityFromContext(ctx)
 		if !ok {
 			return true

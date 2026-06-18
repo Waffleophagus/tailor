@@ -64,7 +64,26 @@ export const cloudAuthStatusResponseSchema = z.object({
 	hasPolicy: z.boolean(),
 	devMode: z.boolean().optional(),
 	callerRole: z.enum(['full', 'viewer']).optional(),
-	canEditPolicy: z.boolean().default(false)
+	canEditPolicy: z.boolean().default(false),
+	hasAppCapabilityGrant: z.boolean().optional(),
+	appCapability: z.string().optional(),
+	needsSetupGrant: z.boolean().optional(),
+	bootstrapActive: z.boolean().optional(),
+	bootstrapExpiresAt: z.string().optional(),
+	statusMessage: z.string().optional(),
+	setupGrantSnippet: z.string().optional()
+});
+
+export const setupGrantResponseSchema = z.object({
+	tailnet: z.string().optional(),
+	appCapability: z.string().optional(),
+	hasAppCapabilityGrant: z.boolean(),
+	callerRole: z.enum(['full', 'viewer']).optional(),
+	canEditPolicy: z.boolean().default(false),
+	bootstrapActive: z.boolean().optional(),
+	bootstrapExpiresAt: z.string().optional(),
+	statusMessage: z.string().optional(),
+	setupGrantSnippet: z.string().optional()
 });
 
 export const cloudAuthRequestSchema = z.object({
@@ -291,6 +310,7 @@ export type Device = z.infer<typeof deviceSchema>;
 export type Edge = z.infer<typeof edgeSchema>;
 export type TopologyResponse = z.infer<typeof topologyResponseSchema>;
 export type CloudAuthStatusResponse = z.infer<typeof cloudAuthStatusResponseSchema>;
+export type SetupGrantResponse = z.infer<typeof setupGrantResponseSchema>;
 export type CloudAuthRequest = z.infer<typeof cloudAuthRequestSchema>;
 export type PolicyResponse = z.infer<typeof policyResponseSchema>;
 export type PolicyMapResponse = z.infer<typeof policyMapResponseSchema>;

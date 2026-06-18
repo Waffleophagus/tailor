@@ -9,6 +9,7 @@
 		fetchStagedPolicyDraft,
 		fetchStagedPolicyDrafts,
 		saveValidatedPolicyDraft,
+		saveSetupGrant,
 		stagePolicyDraft,
 		validatePolicyDraft
 	} from './lib/api/cloud';
@@ -21,6 +22,7 @@
 		TailscaleSetupInfo,
 		PolicyEvaluateDraftResponse,
 		PolicyResponse,
+		SetupGrantResponse,
 		StagedDraft
 	} from './lib/api/schemas';
 	import { fetchTopology } from './lib/api/topology';
@@ -37,6 +39,7 @@
 	import { resolveBaseGraphEdges } from './lib/graph/resolve-graph-edges';
 	import { buildOwnerColorMap, buildTagColorMap } from './lib/tag-color';
 	import AuthDialog from './lib/components/AuthDialog.svelte';
+	import SetupGrantDialog from './lib/components/SetupGrantDialog.svelte';
 	import DeviceDetailsPanel from './lib/components/DeviceDetailsPanel.svelte';
 	import DeviceFiltersPanel from './lib/components/DeviceFiltersPanel.svelte';
 	import GraphCanvas from './lib/components/GraphCanvas.svelte';
@@ -75,6 +78,9 @@
 	let selectedStagedDraft = $state<StagedDraft | undefined>();
 	let stagedBusy = $state(false);
 	let phase2Open = $state(false);
+	let setupGrantOpen = $state(false);
+	let setupGrantBusy = $state(false);
+	let setupGrantError = $state('');
 	let localApiError = $state<LocalAPIStatusResponse | Error | undefined>();
 	let tailscaleSetup = $state<TailscaleSetupInfo | undefined>();
 	let cloudBusy = $state(false);
@@ -340,7 +346,14 @@
 					: topology.value.devices[0];
 				cloudStatus = value;
 				phase2Open = false;
-				await loadPolicy();
+				if (value.needsSetupGrant) {
+					setupGrantError = '';
+					setupGrantOpen = true;
+					return;
+				}
+				if (value.canEditPolicy) {
+					await loadPolicy();
+				}
 			},
 			err: async (error) => {
 				cloudError = error.message;
@@ -541,6 +554,67 @@
 		phase2Open = false;
 	}
 
+	function closeSetupGrantDialog() {
+		if (setupGrantBusy) return;
+		setupGrantOpen = false;
+	}
+
+	function applySetupGrantResult(result: SetupGrantResponse) {
+		cloudStatus = {
+			...cloudStatus,
+			canEditPolicy: result.canEditPolicy,
+			callerRole: result.callerRole,
+			hasAppCapabilityGrant: result.hasAppCapabilityGrant,
+			appCapability: result.appCapability ?? cloudStatus.appCapability,
+			needsSetupGrant:
+				!result.hasAppCapabilityGrant && !result.bootstrapActive && !result.canEditPolicy,
+			bootstrapActive: result.bootstrapActive,
+			bootstrapExpiresAt: result.bootstrapExpiresAt,
+			statusMessage: result.statusMessage,
+			setupGrantSnippet: result.setupGrantSnippet
+		};
+	}
+
+	async function applyRecommendedSetupGrant() {
+		if (setupGrantBusy) return;
+		setupGrantBusy = true;
+		setupGrantError = '';
+		const result = await saveSetupGrant();
+		await result.match({
+			ok: async (value) => {
+				applySetupGrantResult(value);
+				setupGrantOpen = false;
+				if (value.canEditPolicy) {
+					await loadPolicy();
+				}
+			},
+			err: async (error) => {
+				setupGrantError = error.message;
+			}
+		});
+		setupGrantBusy = false;
+	}
+
+	async function applyEditedSetupGrant(snippet: string) {
+		if (setupGrantBusy) return;
+		setupGrantBusy = true;
+		setupGrantError = '';
+		const result = await saveSetupGrant({ editedSnippet: snippet });
+		await result.match({
+			ok: async (value) => {
+				applySetupGrantResult(value);
+				setupGrantOpen = false;
+				if (value.canEditPolicy) {
+					await loadPolicy();
+				}
+			},
+			err: async (error) => {
+				setupGrantError = error.message;
+			}
+		});
+		setupGrantBusy = false;
+	}
+
 	function deriveTailnet(): string {
 		if (cloudStatus.tailnet) return cloudStatus.tailnet;
 		if (tailnetName) return tailnetName;
@@ -695,7 +769,12 @@
 						<button class="btn-primary" type="button" onclick={openPolicyEditor}>Edit policy</button
 						>
 					{:else if cloudStatus.authenticated}
-						<span class="view-only-pill">View-only</span>
+						<span
+							class="view-only-pill"
+							title={cloudStatus.statusMessage || 'View-only tailnet access'}
+						>
+							{cloudStatus.bootstrapActive ? 'Temporary access' : 'View-only'}
+						</span>
 					{:else}
 						<button class="btn-primary" type="button" onclick={() => (phase2Open = true)}>
 							Enable ACL Editing
@@ -712,6 +791,19 @@
 				</div>
 			</div>
 		</div>
+
+		{#if cloudStatus.statusMessage && !viewport.isMobile}
+			<div
+				class="border-b border-status-border bg-status-bg px-4 py-2 text-[0.84rem] font-semibold text-status-text md:px-5"
+				role="status"
+			>
+				{cloudStatus.statusMessage}
+				{#if cloudStatus.setupGrantSnippet && cloudStatus.bootstrapActive}
+					<pre
+						class="mt-2 overflow-x-auto rounded-md border border-panel-border bg-panel-weak p-3 font-mono text-[0.76rem] whitespace-pre-wrap text-primary">{cloudStatus.setupGrantSnippet}</pre>
+				{/if}
+			</div>
+		{/if}
 
 		<div class="flex h-full min-h-0">
 			{#if !viewport.isMobile}
@@ -1097,6 +1189,16 @@
 			{cloudError}
 			onClose={closePhase2Dialog}
 			onSubmit={enableACLEditing}
+		/>
+		<SetupGrantDialog
+			bind:open={setupGrantOpen}
+			snippet={cloudStatus.setupGrantSnippet ?? ''}
+			statusMessage={cloudStatus.statusMessage ?? ''}
+			busy={setupGrantBusy}
+			error={setupGrantError}
+			onClose={closeSetupGrantDialog}
+			onAccept={applyRecommendedSetupGrant}
+			onSaveEdited={applyEditedSetupGrant}
 		/>
 	{/if}
 </main>

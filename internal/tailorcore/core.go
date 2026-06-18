@@ -100,6 +100,18 @@ func (s *Service) CloudStatus() cloudapi.AuthStatus {
 	return s.cloudAPI.Status()
 }
 
+func (s *Service) CloudPolicy(ctx context.Context) (string, error) {
+	return s.cloudAPI.Policy(ctx)
+}
+
+func (s *Service) ValidateCloudPolicy(ctx context.Context, draft string) error {
+	return s.cloudAPI.ValidatePolicy(ctx, draft)
+}
+
+func (s *Service) SaveCloudPolicy(ctx context.Context, draft string) (string, error) {
+	return s.cloudAPI.SavePolicy(ctx, draft)
+}
+
 func (s *Service) AuthenticateCloud(ctx context.Context, request cloudapi.AuthRequest) (cloudapi.AuthStatus, error) {
 	return s.cloudAPI.Authenticate(ctx, request)
 }
