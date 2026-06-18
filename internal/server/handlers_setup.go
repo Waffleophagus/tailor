@@ -9,6 +9,7 @@ import (
 	"github.com/Waffleophagus/tailor/internal/api"
 	"github.com/Waffleophagus/tailor/internal/authz"
 	"github.com/Waffleophagus/tailor/internal/policy"
+	"tailscale.com/ipn"
 )
 
 func (s *Server) handleSetupGrantRecommendation(w http.ResponseWriter, r *http.Request) {
@@ -119,6 +120,13 @@ func (s *Server) handleSetupGrantSave(w http.ResponseWriter, r *http.Request) {
 		s.issueBootstrapFallback(w, r, grant)
 		return
 	}
+	if err := s.activateServiceTag(r.Context()); err != nil {
+		s.logger.Warn("tailor service tag activation failed",
+			"tag", policy.TailorACLServiceTag,
+			"error", err.Error(),
+			"request_id", RequestIDFromContext(r.Context()),
+		)
+	}
 
 	// Policy propagation is asynchronous. Briefly re-check WhoIs so the common
 	// case unlocks immediately without requiring a browser refresh.
@@ -126,6 +134,28 @@ func (s *Server) handleSetupGrantSave(w http.ResponseWriter, r *http.Request) {
 		r = r.WithContext(authz.WithIdentity(r.Context(), identity))
 	}
 	writeJSON(w, http.StatusOK, setupGrantResponse(r, s, appCapability, true))
+}
+
+func (s *Server) activateServiceTag(ctx context.Context) error {
+	if !s.auth.TailnetMode || s.tailnetPrefs == nil {
+		return nil
+	}
+	prefs, err := s.tailnetPrefs.GetPrefs(ctx)
+	if err != nil {
+		return err
+	}
+	tags := append([]string(nil), prefs.AdvertiseTags...)
+	for _, tag := range tags {
+		if tag == policy.TailorACLServiceTag {
+			return nil
+		}
+	}
+	tags = append(tags, policy.TailorACLServiceTag)
+	_, err = s.tailnetPrefs.EditPrefs(ctx, &ipn.MaskedPrefs{
+		Prefs:            ipn.Prefs{AdvertiseTags: tags},
+		AdvertiseTagsSet: true,
+	})
+	return err
 }
 
 const (

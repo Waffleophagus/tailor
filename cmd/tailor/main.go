@@ -58,7 +58,7 @@ func main() {
 	var tsnetLocalClient *local.Client
 	if shouldUseTsnet(deployEnv) {
 		configureTSNetForceLogin(deployEnv, tsnetStateDir(), logger)
-		tsnetServer = newTSNetServer(logger, deployEnv)
+		tsnetServer = newTSNetServer(logger)
 		var err error
 		tsnetLocalClient, err = tsnetServer.LocalClient()
 		if err != nil {
@@ -189,7 +189,7 @@ func hasTSNetMachineState(stateDir string) bool {
 	return len(machineKey) > 0 && string(machineKey) != "null"
 }
 
-func newTSNetServer(logger *slog.Logger, env deploy.Environment) *tsnet.Server {
+func newTSNetServer(logger *slog.Logger) *tsnet.Server {
 	hostname := strings.TrimSpace(os.Getenv("TS_HOSTNAME"))
 	if hostname == "" {
 		hostname = strings.TrimSpace(os.Getenv("TAILSCALE_HOSTNAME"))
@@ -206,7 +206,7 @@ func newTSNetServer(logger *slog.Logger, env deploy.Environment) *tsnet.Server {
 		Dir:           tsnetStateDir(),
 		Hostname:      hostname,
 		AuthKey:       authKey,
-		AdvertiseTags: advertiseTags(env.InContainer),
+		AdvertiseTags: advertiseTags(),
 		UserLogf: func(format string, args ...any) {
 			logger.Info("tsnet", "message", fmt.Sprintf(format, args...))
 		},
@@ -266,7 +266,7 @@ func tsnetListenAddr() string {
 	return net.JoinHostPort("", port)
 }
 
-func advertiseTags(defaultServiceTag bool) []string {
+func advertiseTags() []string {
 	raw := strings.TrimSpace(os.Getenv("TS_ADVERTISE_TAGS"))
 	if raw == "" {
 		raw = strings.TrimSpace(os.Getenv("TAILSCALE_ADVERTISE_TAGS"))
@@ -275,9 +275,6 @@ func advertiseTags(defaultServiceTag bool) []string {
 		raw = advertiseTagsFromUpArgs(os.Getenv("TAILSCALE_UP_EXTRA_ARGS"))
 	}
 	if raw == "" {
-		if defaultServiceTag {
-			return []string{"tag:tailor-acl-service"}
-		}
 		return nil
 	}
 	parts := strings.Split(raw, ",")

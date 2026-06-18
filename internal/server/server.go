@@ -19,6 +19,7 @@ import (
 	"github.com/Waffleophagus/tailor/internal/tailorcore"
 	"tailscale.com/client/local"
 	"tailscale.com/client/tailscale/apitype"
+	"tailscale.com/ipn"
 	"tailscale.com/ipn/ipnstate"
 )
 
@@ -28,6 +29,11 @@ type WhoIsClient interface {
 
 type TailnetStatusClient interface {
 	StatusWithoutPeers(ctx context.Context) (*ipnstate.Status, error)
+}
+
+type TailnetPrefsClient interface {
+	GetPrefs(ctx context.Context) (*ipn.Prefs, error)
+	EditPrefs(ctx context.Context, prefs *ipn.MaskedPrefs) (*ipn.Prefs, error)
 }
 
 type Options struct {
@@ -41,11 +47,12 @@ type Options struct {
 }
 
 type Server struct {
-	logger    *slog.Logger
-	core      *tailorcore.Service
-	deploy    deploy.Environment
-	auth      AuthOptions
-	bootstrap *BootstrapSessions
+	logger       *slog.Logger
+	core         *tailorcore.Service
+	deploy       deploy.Environment
+	auth         AuthOptions
+	tailnetPrefs TailnetPrefsClient
+	bootstrap    *BootstrapSessions
 }
 
 func New(options ...Options) http.Handler {
@@ -74,7 +81,8 @@ func New(options ...Options) http.Handler {
 			TailnetStatus: opts.TailnetStatus,
 			AppCapability: appCapability(opts.AppCapability),
 		},
-		bootstrap: NewBootstrapSessions(),
+		tailnetPrefs: opts.LocalClient,
+		bootstrap:    NewBootstrapSessions(),
 	}
 
 	mux := http.NewServeMux()
