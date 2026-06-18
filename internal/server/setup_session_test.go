@@ -16,6 +16,11 @@ func TestSetupSessionIsIdentityBoundAndSingleUse(t *testing.T) {
 	if sessions.Consume(token, "other@example.com", "workstation") {
 		t.Fatal("setup session should reject a different identity")
 	}
+	if sessions.Consume(token, "admin@example.com", "workstation") {
+		t.Fatal("setup session should be invalidated after a mismatched identity")
+	}
+
+	token, _ = sessions.Create("admin@example.com", "workstation")
 	if !sessions.Consume(token, "admin@example.com", "workstation") {
 		t.Fatal("setup session should accept its bound identity")
 	}

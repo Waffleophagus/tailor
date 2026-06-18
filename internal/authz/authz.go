@@ -98,13 +98,13 @@ func Allowed(ctx context.Context, permission Permission) bool {
 		}
 		identity, ok := IdentityFromContext(ctx)
 		if !ok {
-			return true
+			return false
 		}
 		return identity.Role == RoleFull
 	case PermissionUseMCPWrite:
 		identity, ok := IdentityFromContext(ctx)
 		if !ok {
-			return true
+			return false
 		}
 		return identity.Role == RoleFull
 	default:

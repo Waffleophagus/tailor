@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -35,7 +36,7 @@ func TestViewerCannotAccessAnyPolicyRoute(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.method+" "+tt.path, func(t *testing.T) {
-			request := httptest.NewRequest(tt.method, tt.path, bytes.NewBufferString(`{}`))
+			request := httptest.NewRequestWithContext(context.Background(), tt.method, tt.path, bytes.NewBufferString(`{}`))
 			request.RemoteAddr = "100.64.0.1:12345"
 			response := httptest.NewRecorder()
 

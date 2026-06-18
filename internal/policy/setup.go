@@ -12,6 +12,9 @@ import (
 // administers this Tailor instance through its service tag.
 func ValidateSetupGrant(grant api.GrantDraft, capability string) error {
 	capability = strings.TrimSpace(capability)
+	if capability == "" {
+		return errors.New("setup grant requires a resolved Tailor app capability")
+	}
 	if len(grant.Dst) != 1 || strings.TrimSpace(grant.Dst[0]) != TailorACLServiceTag {
 		return errors.New("setup grant must target only tag:tailor-acl-service")
 	}

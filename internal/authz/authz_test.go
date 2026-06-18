@@ -57,6 +57,7 @@ func TestPermissionMatrix(t *testing.T) {
 	viewer := WithIdentity(context.Background(), TailnetIdentity{Role: RoleViewer})
 	full := WithIdentity(context.Background(), TailnetIdentity{Role: RoleFull})
 	bootstrap := WithBootstrap(viewer)
+	anonymous := context.Background()
 
 	tests := []struct {
 		name       string
@@ -74,6 +75,10 @@ func TestPermissionMatrix(t *testing.T) {
 		{"bootstrap policy read", bootstrap, PermissionReadPolicy, true},
 		{"bootstrap policy write", bootstrap, PermissionWritePolicy, true},
 		{"bootstrap MCP write", bootstrap, PermissionUseMCPWrite, false},
+		{"anonymous topology", anonymous, PermissionViewTopology, true},
+		{"anonymous policy read", anonymous, PermissionReadPolicy, false},
+		{"anonymous policy write", anonymous, PermissionWritePolicy, false},
+		{"anonymous MCP write", anonymous, PermissionUseMCPWrite, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

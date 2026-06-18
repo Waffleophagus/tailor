@@ -54,7 +54,7 @@ type stagePolicyDraftInput struct {
 	Summary string `json:"summary,omitempty" jsonschema:"Short human-readable summary of the intended change."`
 }
 
-const policyCacheWarmingMessage = "Tailor is pre-calculating policy topology. Retry this request in 30 seconds."
+const policyCacheWarmingMessage = "Tailor is pre-calculating policy topology. Retry this request in 30 seconds"
 
 func registerTools(server *mcp.Server, core *tailorcore.Service, cfg Config) {
 	mcp.AddTool(server, &mcp.Tool{
@@ -89,7 +89,7 @@ func registerTools(server *mcp.Server, core *tailorcore.Service, cfg Config) {
 		Description: "Fetch the current ACL policy HuJSON when Cloud API authentication is enabled.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ getPolicyInput) (*mcp.CallToolResult, getPolicyOutput, error) {
 		if !authz.Allowed(ctx, authz.PermissionReadPolicy) {
-			return nil, getPolicyOutput{}, errors.New("Tailor policy access is view-only for the current tailnet identity.")
+			return nil, getPolicyOutput{}, errors.New("Tailor policy access is view-only for the current tailnet identity")
 		}
 		response, err := core.Policy(ctx)
 		if err != nil {
@@ -107,7 +107,7 @@ func registerTools(server *mcp.Server, core *tailorcore.Service, cfg Config) {
 		Description: "Fetch the current ACL policy HuJSON plus structured section inventory, entries, unsupported sections, and raw section values.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ getPolicyMapInput) (*mcp.CallToolResult, api.PolicyMapResponse, error) {
 		if !authz.Allowed(ctx, authz.PermissionReadPolicy) {
-			return nil, api.PolicyMapResponse{}, errors.New("Tailor policy access is view-only for the current tailnet identity.")
+			return nil, api.PolicyMapResponse{}, errors.New("Tailor policy access is view-only for the current tailnet identity")
 		}
 		if core.PolicyCacheWarming() {
 			return nil, api.PolicyMapResponse{}, errors.New(policyCacheWarmingMessage)
@@ -155,7 +155,7 @@ func registerTools(server *mcp.Server, core *tailorcore.Service, cfg Config) {
 		Description: "Compare a HuJSON ACL draft against the current policy and topology without staging or saving it. Use ACL reference topics for syntax questions before evaluating.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input evaluatePolicyDraftInput) (*mcp.CallToolResult, api.PolicyEvaluateDraftResponse, error) {
 		if !authz.Allowed(ctx, authz.PermissionWritePolicy) {
-			return nil, api.PolicyEvaluateDraftResponse{}, errors.New("Tailor policy editing is view-only for the current tailnet identity.")
+			return nil, api.PolicyEvaluateDraftResponse{}, errors.New("Tailor policy editing is view-only for the current tailnet identity")
 		}
 		output, err := core.EvaluatePolicyDraft(ctx, api.PolicyEvaluateDraftRequest{
 			HuJSON:      input.HuJSON,
@@ -174,7 +174,7 @@ func registerTools(server *mcp.Server, core *tailorcore.Service, cfg Config) {
 		Description: "Validate and evaluate a HuJSON ACL draft, then stage it for explicit human review in the Tailor UI. Evaluate drafts first when possible. This never saves or uploads policy to Tailscale.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input stagePolicyDraftInput) (*mcp.CallToolResult, api.PolicyStageResponse, error) {
 		if !authz.Allowed(ctx, authz.PermissionUseMCPWrite) {
-			return nil, api.PolicyStageResponse{}, errors.New("Tailor MCP write access is view-only for the current tailnet identity.")
+			return nil, api.PolicyStageResponse{}, errors.New("Tailor MCP write access is view-only for the current tailnet identity")
 		}
 		output, err := core.StagePolicyDraft(ctx, api.PolicyStageRequest{
 			HuJSON:  input.HuJSON,

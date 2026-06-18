@@ -53,7 +53,7 @@ func (s *Server) handleCloudAuth(w http.ResponseWriter, r *http.Request) {
 		identity, ok := authz.IdentityFromContext(r.Context())
 		if ok {
 			token, expiresAt := s.setup.Create(identity.LoginName, identity.NodeName)
-			setSetupCookie(w, token, expiresAt)
+			setSetupCookie(w, r, token, expiresAt)
 		}
 	}
 	writeJSON(w, http.StatusOK, cloudAuthStatusResponse(r, s, status))

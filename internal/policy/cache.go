@@ -63,11 +63,20 @@ func (c *Cache) EffectiveAccessEdges(raw string, devices []api.Device, options E
 
 	key := edgeKey(devices, options)
 	if cached, ok := c.edges[key]; ok {
-		return cached.value, cached.err
+		return cloneEdges(cached.value), cached.err
 	}
 	value := ResolveEffectiveAccess(c.parsed, devices, options)
-	c.edges[key] = edgeCacheEntry{value: value}
-	return value, nil
+	c.edges[key] = edgeCacheEntry{value: cloneEdges(value)}
+	return cloneEdges(value), nil
+}
+
+func cloneEdges(edges []api.Edge) []api.Edge {
+	if len(edges) == 0 {
+		return nil
+	}
+	out := make([]api.Edge, len(edges))
+	copy(out, edges)
+	return out
 }
 
 func (c *Cache) selectPolicyLocked(raw string) {

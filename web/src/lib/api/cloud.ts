@@ -55,12 +55,18 @@ export async function saveSetupGrant(options?: {
 }): Promise<Result<SetupGrantResponse, Error>> {
 	let body: string | undefined;
 	if (options?.editedSnippet) {
-		const parsed = JSON.parse(options.editedSnippet) as {
-			grants?: unknown[];
-			src?: unknown;
-		};
-		const grant = Array.isArray(parsed.grants) ? parsed.grants[0] : parsed;
-		body = JSON.stringify({ grant });
+		try {
+			const parsed = JSON.parse(options.editedSnippet) as {
+				grants?: unknown[];
+				src?: unknown;
+			};
+			const grant = Array.isArray(parsed.grants) ? parsed.grants[0] : parsed;
+			body = JSON.stringify({ grant });
+		} catch (e) {
+			return Result.err(
+				new Error(`Invalid JSON in edited grant: ${e instanceof Error ? e.message : String(e)}`)
+			);
+		}
 	}
 	return fetchJSON('/api/cloud/setup-grant', setupGrantResponseSchema, {
 		method: 'POST',

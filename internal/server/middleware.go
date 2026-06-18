@@ -137,7 +137,8 @@ func IdentityMiddleware(logger *slog.Logger, opts *AuthOptions, next http.Handle
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !opts.TailnetMode {
-			next.ServeHTTP(w, r)
+			ctx := authz.WithIdentity(r.Context(), authz.TailnetIdentity{Role: authz.RoleFull})
+			next.ServeHTTP(w, r.WithContext(ctx))
 			return
 		}
 		if opts.WhoIsClient == nil {

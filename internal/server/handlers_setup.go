@@ -218,7 +218,7 @@ func (s *Server) issueBootstrapFallback(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	token, expiresAt := s.bootstrap.Create(identity.LoginName, identity.NodeName)
-	setBootstrapCookie(w, token, expiresAt)
+	setBootstrapCookie(w, r, token, expiresAt)
 	ctx := authz.WithBootstrap(r.Context())
 	response := cloudAuthStatusResponse(r.WithContext(ctx), s, s.core.CloudStatus())
 	response.BootstrapActive = true

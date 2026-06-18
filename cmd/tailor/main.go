@@ -55,6 +55,19 @@ func main() {
 	)
 
 	var tsnetServer *tsnet.Server
+	closeTSNet := func() {
+		if tsnetServer != nil {
+			if err := tsnetServer.Close(); err != nil {
+				logger.Warn("tsnet close failed", "error", err)
+			}
+			tsnetServer = nil
+		}
+	}
+	exit := func(code int) {
+		closeTSNet()
+		os.Exit(code)
+	}
+
 	var tsnetLocalClient *local.Client
 	if shouldUseTsnet(deployEnv) {
 		configureTSNetForceLogin(deployEnv, tsnetStateDir(), logger)
@@ -63,9 +76,8 @@ func main() {
 		tsnetLocalClient, err = tsnetServer.LocalClient()
 		if err != nil {
 			logger.Error("tsnet startup failed", "error", err)
-			os.Exit(1)
+			exit(1)
 		}
-		defer tsnetServer.Close()
 		localAPIEndpoint = "tsnet embedded"
 	}
 
@@ -84,7 +96,7 @@ func main() {
 		servePort, err := tailserve.ParseHTTPSPort(os.Getenv("TAILOR_TAILSCALE_SERVE_PORT"))
 		if err != nil {
 			logger.Error("invalid TAILOR_TAILSCALE_SERVE_PORT", "error", err)
-			os.Exit(1)
+			exit(1)
 		}
 		go tailserve.ConfigureWhenReady(context.Background(), tailserve.Options{
 			LocalAPIEndpoint: localAPIEndpoint,
@@ -144,7 +156,7 @@ func main() {
 
 	if err := <-errs; err != nil {
 		logger.Error("server failed", "error", err)
-		os.Exit(1)
+		exit(1)
 	}
 }
 
@@ -236,7 +248,7 @@ func prepareTSNetHTTPS(ctx context.Context, server *tsnet.Server, client *local.
 		return "", errors.New("MagicDNS is required for https://<hostname>.<tailnet>.ts.net/; enable MagicDNS in Tailscale DNS settings")
 	}
 	if len(status.CertDomains) == 0 {
-		return "", errors.New("Tailscale HTTPS certificates are not enabled for this tailnet; enable HTTPS certificates in Tailscale DNS settings")
+		return "", errors.New("tailscale HTTPS certificates are not enabled for this tailnet; enable HTTPS certificates in Tailscale DNS settings")
 	}
 	certDomain := status.CertDomains[0]
 	if status.Self != nil && strings.TrimSpace(status.Self.DNSName) != "" {

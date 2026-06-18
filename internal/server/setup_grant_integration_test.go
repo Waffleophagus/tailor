@@ -102,7 +102,7 @@ func TestSetupGrantFailuresCreateBrowserBootstrapAccess(t *testing.T) {
 
 			authenticateSetupClient(t, client, app.URL)
 			response := postSetupGrant(t, client, app.URL)
-			defer response.Body.Close()
+			defer closeResponseBody(t, response)
 			var setup api.SetupGrantResponse
 			if err := json.NewDecoder(response.Body).Decode(&setup); err != nil {
 				t.Fatal(err)
@@ -128,7 +128,7 @@ func TestSuccessfulSetupGrantUnlocksOnlyAfterWhoIsPropagation(t *testing.T) {
 
 	authenticateSetupClient(t, client, app.URL)
 	response := postSetupGrant(t, client, app.URL)
-	defer response.Body.Close()
+	defer closeResponseBody(t, response)
 	var setup api.SetupGrantResponse
 	if err := json.NewDecoder(response.Body).Decode(&setup); err != nil {
 		t.Fatal(err)
@@ -149,7 +149,7 @@ func TestExistingSetupGrantIsNotWrittenAgain(t *testing.T) {
 
 	authenticateSetupClient(t, client, app.URL)
 	response := postSetupGrant(t, client, app.URL)
-	response.Body.Close()
+	closeResponseBody(t, response)
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("status=%d", response.StatusCode)
 	}
@@ -177,11 +177,11 @@ func newSetupIntegrationApp(t *testing.T, fixture *cloudPolicyFixture, who WhoIs
 func authenticateSetupClient(t *testing.T, client *http.Client, appURL string) {
 	t.Helper()
 	body, _ := json.Marshal(api.CloudAuthRequest{Tailnet: "example.com", APIKey: "tskey-api-test"})
-	response, err := client.Post(appURL+"/api/cloud/auth", "application/json", bytes.NewReader(body))
+	response, err := postJSON(context.Background(), client, appURL+"/api/cloud/auth", body)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer response.Body.Close()
+	defer closeResponseBody(t, response)
 	if response.StatusCode != http.StatusOK {
 		data, _ := io.ReadAll(response.Body)
 		t.Fatalf("cloud auth status=%d body=%s", response.StatusCode, data)
@@ -190,11 +190,30 @@ func authenticateSetupClient(t *testing.T, client *http.Client, appURL string) {
 
 func postSetupGrant(t *testing.T, client *http.Client, appURL string) *http.Response {
 	t.Helper()
-	response, err := client.Post(appURL+"/api/cloud/setup-grant", "application/json", strings.NewReader(`{}`))
+	response, err := postJSON(context.Background(), client, appURL+"/api/cloud/setup-grant", []byte(`{}`))
 	if err != nil {
 		t.Fatal(err)
 	}
 	return response
+}
+
+func postJSON(ctx context.Context, client *http.Client, url string, body []byte) (*http.Response, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	request.Header.Set("Content-Type", "application/json")
+	return client.Do(request)
+}
+
+func closeResponseBody(t *testing.T, response *http.Response) {
+	t.Helper()
+	if response == nil || response.Body == nil {
+		return
+	}
+	if err := response.Body.Close(); err != nil {
+		t.Fatalf("response.Body.Close() error = %v", err)
+	}
 }
 
 func assertBootstrapPolicyRoutesAreAuthorized(t *testing.T, client *http.Client, appURL string) {
@@ -213,13 +232,16 @@ func assertBootstrapPolicyRoutesAreAuthorized(t *testing.T, client *http.Client,
 		{http.MethodPost, "/api/policy/save"},
 	}
 	for _, tt := range tests {
-		request, _ := http.NewRequest(tt.method, appURL+tt.path, strings.NewReader(`{}`))
+		request, err := http.NewRequestWithContext(context.Background(), tt.method, appURL+tt.path, strings.NewReader(`{}`))
+		if err != nil {
+			t.Fatal(err)
+		}
 		request.Header.Set("Content-Type", "application/json")
 		response, err := client.Do(request)
 		if err != nil {
 			t.Fatal(err)
 		}
-		response.Body.Close()
+		closeResponseBody(t, response)
 		if response.StatusCode == http.StatusForbidden {
 			t.Errorf("bootstrap request %s %s was forbidden", tt.method, tt.path)
 		}

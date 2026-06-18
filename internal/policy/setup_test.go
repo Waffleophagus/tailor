@@ -39,6 +39,16 @@ func TestValidateSetupGrantRejectsUnrelatedGrant(t *testing.T) {
 	}
 }
 
+func TestValidateSetupGrantRejectsEmptyCapability(t *testing.T) {
+	grant := RecommendedSetupGrant(testCapability)
+	if err := ValidateSetupGrant(grant, ""); err == nil {
+		t.Fatal("empty capability should be rejected")
+	}
+	if err := ValidateSetupGrant(grant, "   "); err == nil {
+		t.Fatal("whitespace capability should be rejected")
+	}
+}
+
 func TestValidateSetupGrantRejectsWrongDestination(t *testing.T) {
 	grant := RecommendedSetupGrant(testCapability)
 	grant.Dst = []string{"tag:database"}
@@ -108,7 +118,15 @@ func TestGrantHasAdminAction(t *testing.T) {
 
 func TestCapabilityFromGrant(t *testing.T) {
 	grant := api.GrantDraft{App: map[string]any{testCapability: nil}}
-	if got := capabilityFromGrant(grant); got != testCapability {
+	got, err := capabilityFromGrant(grant)
+	if err != nil {
+		t.Fatalf("capabilityFromGrant() error = %v", err)
+	}
+	if got != testCapability {
 		t.Fatalf("capabilityFromGrant() = %q, want %q", got, testCapability)
+	}
+	grant.App["other.example.ts.net/cap/admin"] = nil
+	if _, err := capabilityFromGrant(grant); err == nil {
+		t.Fatal("expected multiple app capabilities to be rejected")
 	}
 }

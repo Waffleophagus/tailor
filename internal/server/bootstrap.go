@@ -71,12 +71,13 @@ func (b *BootstrapSessions) purgeExpiredLocked(now time.Time) {
 
 const bootstrapCookieName = "tailor_bootstrap"
 
-func setBootstrapCookie(w http.ResponseWriter, token string, expiresAt time.Time) {
+func setBootstrapCookie(w http.ResponseWriter, r *http.Request, token string, expiresAt time.Time) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     bootstrapCookieName,
 		Value:    token,
 		Path:     "/",
 		HttpOnly: true,
+		Secure:   cookieSecure(r),
 		SameSite: http.SameSiteStrictMode,
 		Expires:  expiresAt,
 	})
@@ -93,7 +94,7 @@ func bootstrapTokenFromRequest(r *http.Request) string {
 func newBootstrapToken() string {
 	var buf [16]byte
 	if _, err := rand.Read(buf[:]); err != nil {
-		return hex.EncodeToString([]byte(time.Now().Format(time.RFC3339Nano)))
+		panic("bootstrap token generation failed: " + err.Error())
 	}
 	return hex.EncodeToString(buf[:])
 }

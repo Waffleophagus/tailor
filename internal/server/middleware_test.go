@@ -88,7 +88,7 @@ func TestIdentityMiddlewareAttachesFullRoleFromCapability(t *testing.T) {
 		AppCapability: cap,
 	}, next)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/cloud/status", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/cloud/status", nil)
 	req.RemoteAddr = "100.64.0.1:1234"
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
@@ -106,7 +106,7 @@ func TestIdentityMiddlewareRejectsUnauthenticatedPageWithTailnetGuidance(t *test
 		nextCalled = true
 	}))
 
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/", nil)
 	req.RemoteAddr = "203.0.113.10:1234"
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
@@ -135,7 +135,7 @@ func TestIdentityMiddlewareRejectsUnauthenticatedAPIWithoutHTML(t *testing.T) {
 		t.Fatal("unauthenticated request reached application handler")
 	}))
 
-	req := httptest.NewRequest(http.MethodGet, "/api/health", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/health", nil)
 	req.RemoteAddr = "203.0.113.10:1234"
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
@@ -154,7 +154,7 @@ func TestIdentityMiddlewareFailsClosedWithoutWhoIsClient(t *testing.T) {
 	}))
 
 	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	handler.ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/", nil))
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403", rec.Code)
 	}
