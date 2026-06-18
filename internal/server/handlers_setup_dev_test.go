@@ -27,7 +27,7 @@ func TestDevKeyAlwaysOffersAndSimulatesSetupGrant(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&auth); err != nil {
 		t.Fatal(err)
 	}
-	if !auth.NeedsSetupGrant || auth.AppCapability == "" || auth.SetupGrantSnippet == "" {
+	if !auth.NeedsSetupGrant || !auth.CanEditPolicy || auth.CallerRole != "full" || auth.AppCapability == "" || auth.SetupGrantSnippet == "" {
 		t.Fatalf("dev auth did not offer setup grant: %+v", auth)
 	}
 

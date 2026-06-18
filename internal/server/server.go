@@ -192,6 +192,13 @@ func cloudAuthStatusResponse(r *http.Request, s *Server, status cloudapi.AuthSta
 
 	bootstrapActive, bootstrapExpiresAt := s.bootstrapState(r, loginName, nodeName)
 	canEdit := authz.Allowed(r.Context(), authz.PermissionWritePolicy)
+	if status.DevMode {
+		// The built-in demo key switches the process to its in-memory tailnet and
+		// retains the original unrestricted demo editing behavior. The setup grant
+		// prompt is a UI simulation in this mode, not an authorization boundary.
+		role = "full"
+		canEdit = true
+	}
 	needsSetup := status.Authenticated && appCapability != "" && !hasGrant && !bootstrapActive && (status.DevMode || s.auth.TailnetMode)
 
 	response := api.CloudAuthStatusResponse{
