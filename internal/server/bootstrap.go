@@ -30,6 +30,7 @@ func (b *BootstrapSessions) Create(loginName, nodeName string) (token string, ex
 	token = newBootstrapToken()
 	expiresAt = time.Now().Add(bootstrapSessionTTL)
 	b.mu.Lock()
+	b.purgeExpiredLocked(time.Now())
 	b.sessions[token] = bootstrapSession{
 		loginName: loginName,
 		nodeName:  nodeName,
