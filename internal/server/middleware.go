@@ -126,9 +126,12 @@ func AccessMiddleware(logger *slog.Logger, next http.Handler) http.Handler {
 
 // IdentityMiddleware attaches tsnet WhoIs identity to API and MCP requests when
 // Tailor is serving directly on the tailnet.
-func IdentityMiddleware(logger *slog.Logger, opts AuthOptions, next http.Handler) http.Handler {
+func IdentityMiddleware(logger *slog.Logger, opts *AuthOptions, next http.Handler) http.Handler {
 	if logger == nil {
 		logger = slog.New(slog.DiscardHandler)
+	}
+	if opts == nil {
+		opts = &AuthOptions{}
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !opts.TailnetMode || opts.WhoIsClient == nil || !needsIdentity(r, opts.MCPPath) {

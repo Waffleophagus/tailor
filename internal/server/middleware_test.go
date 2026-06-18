@@ -79,7 +79,7 @@ func TestIdentityMiddlewareAttachesFullRoleFromCapability(t *testing.T) {
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})
-	handler := IdentityMiddleware(nil, AuthOptions{
+	handler := IdentityMiddleware(nil, &AuthOptions{
 		TailnetMode:   true,
 		WhoIsClient:   fakeWhoIsClient{response: &apitype.WhoIsResponse{CapMap: tailcfg.PeerCapMap{tailcfg.PeerCapability(cap): []tailcfg.RawMessage{`{"actions":["admin"]}`}}}},
 		AppCapability: cap,

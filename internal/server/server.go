@@ -107,7 +107,7 @@ func New(options ...Options) http.Handler {
 	spa := spaHandler(http.FileServer(frontend.FileSystem()))
 	mux.Handle("/", spa)
 
-	return AccessMiddleware(logger, IdentityMiddleware(logger, server.auth, mux))
+	return AccessMiddleware(logger, IdentityMiddleware(logger, &server.auth, mux))
 }
 
 func (s *Server) writeLocalAPIUnavailable(w http.ResponseWriter, r *http.Request, status int, err error, message string) {
