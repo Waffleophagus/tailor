@@ -43,6 +43,7 @@ type Options struct {
 	TailnetStatus    TailnetStatusClient
 	TailnetMode      bool
 	AppCapability    string
+	CloudAPIOptions  []cloudapi.Option
 	Logger           *slog.Logger
 }
 
@@ -70,6 +71,7 @@ func New(options ...Options) http.Handler {
 	core := tailorcore.New(tailorcore.Options{
 		LocalAPIEndpoint: opts.LocalAPIEndpoint,
 		LocalClient:      opts.LocalClient,
+		CloudAPIOptions:  opts.CloudAPIOptions,
 		Logger:           logger,
 	})
 	server := &Server{
@@ -82,9 +84,11 @@ func New(options ...Options) http.Handler {
 			TailnetStatus: opts.TailnetStatus,
 			AppCapability: appCapability(opts.AppCapability),
 		},
-		tailnetPrefs: opts.LocalClient,
-		bootstrap:    NewBootstrapSessions(),
-		setup:        NewSetupSessions(),
+		bootstrap: NewBootstrapSessions(),
+		setup:     NewSetupSessions(),
+	}
+	if opts.LocalClient != nil {
+		server.tailnetPrefs = opts.LocalClient
 	}
 
 	mux := http.NewServeMux()
@@ -123,7 +127,7 @@ func New(options ...Options) http.Handler {
 	spa := spaHandler(http.FileServer(frontend.FileSystem()))
 	mux.Handle("/", spa)
 
-	return AccessMiddleware(logger, BootstrapMiddleware(server, IdentityMiddleware(logger, &server.auth, mux)))
+	return AccessMiddleware(logger, IdentityMiddleware(logger, &server.auth, BootstrapMiddleware(server, mux)))
 }
 
 func (s *Server) writeLocalAPIUnavailable(w http.ResponseWriter, r *http.Request, status int, err error, message string) {

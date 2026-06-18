@@ -69,6 +69,7 @@ func (e PolicyFetchError) Is(target error) bool {
 type Options struct {
 	LocalAPIEndpoint string
 	LocalClient      *local.Client
+	CloudAPIOptions  []cloudapi.Option
 	Logger           *slog.Logger
 }
 
@@ -80,7 +81,7 @@ func New(options Options) *Service {
 	service := &Service{
 		logger:       logger,
 		localAPI:     localapi.NewWithLocalClient(options.LocalClient, options.LocalAPIEndpoint, localapi.WithLogger(logger)),
-		cloudAPI:     cloudapi.New(cloudapi.WithLogger(logger)),
+		cloudAPI:     cloudapi.New(append(options.CloudAPIOptions, cloudapi.WithLogger(logger))...),
 		stagedDrafts: map[string]stagedDraft{},
 		cleanupDone:  make(chan struct{}),
 		cleanupStop:  make(chan struct{}),

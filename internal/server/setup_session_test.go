@@ -97,6 +97,46 @@ func TestHTTPPolicyPermissionMatrix(t *testing.T) {
 	}
 }
 
+func TestBootstrapMiddlewareRejectsExpiredOrDifferentIdentity(t *testing.T) {
+	bootstrap := NewBootstrapSessions()
+	token, _ := bootstrap.Create("admin@example.com", "workstation")
+	bootstrap.mu.Lock()
+	session := bootstrap.sessions[token]
+	session.expiresAt = time.Now().Add(-time.Second)
+	bootstrap.sessions[token] = session
+	bootstrap.mu.Unlock()
+	validToken, _ := bootstrap.Create("admin@example.com", "workstation")
+
+	server := &Server{bootstrap: bootstrap}
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if authz.Allowed(r.Context(), authz.PermissionWritePolicy) {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		w.WriteHeader(http.StatusForbidden)
+	})
+	tests := []struct {
+		name     string
+		token    string
+		identity authz.TailnetIdentity
+	}{
+		{"expired", token, authz.TailnetIdentity{Role: authz.RoleViewer, LoginName: "admin@example.com", NodeName: "workstation"}},
+		{"different identity", validToken, authz.TailnetIdentity{Role: authz.RoleViewer, LoginName: "other@example.com", NodeName: "workstation"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost, "/api/policy/stage", nil)
+			request.AddCookie(&http.Cookie{Name: bootstrapCookieName, Value: tt.token})
+			request = request.WithContext(authz.WithIdentity(request.Context(), tt.identity))
+			response := httptest.NewRecorder()
+			BootstrapMiddleware(server, next).ServeHTTP(response, request)
+			if response.Code != http.StatusForbidden {
+				t.Fatalf("status=%d, want %d", response.Code, http.StatusForbidden)
+			}
+		})
+	}
+}
+
 func withRole(role authz.Role) func(*http.Request) *http.Request {
 	return func(r *http.Request) *http.Request {
 		return r.WithContext(authz.WithIdentity(r.Context(), authz.TailnetIdentity{Role: role}))
