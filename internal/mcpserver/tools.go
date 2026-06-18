@@ -54,12 +54,17 @@ type stagePolicyDraftInput struct {
 	Summary string `json:"summary,omitempty" jsonschema:"Short human-readable summary of the intended change."`
 }
 
+const policyCacheWarmingMessage = "Tailor is pre-calculating policy topology. Retry this request in 30 seconds."
+
 func registerTools(server *mcp.Server, core *tailorcore.Service, cfg Config) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "tailor_get_tailnet_state",
 		Title:       "Get Tailnet State",
 		Description: "Return Tailor's current tailnet topology, effective access edges, and Cloud API authentication state.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ getTailnetStateInput) (*mcp.CallToolResult, tailnetStateOutput, error) {
+		if core.PolicyCacheWarming() {
+			return nil, tailnetStateOutput{}, errors.New(policyCacheWarmingMessage)
+		}
 		devices, err := core.TopologyDevices(ctx)
 		if err != nil {
 			return nil, tailnetStateOutput{}, err
@@ -103,6 +108,9 @@ func registerTools(server *mcp.Server, core *tailorcore.Service, cfg Config) {
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ getPolicyMapInput) (*mcp.CallToolResult, api.PolicyMapResponse, error) {
 		if !authz.Allowed(ctx, authz.PermissionReadPolicy) {
 			return nil, api.PolicyMapResponse{}, errors.New("Tailor policy access is view-only for the current tailnet identity.")
+		}
+		if core.PolicyCacheWarming() {
+			return nil, api.PolicyMapResponse{}, errors.New(policyCacheWarmingMessage)
 		}
 		response, err := core.PolicyMap(ctx)
 		if err != nil {
