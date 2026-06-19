@@ -52,14 +52,19 @@ type SSHRule struct {
 var ErrInvalidPolicy = errors.New("invalid policy")
 
 var supportedPolicySections = map[string]string{
-	"acls":      "ACL rules",
-	"grants":    "Grants",
-	"ssh":       "SSH rules",
-	"groups":    "Groups",
-	"tagOwners": "Tag owners",
-	"hosts":     "Hosts",
-	"ipsets":    "IP sets",
-	"postures":  "Posture conditions",
+	"acls":              "ACL rules",
+	"grants":            "Grants",
+	"ssh":               "SSH rules",
+	"groups":            "Groups",
+	"tagOwners":         "Tag owners",
+	"hosts":             "Hosts",
+	"ipsets":            "IP sets",
+	"postures":          "Posture conditions",
+	"sshTests":          "SSH tests",
+	"defaultSrcPosture": "Default source posture",
+	"nodeAttrs":         "Node attributes",
+	"autoApprovers":     "Auto approvers",
+	"tests":             "Tests",
 }
 
 type EdgeOptions struct {

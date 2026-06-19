@@ -670,14 +670,18 @@ func TestEvaluateDraftReportsParsedButUnsupportedSections(t *testing.T) {
 		"nodeAttrs": [{"target": ["autogroup:member"], "attr": ["funnel"]}],
 		"autoApprovers": {"routes": {"10.0.0.0/8": ["autogroup:admin"]}},
 		"tests": [{"src": "alice@example.com", "accept": ["tag:prod:443"]}],
-		"sshTests": [{"src": "alice@example.com", "dst": ["tag:prod"], "accept": ["root"]}]
+		"sshTests": [{"src": "alice@example.com", "dst": ["tag:prod"], "accept": ["root"]}],
+		"unknownSection": [{"foo": "bar"}]
 	}`
 
 	got, err := EvaluateDraft(raw, raw, nil, EdgeOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"autoApprovers", "nodeAttrs", "sshTests", "tests"}
+	// nodeAttrs, autoApprovers, tests, and sshTests are recognized policy
+	// sections and must not be flagged as unsupported. Only genuinely unknown
+	// keys should be reported.
+	want := []string{"unknownSection"}
 	if strings.Join(got.UnsupportedSections, ",") != strings.Join(want, ",") {
 		t.Fatalf("unsupported sections = %#v, want %#v", got.UnsupportedSections, want)
 	}
@@ -1071,4 +1075,43 @@ func containsString(values []string, want string) bool {
 		}
 	}
 	return false
+}
+
+func TestStructuredMapMarksMissingPolicySectionsSupported(t *testing.T) {
+	raw := `{
+		"sshTests": [
+			{"src": ["alice@example.com"], "accept": true, "dst": ["tag:server"], "users": ["root"]}
+		],
+		"defaultSrcPosture": ["posture:baseline"],
+		"nodeAttrs": [
+			{"target": ["*"], "attr": ["disable_ssh"]}
+		],
+		"autoApprovers": {
+			"routes": {"100.64.0.0/10": ["group:eng"]}
+		},
+		"tests": [
+			{"src": "alice@example.com", "accept": true, "dst": "tag:server:443"}
+		]
+	}`
+	resp, err := StructuredMap(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"sshTests", "defaultSrcPosture", "nodeAttrs", "autoApprovers", "tests"}
+	for _, name := range want {
+		var found *api.PolicySection
+		for i := range resp.Sections {
+			if resp.Sections[i].Name == name {
+				found = &resp.Sections[i]
+				break
+			}
+		}
+		if found == nil {
+			t.Errorf("section %q not found in StructuredMap response", name)
+			continue
+		}
+		if !found.Supported {
+			t.Errorf("section %q: expected Supported=true, got false (description=%q)", name, found.Description)
+		}
+	}
 }
