@@ -186,14 +186,14 @@ func TestEffectiveAccessEdgesCanFilterByPerspective(t *testing.T) {
 	}
 }
 
-func TestDevicesForPerspectiveMemberExcludesTaggedSources(t *testing.T) {
+func TestDevicesForPerspectiveMemberIncludesTaggedSources(t *testing.T) {
 	devices := []api.Device{
 		{ID: "untagged", Owner: "alice@example.com", TailscaleIPs: []string{"100.64.0.1"}},
 		{ID: "tagged", Owner: "alice@example.com", Tags: []string{"tag:server"}, TailscaleIPs: []string{"100.64.0.2"}},
 	}
 	matched := devicesForPerspective("autogroup:member", Policy{}, devices)
-	if len(matched) != 1 || matched[0].ID != "untagged" {
-		t.Fatalf("member perspective sources = %#v, want untagged only", matched)
+	if len(matched) != 2 {
+		t.Fatalf("member perspective sources = %#v, want tagged and untagged devices", matched)
 	}
 }
 
@@ -208,7 +208,7 @@ func TestDevicesForPerspectiveMemberTaggedUnion(t *testing.T) {
 	}
 }
 
-func TestEffectiveAccessEdgesMemberPerspectiveTaggedDeviceIsDestinationOnly(t *testing.T) {
+func TestEffectiveAccessEdgesMemberPerspectiveIncludesTaggedSource(t *testing.T) {
 	p := Policy{
 		ACLs: []ACLRule{
 			{Action: "accept", Src: []string{"autogroup:member"}, Dst: []string{"tag:server:443"}},
@@ -221,10 +221,122 @@ func TestEffectiveAccessEdgesMemberPerspectiveTaggedDeviceIsDestinationOnly(t *t
 
 	edges := ResolveEffectiveAccess(p, devices, EdgeOptions{Perspective: "autogroup:member"})
 	assertEdge(t, edges, "member", "server", api.AccessScopeHTTP, []string{"443"})
+	assertEdge(t, edges, "server", "server", api.AccessScopeHTTP, []string{"443"})
+}
+
+func TestEffectiveAccessEdgesNormalizeUserAndHostSelectors(t *testing.T) {
+	p := Policy{
+		Hosts: map[string]string{"db": "100.64.0.10"},
+		ACLs: []ACLRule{
+			{Action: "accept", Src: []string{"user:alice@example.com"}, Dst: []string{"host:db:5432"}},
+		},
+	}
+	devices := []api.Device{
+		{ID: "alice", Owner: "alice@example.com", TailscaleIPs: []string{"100.64.0.1"}},
+		{ID: "db", Owner: "ops@example.com", TailscaleIPs: []string{"100.64.0.10"}},
+	}
+
+	edges := ResolveEffectiveAccess(p, devices, EdgeOptions{})
+	assertEdge(t, edges, "alice", "db", api.AccessScopeLimited, []string{"5432"})
+}
+
+func TestEffectiveAccessEdgesRoleAutogroupUsesDeviceRoles(t *testing.T) {
+	p := Policy{
+		ACLs: []ACLRule{
+			{Action: "accept", Src: []string{"autogroup:admin"}, Dst: []string{"tag:prod:443"}},
+		},
+	}
+	devices := []api.Device{
+		{ID: "admin", Owner: "admin@example.com", Roles: []string{"admin"}, TailscaleIPs: []string{"100.64.0.1"}},
+		{ID: "member", Owner: "member@example.com", TailscaleIPs: []string{"100.64.0.2"}},
+		{ID: "prod", Owner: "ops@example.com", Tags: []string{"tag:prod"}, TailscaleIPs: []string{"100.64.0.3"}},
+	}
+
+	edges := ResolveEffectiveAccess(p, devices, EdgeOptions{})
+	assertEdge(t, edges, "admin", "prod", api.AccessScopeHTTP, []string{"443"})
 	for _, edge := range edges {
-		if edge.From == "server" {
-			t.Fatalf("tagged device should not be a source under member perspective: %#v", edge)
+		if edge.From == "member" {
+			t.Fatalf("member without admin role should not match autogroup:admin: %#v", edge)
 		}
+	}
+}
+
+func TestEffectiveAccessEdgesPostureFiltersSources(t *testing.T) {
+	p := Policy{
+		Postures: map[string][]string{
+			"posture:mac": {"node:os == 'macos'"},
+		},
+		Grants: []Grant{
+			{Src: []string{"autogroup:member"}, Dst: []string{"tag:prod"}, IP: []string{"tcp:443"}, SrcPosture: []string{"posture:mac"}},
+		},
+	}
+	devices := []api.Device{
+		{ID: "mac", Owner: "alice@example.com", OS: "macOS", TailscaleIPs: []string{"100.64.0.1"}},
+		{ID: "linux", Owner: "bob@example.com", OS: "linux", TailscaleIPs: []string{"100.64.0.2"}},
+		{ID: "prod", Owner: "ops@example.com", Tags: []string{"tag:prod"}, TailscaleIPs: []string{"100.64.0.3"}},
+	}
+
+	edges := ResolveEffectiveAccess(p, devices, EdgeOptions{})
+	assertEdge(t, edges, "mac", "prod", api.AccessScopeHTTP, []string{"443"})
+	for _, edge := range edges {
+		if edge.From == "linux" {
+			t.Fatalf("linux source should not satisfy mac posture: %#v", edge)
+		}
+	}
+}
+
+func TestEffectiveAccessEdgesGrantViaFiltersRouters(t *testing.T) {
+	p := Policy{
+		Grants: []Grant{
+			{Src: []string{"alice@example.com"}, Dst: []string{"10.10.0.0/24"}, IP: []string{"tcp:443"}, Via: []string{"tag:router-a"}},
+		},
+	}
+	devices := []api.Device{
+		{ID: "alice", Owner: "alice@example.com", TailscaleIPs: []string{"100.64.0.1"}},
+		{ID: "router-a", Owner: "ops@example.com", Tags: []string{"tag:router-a"}, TailscaleIPs: []string{"100.64.0.2"}, RoutedSubnets: []string{"10.10.0.0/24"}},
+		{ID: "router-b", Owner: "ops@example.com", Tags: []string{"tag:router-b"}, TailscaleIPs: []string{"100.64.0.3"}, RoutedSubnets: []string{"10.10.0.0/24"}},
+	}
+
+	edges := ResolveEffectiveAccess(p, devices, EdgeOptions{})
+	assertEdge(t, edges, "alice", "router-a", api.AccessScopeHTTP, []string{"443"})
+	for _, edge := range edges {
+		if edge.To == "router-b" {
+			t.Fatalf("via should exclude router-b: %#v", edge)
+		}
+	}
+}
+
+func TestEffectiveAccessEdgesIPRangeMatchesRoutes(t *testing.T) {
+	p := Policy{
+		ACLs: []ACLRule{
+			{Action: "accept", Src: []string{"alice@example.com"}, Dst: []string{"10.10.0.10-10.10.0.20:443"}},
+		},
+	}
+	devices := []api.Device{
+		{ID: "alice", Owner: "alice@example.com", TailscaleIPs: []string{"100.64.0.1"}},
+		{ID: "router", Owner: "ops@example.com", TailscaleIPs: []string{"100.64.0.2"}, RoutedSubnets: []string{"10.10.0.0/24"}},
+	}
+
+	edges := ResolveEffectiveAccess(p, devices, EdgeOptions{})
+	assertEdge(t, edges, "alice", "router", api.AccessScopeHTTP, []string{"443"})
+}
+
+func TestValidateTailscaleConstraintsRejectsInvalidPortsAndVia(t *testing.T) {
+	raw := `{
+		"acls": [
+			{"action": "accept", "src": ["alice@example.com"], "dst": ["tag:web:70000"]}
+		],
+		"grants": [
+			{"src": ["alice@example.com"], "dst": ["tag:web"], "ip": ["tcp:443"], "via": ["group:ops"]}
+		]
+	}`
+
+	err := ValidateTailscaleConstraints(raw)
+	if err == nil {
+		t.Fatal("expected invalid policy error")
+	}
+	if !strings.Contains(err.Error(), "invalid ports") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 

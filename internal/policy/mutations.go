@@ -26,6 +26,8 @@ func ApplyMutation(raw string, mutation api.PolicyMutation) (string, error) {
 		return upsertHostEntry(raw, mutation.Key, mutation.Host)
 	case "upsert-ipset":
 		return upsertIPSetEntry(raw, mutation.Key, mutation.IPSet)
+	case "upsert-posture":
+		return upsertPostureEntry(raw, mutation.Key, mutation.Posture)
 	case "append-ssh":
 		return appendArrayObject(raw, "ssh", mutation.Value)
 	case "upsert-section-json":
@@ -39,6 +41,8 @@ func appendGrantRule(raw string, grant api.GrantDraft) (string, error) {
 	grant.Src = compactStrings(grant.Src)
 	grant.Dst = compactStrings(grant.Dst)
 	grant.IP = compactStrings(grant.IP)
+	grant.SrcPosture = compactStrings(grant.SrcPosture)
+	grant.Via = compactStrings(grant.Via)
 	if len(grant.Src) == 0 {
 		return "", fmt.Errorf("at least one grant source is required")
 	}
@@ -51,6 +55,12 @@ func appendGrantRule(raw string, grant api.GrantDraft) (string, error) {
 	}
 	if len(grant.App) > 0 {
 		payload["app"] = grant.App
+	}
+	if len(grant.SrcPosture) > 0 {
+		payload["srcPosture"] = grant.SrcPosture
+	}
+	if len(grant.Via) > 0 {
+		payload["via"] = grant.Via
 	}
 	return appendParsedObject(raw, "grants", payload)
 }
@@ -83,6 +93,18 @@ func upsertIPSetEntry(raw, key string, targets []string) (string, error) {
 		return "", fmt.Errorf("IP set name and at least one target are required")
 	}
 	return upsertObjectMapEntry(raw, "ipsets", key, targets)
+}
+
+func upsertPostureEntry(raw, key string, assertions []string) (string, error) {
+	key = strings.TrimSpace(key)
+	assertions = compactStrings(assertions)
+	if key == "" || len(assertions) == 0 {
+		return "", fmt.Errorf("posture name and at least one assertion are required")
+	}
+	if !strings.HasPrefix(key, "posture:") {
+		return "", fmt.Errorf("posture name must start with posture:")
+	}
+	return upsertObjectMapEntry(raw, "postures", key, assertions)
 }
 
 func upsertObjectMapEntry(raw, section, key string, value any) (string, error) {

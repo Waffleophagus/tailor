@@ -62,3 +62,36 @@ func TestApplyMutationRemoveACL(t *testing.T) {
 		t.Fatalf("expected ACL removed from output: %s", out)
 	}
 }
+
+func TestApplyMutationAppendGrantPreservesPostureAndVia(t *testing.T) {
+	out, err := ApplyMutation(samplePolicy, api.PolicyMutation{
+		Type: "append-grant",
+		Grant: api.GrantDraft{
+			Src:        []string{"group:eng"},
+			Dst:        []string{"10.10.0.0/24"},
+			IP:         []string{"tcp:443"},
+			SrcPosture: []string{"posture:trusted"},
+			Via:        []string{"tag:router"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("ApplyMutation: %v", err)
+	}
+	if !strings.Contains(out, `"srcPosture":["posture:trusted"]`) || !strings.Contains(out, `"via":["tag:router"]`) {
+		t.Fatalf("expected grant posture and via in output: %s", out)
+	}
+}
+
+func TestApplyMutationUpsertPosture(t *testing.T) {
+	out, err := ApplyMutation(samplePolicy, api.PolicyMutation{
+		Type:    "upsert-posture",
+		Key:     "posture:trusted",
+		Posture: []string{"node:os == 'macos'"},
+	})
+	if err != nil {
+		t.Fatalf("ApplyMutation: %v", err)
+	}
+	if !strings.Contains(out, `"posture:trusted"`) || !strings.Contains(out, `"node:os == 'macos'"`) {
+		t.Fatalf("expected upserted posture in output: %s", out)
+	}
+}

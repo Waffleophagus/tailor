@@ -26,17 +26,20 @@ type LocalAPIStatusResponse struct {
 }
 
 type Device struct {
-	ID            string   `json:"id"`
-	Name          string   `json:"name"`
-	IP            string   `json:"ip"`
-	TailscaleIPs  []string `json:"tailscaleIps"`
-	OS            string   `json:"os"`
-	Online        bool     `json:"online"`
-	Owner         string   `json:"owner"`
-	Tags          []string `json:"tags"`
-	SubnetRouter  bool     `json:"subnetRouter"`
-	RoutedSubnets []string `json:"routedSubnets"`
-	LastSeen      string   `json:"lastSeen,omitempty"`
+	ID            string         `json:"id"`
+	Name          string         `json:"name"`
+	IP            string         `json:"ip"`
+	TailscaleIPs  []string       `json:"tailscaleIps"`
+	OS            string         `json:"os"`
+	Online        bool           `json:"online"`
+	Owner         string         `json:"owner"`
+	Roles         []string       `json:"roles,omitempty"`
+	Tags          []string       `json:"tags"`
+	Shared        bool           `json:"shared,omitempty"`
+	SubnetRouter  bool           `json:"subnetRouter"`
+	RoutedSubnets []string       `json:"routedSubnets"`
+	PostureAttrs  map[string]any `json:"postureAttrs,omitempty"`
+	LastSeen      string         `json:"lastSeen,omitempty"`
 }
 
 type EdgeKind string
@@ -114,15 +117,15 @@ type SetupGrantRequest struct {
 }
 
 type SetupGrantResponse struct {
-	Tailnet            string `json:"tailnet,omitempty"`
-	AppCapability      string `json:"appCapability,omitempty"`
-	HasAppCapabilityGrant bool `json:"hasAppCapabilityGrant"`
-	CallerRole         string `json:"callerRole,omitempty"`
-	CanEditPolicy      bool   `json:"canEditPolicy"`
-	BootstrapActive    bool   `json:"bootstrapActive,omitempty"`
-	BootstrapExpiresAt string `json:"bootstrapExpiresAt,omitempty"`
-	StatusMessage      string `json:"statusMessage,omitempty"`
-	SetupGrantSnippet  string `json:"setupGrantSnippet,omitempty"`
+	Tailnet               string `json:"tailnet,omitempty"`
+	AppCapability         string `json:"appCapability,omitempty"`
+	HasAppCapabilityGrant bool   `json:"hasAppCapabilityGrant"`
+	CallerRole            string `json:"callerRole,omitempty"`
+	CanEditPolicy         bool   `json:"canEditPolicy"`
+	BootstrapActive       bool   `json:"bootstrapActive,omitempty"`
+	BootstrapExpiresAt    string `json:"bootstrapExpiresAt,omitempty"`
+	StatusMessage         string `json:"statusMessage,omitempty"`
+	SetupGrantSnippet     string `json:"setupGrantSnippet,omitempty"`
 }
 
 type PolicyResponse struct {
@@ -168,17 +171,20 @@ type PolicyDraftResponse struct {
 }
 
 type ACLDraft struct {
-	Action string   `json:"action"`
-	Src    []string `json:"src"`
-	Dst    []string `json:"dst"`
-	Proto  string   `json:"proto,omitempty"`
+	Action     string   `json:"action"`
+	Src        []string `json:"src"`
+	Dst        []string `json:"dst"`
+	Proto      string   `json:"proto,omitempty"`
+	SrcPosture []string `json:"srcPosture,omitempty"`
 }
 
 type GrantDraft struct {
-	Src []string       `json:"src"`
-	Dst []string       `json:"dst"`
-	IP  []string       `json:"ip,omitempty"`
-	App map[string]any `json:"app,omitempty"`
+	Src        []string       `json:"src"`
+	Dst        []string       `json:"dst"`
+	IP         []string       `json:"ip,omitempty"`
+	App        map[string]any `json:"app,omitempty"`
+	SrcPosture []string       `json:"srcPosture,omitempty"`
+	Via        []string       `json:"via,omitempty"`
 }
 
 type PolicyMutation struct {
@@ -190,6 +196,7 @@ type PolicyMutation struct {
 	Grant   GrantDraft      `json:"grant,omitempty"`
 	Host    string          `json:"host,omitempty"`
 	IPSet   []string        `json:"ipSet,omitempty"`
+	Posture []string        `json:"posture,omitempty"`
 	Members []string        `json:"members,omitempty"`
 	Owners  []string        `json:"owners,omitempty"`
 	Value   json.RawMessage `json:"value,omitempty"`

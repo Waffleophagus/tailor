@@ -392,16 +392,25 @@ components:
           type: boolean
         owner:
           type: string
+        roles:
+          type: array
+          items:
+            type: string
         tags:
           type: array
           items:
             type: string
+        shared:
+          type: boolean
         subnetRouter:
           type: boolean
         routedSubnets:
           type: array
           items:
             type: string
+        postureAttrs:
+          type: object
+          additionalProperties: true
         lastSeen:
           type: string
     EdgeKind:
@@ -486,7 +495,7 @@ components:
           type: string
     CloudAuthStatusResponse:
       type: object
-      required: [authenticated, hasPolicy]
+      required: [authenticated, hasPolicy, canEditPolicy]
       properties:
         authenticated:
           type: boolean
@@ -497,6 +506,24 @@ components:
         devMode:
           type: boolean
           description: True when authenticated with the in-memory demo tailnet key.
+        callerRole:
+          type: string
+        canEditPolicy:
+          type: boolean
+        hasAppCapabilityGrant:
+          type: boolean
+        appCapability:
+          type: string
+        needsSetupGrant:
+          type: boolean
+        bootstrapActive:
+          type: boolean
+        bootstrapExpiresAt:
+          type: string
+        statusMessage:
+          type: string
+        setupGrantSnippet:
+          type: string
     PolicyResponse:
       type: object
       required: [tailnet, hujson]
@@ -589,6 +616,10 @@ components:
             type: string
         proto:
           type: string
+        srcPosture:
+          type: array
+          items:
+            type: string
     PolicyDraftResponse:
       type: object
       required: [tailnet, rule, hujson]

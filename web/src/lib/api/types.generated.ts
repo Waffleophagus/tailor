@@ -6,6 +6,7 @@ interface ACLDraft {
     src: string[];
     dst: string[];
     proto?: string;
+    srcPosture?: string[];
 }
 
 // From api/types.go
@@ -108,9 +109,13 @@ interface Device {
     os: string;
     online: boolean;
     owner: string;
+    roles?: string[];
     tags: string[];
+    shared?: boolean;
     subnetRouter: boolean;
     routedSubnets: string[];
+    // empty interface{} type, falling back to unknown
+    postureAttrs?: Record<string, unknown> | null;
     lastSeen?: string;
 }
 
@@ -148,6 +153,8 @@ interface GrantDraft {
     ip?: string[];
     // empty interface{} type, falling back to unknown
     app?: Record<string, unknown> | null;
+    srcPosture?: string[];
+    via?: string[];
 }
 
 // From api/types.go
@@ -232,6 +239,7 @@ interface PolicyMutation {
     grant?: GrantDraft;
     host?: string;
     ipSet?: string[];
+    posture?: string[];
     members?: string[];
     owners?: string[];
     // this is likely an enum in an external package "encoding/json.RawMessage"
