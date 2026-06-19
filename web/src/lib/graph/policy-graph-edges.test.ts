@@ -19,6 +19,23 @@ describe('renderPolicyEdge', () => {
 			state: 'added'
 		});
 	});
+
+	it('preserves service destinations and policy provenance on metadata-backed edges', () => {
+		const edge = sampleEdge({
+			id: 'alice:svc:web',
+			to: 'svc:web',
+			accessScope: 'limited',
+			protocols: ['tcp'],
+			ports: ['443'],
+			policyRefs: [{ section: 'grants', index: 0, src: 'autogroup:member', dst: 'svc:web' }],
+			perspectives: ['alice@example.com']
+		});
+
+		expect(renderPolicyEdge(edge, 'changed')).toEqual({
+			...edge,
+			state: 'changed'
+		});
+	});
 });
 
 describe('evaluationEdges', () => {
@@ -61,6 +78,38 @@ describe('evaluationEdges', () => {
 			['added', 'added'],
 			['changed', 'changed']
 		]);
+	});
+
+	it('draft mode keeps posture and via-derived edge metadata intact', () => {
+		const postureViaEdge = sampleEdge({
+			id: 'trusted:router-a',
+			from: 'trusted',
+			to: 'router-a',
+			accessScope: 'http',
+			ports: ['443'],
+			policyRefs: [
+				{
+					section: 'grants',
+					index: 2,
+					src: 'autogroup:member',
+					dst: '10.10.0.0/24'
+				}
+			],
+			perspectives: ['autogroup:member']
+		});
+		const edges = evaluationEdges(
+			{
+				...evaluation,
+				unchanged: [],
+				added: [{ edge: postureViaEdge, state: 'added' }],
+				removed: [],
+				changed: []
+			},
+			'draft',
+			true
+		);
+
+		expect(edges).toEqual([{ ...postureViaEdge, state: 'added' }]);
 	});
 
 	it('current mode with draft marks removed/changed appropriately', () => {

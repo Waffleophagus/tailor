@@ -462,7 +462,7 @@ func (s *Service) TopologyDevicesLogged(ctx context.Context, operation string) (
 
 func (s *Service) enrichTopologyFromCloud(ctx context.Context, devices []api.Device) []api.Device {
 	if status := s.cloudAPI.Status(); !status.Authenticated || status.DevMode {
-		return devices
+		return s.enrichTopologyFromLocalServices(ctx, devices)
 	}
 	cloudDevices, err := s.cloudAPI.Devices(ctx)
 	if err != nil {
@@ -483,6 +483,15 @@ func (s *Service) enrichTopologyFromCloud(ctx context.Context, devices []api.Dev
 		return devices
 	}
 	return append(devices, serviceDevicesFromCloud(services)...)
+}
+
+func (s *Service) enrichTopologyFromLocalServices(ctx context.Context, devices []api.Device) []api.Device {
+	services, err := s.localAPI.VIPServiceDevices(ctx)
+	if err != nil {
+		s.logger.Debug("localapi vip services unavailable", "error", err.Error())
+		return devices
+	}
+	return append(devices, services...)
 }
 
 type postureAttributeClient interface {

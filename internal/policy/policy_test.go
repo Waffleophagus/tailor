@@ -429,6 +429,80 @@ func TestEffectiveAccessEdgesPostureFiltersSources(t *testing.T) {
 	}
 }
 
+func TestEffectiveAccessEdgesDefaultSrcPostureAppliesToACLGrantAndSSH(t *testing.T) {
+	p := Policy{
+		Postures: map[string][]string{
+			"posture:trusted": {"custom:trusted == true"},
+		},
+		DefaultSrcPosture: []string{"posture:trusted"},
+		ACLs: []ACLRule{
+			{Action: "accept", Src: []string{"autogroup:member"}, Dst: []string{"tag:web:443"}},
+		},
+		Grants: []Grant{
+			{Src: []string{"autogroup:member"}, Dst: []string{"tag:db"}, IP: []string{"tcp:5432"}},
+		},
+		SSH: []SSHRule{
+			{Action: "accept", Src: []string{"autogroup:member"}, Dst: []string{"tag:ssh"}, Users: []string{"root"}},
+		},
+	}
+	devices := []api.Device{
+		{ID: "trusted", Owner: "alice@example.com", PostureAttrs: map[string]any{"custom:trusted": true}, TailscaleIPs: []string{"100.64.0.1"}},
+		{ID: "untrusted", Owner: "bob@example.com", PostureAttrs: map[string]any{"custom:trusted": false}, TailscaleIPs: []string{"100.64.0.2"}},
+		{ID: "web", Tags: []string{"tag:web"}, TailscaleIPs: []string{"100.64.0.3"}},
+		{ID: "db", Tags: []string{"tag:db"}, TailscaleIPs: []string{"100.64.0.4"}},
+		{ID: "ssh", Tags: []string{"tag:ssh"}, TailscaleIPs: []string{"100.64.0.5"}},
+	}
+
+	edges := ResolveEffectiveAccess(p, devices, EdgeOptions{})
+	assertEdge(t, edges, "trusted", "web", api.AccessScopeHTTP, []string{"443"})
+	assertEdge(t, edges, "trusted", "db", api.AccessScopeLimited, []string{"5432"})
+	assertEdge(t, edges, "trusted", "ssh", api.AccessScopeSSH, []string{"22"})
+	for _, edge := range edges {
+		if edge.From == "untrusted" {
+			t.Fatalf("default posture should exclude untrusted source: %#v", edge)
+		}
+	}
+}
+
+func TestEffectiveAccessEdgesRuleSrcPostureOverridesDefault(t *testing.T) {
+	p := Policy{
+		Postures: map[string][]string{
+			"posture:default": {"custom:tier == 'prod'"},
+			"posture:rule":    {"custom:tier == 'dev'"},
+		},
+		DefaultSrcPosture: []string{"posture:default"},
+		Grants: []Grant{
+			{Src: []string{"autogroup:member"}, Dst: []string{"tag:db"}, IP: []string{"tcp:5432"}, SrcPosture: []string{"posture:rule"}},
+		},
+	}
+	devices := []api.Device{
+		{ID: "default-only", Owner: "alice@example.com", PostureAttrs: map[string]any{"custom:tier": "prod"}, TailscaleIPs: []string{"100.64.0.1"}},
+		{ID: "rule-match", Owner: "bob@example.com", PostureAttrs: map[string]any{"custom:tier": "dev"}, TailscaleIPs: []string{"100.64.0.2"}},
+		{ID: "db", Tags: []string{"tag:db"}, TailscaleIPs: []string{"100.64.0.3"}},
+	}
+
+	edges := ResolveEffectiveAccess(p, devices, EdgeOptions{})
+	assertEdge(t, edges, "rule-match", "db", api.AccessScopeLimited, []string{"5432"})
+	for _, edge := range edges {
+		if edge.From == "default-only" {
+			t.Fatalf("rule posture should override default posture: %#v", edge)
+		}
+	}
+}
+
+func TestDeviceMatchesPostureAssertionSetOperators(t *testing.T) {
+	device := api.Device{PostureAttrs: map[string]any{"custom:tier": "prod"}}
+	if !deviceMatchesPostureAssertion(device, "custom:tier IS SET") {
+		t.Fatal("expected IS SET to match an existing posture attribute")
+	}
+	if deviceMatchesPostureAssertion(device, "custom:missing IS SET") {
+		t.Fatal("expected IS SET to fail for a missing posture attribute")
+	}
+	if deviceMatchesPostureAssertion(device, "custom:missing NOT SET") {
+		t.Fatal("NOT SET should fail closed instead of granting access")
+	}
+}
+
 func TestEffectiveAccessEdgesPostureVersionComparisonsAndOr(t *testing.T) {
 	p := Policy{
 		Postures: map[string][]string{
@@ -522,6 +596,74 @@ func TestEffectiveAccessEdgesPostureUnsetNeverMatches(t *testing.T) {
 	}
 }
 
+func TestEffectiveAccessEdgesArrayValuedPostureAttrsAreUnsupported(t *testing.T) {
+	for _, assertion := range []string{
+		"custom:roles == 'admin'",
+		"custom:roles != 'dev'",
+		"custom:roles IN ['admin']",
+		"custom:roles NOT IN ['dev']",
+	} {
+		p := Policy{
+			Postures: map[string][]string{"posture:test": {assertion}},
+			Grants: []Grant{
+				{Src: []string{"autogroup:member"}, Dst: []string{"tag:prod"}, IP: []string{"tcp:443"}, SrcPosture: []string{"posture:test"}},
+			},
+		}
+		devices := []api.Device{
+			{ID: "array", Owner: "alice@example.com", PostureAttrs: map[string]any{"custom:roles": []any{"admin"}}, TailscaleIPs: []string{"100.64.0.1"}},
+			{ID: "prod", Owner: "ops@example.com", Tags: []string{"tag:prod"}, TailscaleIPs: []string{"100.64.0.3"}},
+		}
+
+		edges := ResolveEffectiveAccess(p, devices, EdgeOptions{})
+		if len(edges) != 0 {
+			t.Fatalf("%s should not match array-valued attrs: %#v", assertion, edges)
+		}
+	}
+}
+
+func TestEffectiveAccessEdgesPostureScalarTypeMismatchDoesNotMatch(t *testing.T) {
+	for _, assertion := range []string{
+		"custom:score == '90'",
+		"custom:score IN ['90']",
+		"custom:enabled == 'true'",
+		"custom:enabled IN ['true']",
+	} {
+		p := Policy{
+			Postures: map[string][]string{"posture:test": {assertion}},
+			Grants: []Grant{
+				{Src: []string{"autogroup:member"}, Dst: []string{"tag:prod"}, IP: []string{"tcp:443"}, SrcPosture: []string{"posture:test"}},
+			},
+		}
+		devices := []api.Device{
+			{ID: "typed", Owner: "alice@example.com", PostureAttrs: map[string]any{"custom:score": 90.0, "custom:enabled": true}, TailscaleIPs: []string{"100.64.0.1"}},
+			{ID: "prod", Owner: "ops@example.com", Tags: []string{"tag:prod"}, TailscaleIPs: []string{"100.64.0.3"}},
+		}
+
+		edges := ResolveEffectiveAccess(p, devices, EdgeOptions{})
+		if len(edges) != 0 {
+			t.Fatalf("%s should not match mismatched scalar types: %#v", assertion, edges)
+		}
+	}
+}
+
+func TestEffectiveAccessEdgesSSHSkipsEmptyUsersAndNonAcceptActions(t *testing.T) {
+	p := Policy{
+		SSH: []SSHRule{
+			{Action: "accept", Src: []string{"alice@example.com"}, Dst: []string{"tag:server"}, Users: nil},
+			{Action: "deny", Src: []string{"alice@example.com"}, Dst: []string{"tag:server"}, Users: []string{"root"}},
+		},
+	}
+	devices := []api.Device{
+		{ID: "alice", Owner: "alice@example.com", TailscaleIPs: []string{"100.64.0.1"}},
+		{ID: "server", Tags: []string{"tag:server"}, TailscaleIPs: []string{"100.64.0.2"}},
+	}
+
+	edges := ResolveEffectiveAccess(p, devices, EdgeOptions{})
+	if len(edges) != 0 {
+		t.Fatalf("ssh rules without users or supported action should not create edges: %#v", edges)
+	}
+}
+
 func TestEvaluateDraftReportsParsedButUnsupportedSections(t *testing.T) {
 	raw := `{
 		"acls": [],
@@ -562,6 +704,29 @@ func TestEffectiveAccessEdgesGrantViaFiltersRouters(t *testing.T) {
 	}
 }
 
+func TestEffectiveAccessEdgesGrantViaAllowsAnyMatchingTag(t *testing.T) {
+	p := Policy{
+		Grants: []Grant{
+			{Src: []string{"alice@example.com"}, Dst: []string{"10.10.0.0/24"}, IP: []string{"tcp:443"}, Via: []string{"tag:router-a", "tag:router-b"}},
+		},
+	}
+	devices := []api.Device{
+		{ID: "alice", Owner: "alice@example.com", TailscaleIPs: []string{"100.64.0.1"}},
+		{ID: "router-a", Tags: []string{"tag:router-a"}, TailscaleIPs: []string{"100.64.0.2"}, RoutedSubnets: []string{"10.10.0.0/24"}},
+		{ID: "router-b", Tags: []string{"tag:router-b"}, TailscaleIPs: []string{"100.64.0.3"}, RoutedSubnets: []string{"10.10.0.0/24"}},
+		{ID: "router-c", Tags: []string{"tag:router-c"}, TailscaleIPs: []string{"100.64.0.4"}, RoutedSubnets: []string{"10.10.0.0/24"}},
+	}
+
+	edges := ResolveEffectiveAccess(p, devices, EdgeOptions{})
+	assertEdge(t, edges, "alice", "router-a", api.AccessScopeHTTP, []string{"443"})
+	assertEdge(t, edges, "alice", "router-b", api.AccessScopeHTTP, []string{"443"})
+	for _, edge := range edges {
+		if edge.To == "router-c" {
+			t.Fatalf("via should exclude routers without a matching tag: %#v", edge)
+		}
+	}
+}
+
 func TestEffectiveAccessEdgesIPRangeMatchesRoutes(t *testing.T) {
 	p := Policy{
 		ACLs: []ACLRule{
@@ -575,6 +740,51 @@ func TestEffectiveAccessEdgesIPRangeMatchesRoutes(t *testing.T) {
 
 	edges := ResolveEffectiveAccess(p, devices, EdgeOptions{})
 	assertEdge(t, edges, "alice", "router", api.AccessScopeHTTP, []string{"443"})
+}
+
+func TestEffectiveAccessEdgesIPRangeMatchesDirectIPsAndRejectsInvalidRanges(t *testing.T) {
+	p := Policy{
+		ACLs: []ACLRule{
+			{Action: "accept", Src: []string{"alice@example.com"}, Dst: []string{"100.64.0.10-100.64.0.20:443"}},
+			{Action: "accept", Src: []string{"alice@example.com"}, Dst: []string{"100.64.0.20-100.64.0.10:8443"}},
+			{Action: "accept", Src: []string{"alice@example.com"}, Dst: []string{"100.64.0.1-fd7a:115c:a1e0::1:9443"}},
+		},
+	}
+	devices := []api.Device{
+		{ID: "alice", Owner: "alice@example.com", TailscaleIPs: []string{"100.64.0.1"}},
+		{ID: "target", Owner: "ops@example.com", TailscaleIPs: []string{"100.64.0.15"}},
+	}
+
+	edges := ResolveEffectiveAccess(p, devices, EdgeOptions{})
+	assertEdge(t, edges, "alice", "target", api.AccessScopeHTTP, []string{"443"})
+	for _, edge := range edges {
+		if edge.To == "target" && (containsString(edge.Ports, "8443") || containsString(edge.Ports, "9443")) {
+			t.Fatalf("invalid ranges should not match target ports: %#v", edge)
+		}
+	}
+}
+
+func TestEffectiveAccessEdgesAutogroupInternetMatchesPublicRoutesOnly(t *testing.T) {
+	p := Policy{
+		ACLs: []ACLRule{
+			{Action: "accept", Src: []string{"alice@example.com"}, Dst: []string{"autogroup:internet:443"}},
+		},
+	}
+	devices := []api.Device{
+		{ID: "alice", Owner: "alice@example.com", TailscaleIPs: []string{"100.64.0.1"}},
+		{ID: "exit", Tags: []string{"tag:exit"}, TailscaleIPs: []string{"100.64.0.2"}, RoutedSubnets: []string{"0.0.0.0/0"}},
+		{ID: "private", Tags: []string{"tag:private"}, TailscaleIPs: []string{"100.64.0.3"}, RoutedSubnets: []string{"10.0.0.0/8"}},
+		{ID: "ipv6", Tags: []string{"tag:ipv6"}, TailscaleIPs: []string{"100.64.0.4"}, RoutedSubnets: []string{"2000::/3"}},
+	}
+
+	edges := ResolveEffectiveAccess(p, devices, EdgeOptions{})
+	assertEdge(t, edges, "alice", "exit", api.AccessScopeHTTP, []string{"443"})
+	assertEdge(t, edges, "alice", "ipv6", api.AccessScopeHTTP, []string{"443"})
+	for _, edge := range edges {
+		if edge.To == "private" {
+			t.Fatalf("private-only route should not match autogroup:internet: %#v", edge)
+		}
+	}
 }
 
 func TestValidateTailscaleConstraintsRejectsInvalidPortsAndVia(t *testing.T) {
@@ -592,6 +802,22 @@ func TestValidateTailscaleConstraintsRejectsInvalidPortsAndVia(t *testing.T) {
 		t.Fatal("expected invalid policy error")
 	}
 	if !strings.Contains(err.Error(), "invalid ports") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateTailscaleConstraintsRejectsInvalidViaAfterValidPorts(t *testing.T) {
+	raw := `{
+		"grants": [
+			{"src": ["alice@example.com"], "dst": ["tag:web"], "ip": ["tcp:443"], "via": ["group:ops"]}
+		]
+	}`
+
+	err := ValidateTailscaleConstraints(raw)
+	if err == nil {
+		t.Fatal("expected invalid policy error")
+	}
+	if !strings.Contains(err.Error(), `via "group:ops" must be a tag selector`) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -836,4 +1062,13 @@ func equalStrings(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }

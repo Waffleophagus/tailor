@@ -258,7 +258,8 @@ export const policyMutationSchema = z.object({
 			action: z.string().optional(),
 			src: z.array(z.string()).optional(),
 			dst: z.array(z.string()).optional(),
-			proto: z.string().optional()
+			proto: z.string().optional(),
+			srcPosture: z.array(z.string()).optional()
 		})
 		.optional(),
 	grant: z

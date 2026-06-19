@@ -946,6 +946,9 @@ func deviceMatchesPostureAssertion(device api.Device, assertion string) bool {
 			if !ok {
 				return false
 			}
+			if !postureScalarSupported(got) {
+				return false
+			}
 			switch strings.TrimSpace(op) {
 			case "==":
 				want, ok := parsePostureLiteral(rawWant)
@@ -1131,6 +1134,22 @@ func postureValuesEqual(left, right any) bool {
 	if leftNumber, ok := postureNumber(left); ok {
 		rightNumber, ok := postureNumber(right)
 		return ok && leftNumber == rightNumber
+	}
+	return false
+}
+
+func postureScalarSupported(value any) bool {
+	// Tailscale documents posture attribute values as string, number, or bool.
+	// Array/object values are treated as unsupported so negative comparisons do
+	// not accidentally match just because scalar equality failed.
+	if _, ok := postureString(value); ok {
+		return true
+	}
+	if _, ok := value.(bool); ok {
+		return true
+	}
+	if _, ok := postureNumber(value); ok {
+		return true
 	}
 	return false
 }

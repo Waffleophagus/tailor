@@ -95,6 +95,17 @@ func (c *Client) StatusLogged(ctx context.Context, operation string) ([]api.Devi
 	return devices, err
 }
 
+// VIPServiceDevices returns service nodes from the stable service-host
+// capability in LocalAPI status. This only includes services the local node is
+// approved to host; LocalAPI status does not expose service tag metadata.
+func (c *Client) VIPServiceDevices(ctx context.Context) ([]api.Device, error) {
+	status, err := c.localClient.StatusWithoutPeers(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrUnavailable, err)
+	}
+	return VIPServiceDevicesFromIPNStatus(status), nil
+}
+
 func (c *Client) TailnetName(ctx context.Context) (string, error) {
 	status, err := c.localClient.StatusWithoutPeers(ctx)
 	if err != nil {
@@ -184,6 +195,54 @@ func DevicesFromIPNStatus(status *ipnstate.Status) []api.Device {
 		devices = append(devices, deviceFromPeerStatus(peers[key], status.User))
 	}
 
+	return devices
+}
+
+func VIPServiceDevicesFromIPNStatus(status *ipnstate.Status) []api.Device {
+	if status == nil || status.Self == nil || len(status.Self.CapMap) == 0 {
+		return nil
+	}
+	mappings, err := tailcfg.UnmarshalNodeCapJSON[tailcfg.ServiceIPMappings](status.Self.CapMap, tailcfg.NodeAttrServiceHost)
+	if err != nil || len(mappings) == 0 {
+		return nil
+	}
+	merged := tailcfg.ServiceIPMappings{}
+	for _, mapping := range mappings {
+		for name, addrs := range mapping {
+			merged[name] = addrs
+		}
+	}
+	names := make([]string, 0, len(merged))
+	for name := range merged {
+		if strings.TrimSpace(name.String()) != "" {
+			names = append(names, name.String())
+		}
+	}
+	sort.Strings(names)
+
+	devices := make([]api.Device, 0, len(names))
+	for _, name := range names {
+		addrs := merged[tailcfg.ServiceName(name)]
+		tailscaleIPs := make([]string, 0, len(addrs))
+		for _, addr := range addrs {
+			if addr.IsValid() {
+				tailscaleIPs = append(tailscaleIPs, addr.String())
+			}
+		}
+		ip := ""
+		if len(tailscaleIPs) > 0 {
+			ip = tailscaleIPs[0]
+		}
+		devices = append(devices, api.Device{
+			ID:           name,
+			Kind:         "service",
+			Name:         name,
+			IP:           ip,
+			TailscaleIPs: tailscaleIPs,
+			Online:       true,
+			Tags:         []string{},
+		})
+	}
 	return devices
 }
 

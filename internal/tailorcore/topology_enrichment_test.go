@@ -14,13 +14,15 @@ func TestEnrichDevicesFromCloudUsesExternalAndPostureMetadata(t *testing.T) {
 	devices := []api.Device{{
 		ID:           "local",
 		Owner:        "alice@example.com",
-		TailscaleIPs: []string{"100.64.0.1"},
+		TailscaleIPs: []string{"100.64.0.1", "fd7a:115c:a1e0::1"},
+		PostureAttrs: map[string]any{"custom:existing": "kept"},
 	}}
 	enrichDevicesFromCloud(devices, []cloudapi.Device{{
-		Addresses:     []string{"100.64.0.1"},
-		ClientVersion: "1.94.2",
-		OS:            "linux",
-		IsExternal:    true,
+		Addresses:       []string{"fd7a:115c:a1e0::1"},
+		ClientVersion:   "1.94.2",
+		OS:              "linux",
+		IsExternal:      true,
+		PostureIdentity: map[string]any{"serial": "abc123"},
 	}})
 
 	if !devices[0].Shared {
@@ -28,6 +30,13 @@ func TestEnrichDevicesFromCloudUsesExternalAndPostureMetadata(t *testing.T) {
 	}
 	if devices[0].PostureAttrs["node:tsVersion"] != "1.94.2" || devices[0].PostureAttrs["node:os"] != "linux" {
 		t.Fatalf("posture attrs = %#v", devices[0].PostureAttrs)
+	}
+	if devices[0].PostureAttrs["custom:existing"] != "kept" {
+		t.Fatalf("existing posture attr was not preserved: %#v", devices[0].PostureAttrs)
+	}
+	identity, ok := devices[0].PostureAttrs["node:postureIdentity"].(map[string]any)
+	if !ok || identity["serial"] != "abc123" {
+		t.Fatalf("posture identity = %#v", devices[0].PostureAttrs["node:postureIdentity"])
 	}
 }
 
@@ -53,10 +62,24 @@ func TestEnrichDeviceRolesFromCloudUsersUsesRealUserRoleMetadata(t *testing.T) {
 	}
 }
 
+func TestEnrichDeviceRolesFromCloudUsersMergesWithoutDuplicates(t *testing.T) {
+	devices := []api.Device{
+		{ID: "admin-laptop", Owner: "alice@example.com", Roles: []string{"Admin"}, TailscaleIPs: []string{"100.64.0.1"}},
+	}
+	enrichDeviceRolesFromCloudUsers(devices, []cloudapi.User{
+		{LoginName: "alice@example.com", Role: "admin"},
+	})
+
+	if len(devices[0].Roles) != 1 || devices[0].Roles[0] != "Admin" {
+		t.Fatalf("roles = %#v, want existing role without duplicate", devices[0].Roles)
+	}
+}
+
 func TestEnrichDevicePostureAttributesUsesCloudAttributeEndpoint(t *testing.T) {
 	devices := []api.Device{{
 		ID:           "local",
 		TailscaleIPs: []string{"100.64.0.1"},
+		PostureAttrs: map[string]any{"custom:existing": "kept"},
 	}}
 	client := fakePostureAttributeClient{
 		attrs: map[string]cloudapi.DevicePostureAttributes{
@@ -70,6 +93,9 @@ func TestEnrichDevicePostureAttributesUsesCloudAttributeEndpoint(t *testing.T) {
 
 	if devices[0].PostureAttrs["custom:tier"] != "prod" || devices[0].PostureAttrs["node:osVersion"] != "6.8.0" {
 		t.Fatalf("posture attrs = %#v", devices[0].PostureAttrs)
+	}
+	if devices[0].PostureAttrs["custom:existing"] != "kept" {
+		t.Fatalf("existing posture attr was not preserved: %#v", devices[0].PostureAttrs)
 	}
 }
 
@@ -85,12 +111,34 @@ func (f fakePostureAttributeClient) DevicePostureAttributes(_ context.Context, d
 	return attrs, nil
 }
 
+func TestEnrichDevicePostureAttributesContinuesAfterDeviceError(t *testing.T) {
+	devices := []api.Device{
+		{ID: "missing", TailscaleIPs: []string{"100.64.0.1"}},
+		{ID: "matched", TailscaleIPs: []string{"100.64.0.2"}},
+	}
+	client := fakePostureAttributeClient{
+		attrs: map[string]cloudapi.DevicePostureAttributes{
+			"n2": {Attributes: map[string]any{"custom:tier": "prod"}},
+		},
+	}
+	enrichDevicePostureAttributes(context.Background(), client, devices, []cloudapi.Device{
+		{Addresses: []string{"100.64.0.1"}, NodeID: "n1"},
+		{Addresses: []string{"100.64.0.2"}, NodeID: "n2"},
+	}, slog.Default())
+
+	if devices[0].PostureAttrs != nil {
+		t.Fatalf("missing device attrs = %#v, want nil", devices[0].PostureAttrs)
+	}
+	if devices[1].PostureAttrs["custom:tier"] != "prod" {
+		t.Fatalf("matched device attrs = %#v", devices[1].PostureAttrs)
+	}
+}
+
 func TestServiceDevicesFromCloudCreatesServiceNodes(t *testing.T) {
-	devices := serviceDevicesFromCloud([]cloudapi.VIPService{{
-		Name:  "svc:web",
-		Addrs: []string{"100.100.0.1", "fd7a:115c:a1e0::1"},
-		Tags:  []string{"tag:web"},
-	}})
+	devices := serviceDevicesFromCloud([]cloudapi.VIPService{
+		{Name: " ", Addrs: []string{"100.100.0.9"}},
+		{Name: "svc:web", Addrs: []string{"100.100.0.1", "fd7a:115c:a1e0::1"}, Tags: []string{"tag:web"}},
+	})
 
 	if len(devices) != 1 {
 		t.Fatalf("got %d devices, want 1", len(devices))
