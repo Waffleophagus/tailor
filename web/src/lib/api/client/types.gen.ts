@@ -28,6 +28,7 @@ export type LocalApiStatusResponse = {
 
 export type Device = {
     id: string;
+    kind?: 'device' | 'service';
     name: string;
     ip: string;
     tailscaleIps: Array<string>;

@@ -261,6 +261,150 @@ func TestEffectiveAccessEdgesRoleAutogroupUsesDeviceRoles(t *testing.T) {
 	}
 }
 
+func TestEffectiveAccessEdgesRoleAutogroupWithoutMetadataDoesNotMatchMembers(t *testing.T) {
+	p := Policy{
+		ACLs: []ACLRule{
+			{Action: "accept", Src: []string{"autogroup:network-admin"}, Dst: []string{"tag:prod:443"}},
+		},
+	}
+	devices := []api.Device{
+		{ID: "member", Owner: "member@example.com", TailscaleIPs: []string{"100.64.0.2"}},
+		{ID: "prod", Owner: "ops@example.com", Tags: []string{"tag:prod"}, TailscaleIPs: []string{"100.64.0.3"}},
+	}
+
+	edges := ResolveEffectiveAccess(p, devices, EdgeOptions{})
+	if len(edges) != 0 {
+		t.Fatalf("role autogroup without role metadata should not match all members: %#v", edges)
+	}
+}
+
+func TestEffectiveAccessEdgesRoleAutogroupDoesNotMatchTaggedDevices(t *testing.T) {
+	p := Policy{
+		ACLs: []ACLRule{
+			{Action: "accept", Src: []string{"autogroup:admin"}, Dst: []string{"tag:prod:443"}},
+		},
+	}
+	devices := []api.Device{
+		{ID: "tagged-admin-host", Owner: "admin@example.com", Roles: []string{"admin"}, Tags: []string{"tag:ci"}, TailscaleIPs: []string{"100.64.0.1"}},
+		{ID: "prod", Owner: "ops@example.com", Tags: []string{"tag:prod"}, TailscaleIPs: []string{"100.64.0.3"}},
+	}
+
+	edges := ResolveEffectiveAccess(p, devices, EdgeOptions{})
+	if len(edges) != 0 {
+		t.Fatalf("tagged device should not match role autogroup: %#v", edges)
+	}
+}
+
+func TestEffectiveAccessEdgesSharedAutogroupUsesSharedMetadata(t *testing.T) {
+	p := Policy{
+		ACLs: []ACLRule{
+			{Action: "accept", Src: []string{"autogroup:shared"}, Dst: []string{"tag:prod:443"}},
+		},
+	}
+	devices := []api.Device{
+		{ID: "shared", Owner: "external@example.com", Shared: true, TailscaleIPs: []string{"100.64.0.2"}},
+		{ID: "member", Owner: "member@example.com", TailscaleIPs: []string{"100.64.0.4"}},
+		{ID: "prod", Owner: "ops@example.com", Tags: []string{"tag:prod"}, TailscaleIPs: []string{"100.64.0.3"}},
+	}
+
+	edges := ResolveEffectiveAccess(p, devices, EdgeOptions{})
+	assertEdge(t, edges, "shared", "prod", api.AccessScopeHTTP, []string{"443"})
+	for _, edge := range edges {
+		if edge.From == "member" {
+			t.Fatalf("non-shared member should not match autogroup:shared: %#v", edge)
+		}
+	}
+}
+
+func TestEffectiveAccessEdgesServiceSelectorUsesServiceNode(t *testing.T) {
+	p := Policy{
+		Grants: []Grant{
+			{Src: []string{"autogroup:member"}, Dst: []string{"svc:web"}, IP: []string{"tcp:443"}},
+		},
+	}
+	devices := []api.Device{
+		{ID: "alice", Owner: "alice@example.com", TailscaleIPs: []string{"100.64.0.2"}},
+		{ID: "svc:web", Kind: "service", Name: "svc:web", TailscaleIPs: []string{"100.100.0.1"}},
+	}
+
+	edges := ResolveEffectiveAccess(p, devices, EdgeOptions{})
+	assertEdge(t, edges, "alice", "svc:web", api.AccessScopeHTTP, []string{"443"})
+}
+
+func TestEffectiveAccessEdgesTaggedServiceDoesNotBecomeSource(t *testing.T) {
+	p := Policy{
+		ACLs: []ACLRule{
+			{Action: "accept", Src: []string{"tag:web"}, Dst: []string{"tag:prod:443"}},
+		},
+	}
+	devices := []api.Device{
+		{ID: "svc:web", Kind: "service", Name: "svc:web", Tags: []string{"tag:web"}, TailscaleIPs: []string{"100.100.0.1"}},
+		{ID: "prod", Owner: "ops@example.com", Tags: []string{"tag:prod"}, TailscaleIPs: []string{"100.64.0.3"}},
+	}
+
+	edges := ResolveEffectiveAccess(p, devices, EdgeOptions{})
+	if len(edges) != 0 {
+		t.Fatalf("service node should not resolve as an access source: %#v", edges)
+	}
+}
+
+func TestEffectiveAccessEdgesSSHRulesMaterializeSSHAccess(t *testing.T) {
+	p := Policy{
+		SSH: []SSHRule{
+			{Action: "check", Src: []string{"alice@example.com"}, Dst: []string{"tag:server"}, Users: []string{"autogroup:nonroot"}},
+		},
+	}
+	devices := []api.Device{
+		{ID: "alice", Owner: "alice@example.com", TailscaleIPs: []string{"100.64.0.1"}},
+		{ID: "server", Tags: []string{"tag:server"}, TailscaleIPs: []string{"100.64.0.2"}},
+	}
+
+	edges := ResolveEffectiveAccess(p, devices, EdgeOptions{})
+	assertEdge(t, edges, "alice", "server", api.AccessScopeSSH, []string{"22"})
+	if len(edges[0].PolicyRefs) != 1 || edges[0].PolicyRefs[0].Section != "ssh" {
+		t.Fatalf("ssh policy refs = %#v", edges[0].PolicyRefs)
+	}
+}
+
+func TestEffectiveAccessEdgesSSHSrcPostureFiltersSources(t *testing.T) {
+	p := Policy{
+		Postures: map[string][]string{"posture:new": {"node:tsVersion >= '1.90.0'"}},
+		SSH: []SSHRule{
+			{Action: "accept", Src: []string{"autogroup:member"}, Dst: []string{"tag:server"}, Users: []string{"root"}, SrcPosture: []string{"posture:new"}},
+		},
+	}
+	devices := []api.Device{
+		{ID: "new", Owner: "alice@example.com", PostureAttrs: map[string]any{"node:tsVersion": "1.94.2"}, TailscaleIPs: []string{"100.64.0.1"}},
+		{ID: "old", Owner: "bob@example.com", PostureAttrs: map[string]any{"node:tsVersion": "1.80.0"}, TailscaleIPs: []string{"100.64.0.3"}},
+		{ID: "server", Tags: []string{"tag:server"}, TailscaleIPs: []string{"100.64.0.2"}},
+	}
+
+	edges := ResolveEffectiveAccess(p, devices, EdgeOptions{})
+	assertEdge(t, edges, "new", "server", api.AccessScopeSSH, []string{"22"})
+	for _, edge := range edges {
+		if edge.From == "old" {
+			t.Fatalf("old source should not satisfy SSH posture: %#v", edge)
+		}
+	}
+}
+
+func TestEffectiveAccessEdgesSSHDoesNotTargetServices(t *testing.T) {
+	p := Policy{
+		SSH: []SSHRule{
+			{Action: "accept", Src: []string{"alice@example.com"}, Dst: []string{"svc:web"}, Users: []string{"root"}},
+		},
+	}
+	devices := []api.Device{
+		{ID: "alice", Owner: "alice@example.com", TailscaleIPs: []string{"100.64.0.1"}},
+		{ID: "svc:web", Kind: "service", TailscaleIPs: []string{"100.100.0.1"}},
+	}
+
+	edges := ResolveEffectiveAccess(p, devices, EdgeOptions{})
+	if len(edges) != 0 {
+		t.Fatalf("ssh should not target service nodes: %#v", edges)
+	}
+}
+
 func TestEffectiveAccessEdgesPostureFiltersSources(t *testing.T) {
 	p := Policy{
 		Postures: map[string][]string{
@@ -282,6 +426,118 @@ func TestEffectiveAccessEdgesPostureFiltersSources(t *testing.T) {
 		if edge.From == "linux" {
 			t.Fatalf("linux source should not satisfy mac posture: %#v", edge)
 		}
+	}
+}
+
+func TestEffectiveAccessEdgesPostureVersionComparisonsAndOr(t *testing.T) {
+	p := Policy{
+		Postures: map[string][]string{
+			"posture:new":   {"node:tsVersion >= '1.90.0'", "node:osVersion > '14.3'"},
+			"posture:linux": {"node:os == 'linux'"},
+		},
+		Grants: []Grant{
+			{Src: []string{"autogroup:member"}, Dst: []string{"tag:prod"}, IP: []string{"tcp:443"}, SrcPosture: []string{"posture:new", "posture:linux"}},
+		},
+	}
+	devices := []api.Device{
+		{ID: "new-mac", Owner: "alice@example.com", PostureAttrs: map[string]any{"node:tsVersion": "1.94.2", "node:osVersion": "14.4"}, TailscaleIPs: []string{"100.64.0.1"}},
+		{ID: "linux", Owner: "bob@example.com", OS: "linux", TailscaleIPs: []string{"100.64.0.2"}},
+		{ID: "old-mac", Owner: "carol@example.com", PostureAttrs: map[string]any{"node:tsVersion": "1.80.0", "node:osVersion": "14.4"}, TailscaleIPs: []string{"100.64.0.4"}},
+		{ID: "prod", Owner: "ops@example.com", Tags: []string{"tag:prod"}, TailscaleIPs: []string{"100.64.0.3"}},
+	}
+
+	edges := ResolveEffectiveAccess(p, devices, EdgeOptions{})
+	assertEdge(t, edges, "new-mac", "prod", api.AccessScopeHTTP, []string{"443"})
+	assertEdge(t, edges, "linux", "prod", api.AccessScopeHTTP, []string{"443"})
+	for _, edge := range edges {
+		if edge.From == "old-mac" {
+			t.Fatalf("old mac should not satisfy version posture: %#v", edge)
+		}
+	}
+}
+
+func TestEffectiveAccessEdgesPostureTypedOperators(t *testing.T) {
+	p := Policy{
+		Postures: map[string][]string{
+			"posture:trusted": {
+				"node:os IN ['macos', 'linux']",
+				"custom:encrypted == true",
+				"custom:score >= 80",
+				"custom:tier != 'dev'",
+				"custom:region NOT IN ['CN', 'RU']",
+			},
+		},
+		Grants: []Grant{
+			{Src: []string{"autogroup:member"}, Dst: []string{"tag:prod"}, IP: []string{"tcp:443"}, SrcPosture: []string{"posture:trusted"}},
+		},
+	}
+	devices := []api.Device{
+		{ID: "trusted", Owner: "alice@example.com", PostureAttrs: map[string]any{
+			"node:os":          "macos",
+			"custom:encrypted": true,
+			"custom:score":     90.0,
+			"custom:tier":      "prod",
+			"custom:region":    "US",
+		}, TailscaleIPs: []string{"100.64.0.1"}},
+		{ID: "wrong-types", Owner: "bob@example.com", PostureAttrs: map[string]any{
+			"node:os":          "macos",
+			"custom:encrypted": "true",
+			"custom:score":     "90",
+			"custom:tier":      "prod",
+			"custom:region":    "US",
+		}, TailscaleIPs: []string{"100.64.0.2"}},
+		{ID: "prod", Owner: "ops@example.com", Tags: []string{"tag:prod"}, TailscaleIPs: []string{"100.64.0.3"}},
+	}
+
+	edges := ResolveEffectiveAccess(p, devices, EdgeOptions{})
+	assertEdge(t, edges, "trusted", "prod", api.AccessScopeHTTP, []string{"443"})
+	for _, edge := range edges {
+		if edge.From == "wrong-types" {
+			t.Fatalf("string values should not satisfy bool/number posture assertions: %#v", edge)
+		}
+	}
+}
+
+func TestEffectiveAccessEdgesPostureUnsetNeverMatches(t *testing.T) {
+	for _, assertion := range []string{
+		"custom:tier != 'prod'",
+		"custom:tier NOT IN ['prod']",
+		"custom:tier NOT SET",
+	} {
+		p := Policy{
+			Postures: map[string][]string{"posture:test": {assertion}},
+			Grants: []Grant{
+				{Src: []string{"autogroup:member"}, Dst: []string{"tag:prod"}, IP: []string{"tcp:443"}, SrcPosture: []string{"posture:test"}},
+			},
+		}
+		devices := []api.Device{
+			{ID: "unset", Owner: "alice@example.com", TailscaleIPs: []string{"100.64.0.1"}},
+			{ID: "prod", Owner: "ops@example.com", Tags: []string{"tag:prod"}, TailscaleIPs: []string{"100.64.0.3"}},
+		}
+
+		edges := ResolveEffectiveAccess(p, devices, EdgeOptions{})
+		if len(edges) != 0 {
+			t.Fatalf("%s should not match unset attrs: %#v", assertion, edges)
+		}
+	}
+}
+
+func TestEvaluateDraftReportsParsedButUnsupportedSections(t *testing.T) {
+	raw := `{
+		"acls": [],
+		"nodeAttrs": [{"target": ["autogroup:member"], "attr": ["funnel"]}],
+		"autoApprovers": {"routes": {"10.0.0.0/8": ["autogroup:admin"]}},
+		"tests": [{"src": "alice@example.com", "accept": ["tag:prod:443"]}],
+		"sshTests": [{"src": "alice@example.com", "dst": ["tag:prod"], "accept": ["root"]}]
+	}`
+
+	got, err := EvaluateDraft(raw, raw, nil, EdgeOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"autoApprovers", "nodeAttrs", "sshTests", "tests"}
+	if strings.Join(got.UnsupportedSections, ",") != strings.Join(want, ",") {
+		t.Fatalf("unsupported sections = %#v, want %#v", got.UnsupportedSections, want)
 	}
 }
 

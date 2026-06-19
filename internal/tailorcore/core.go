@@ -442,14 +442,210 @@ func (s *Service) TopologyDevices(ctx context.Context) ([]api.Device, error) {
 	if s.UseDevTailnet() {
 		return devtailnet.Devices(), nil
 	}
-	return s.localAPI.Status(ctx)
+	devices, err := s.localAPI.Status(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return s.enrichTopologyFromCloud(ctx, devices), nil
 }
 
 func (s *Service) TopologyDevicesLogged(ctx context.Context, operation string) ([]api.Device, error) {
 	if s.UseDevTailnet() {
 		return devtailnet.Devices(), nil
 	}
-	return s.localAPI.StatusLogged(ctx, operation)
+	devices, err := s.localAPI.StatusLogged(ctx, operation)
+	if err != nil {
+		return nil, err
+	}
+	return s.enrichTopologyFromCloud(ctx, devices), nil
+}
+
+func (s *Service) enrichTopologyFromCloud(ctx context.Context, devices []api.Device) []api.Device {
+	if status := s.cloudAPI.Status(); !status.Authenticated || status.DevMode {
+		return devices
+	}
+	cloudDevices, err := s.cloudAPI.Devices(ctx)
+	if err != nil {
+		s.logger.Debug("cloud device metadata unavailable", "error", err.Error())
+	} else {
+		enrichDevicesFromCloud(devices, cloudDevices)
+		users, err := s.cloudAPI.Users(ctx)
+		if err != nil {
+			s.logger.Debug("cloud user metadata unavailable", "error", err.Error())
+		} else {
+			enrichDeviceRolesFromCloudUsers(devices, users)
+		}
+		enrichDevicePostureAttributes(ctx, s.cloudAPI, devices, cloudDevices, s.logger)
+	}
+	services, err := s.cloudAPI.VIPServices(ctx)
+	if err != nil {
+		s.logger.Debug("vip services unavailable", "error", err.Error())
+		return devices
+	}
+	return append(devices, serviceDevicesFromCloud(services)...)
+}
+
+type postureAttributeClient interface {
+	DevicePostureAttributes(context.Context, string) (cloudapi.DevicePostureAttributes, error)
+}
+
+func enrichDevicesFromCloud(devices []api.Device, cloudDevices []cloudapi.Device) {
+	byIP := map[string]cloudapi.Device{}
+	for _, device := range cloudDevices {
+		for _, ip := range device.Addresses {
+			if ip != "" {
+				byIP[ip] = device
+			}
+		}
+	}
+	for i := range devices {
+		var cloud cloudapi.Device
+		var ok bool
+		for _, ip := range devices[i].TailscaleIPs {
+			cloud, ok = byIP[ip]
+			if ok {
+				break
+			}
+		}
+		if !ok {
+			continue
+		}
+		devices[i].Shared = devices[i].Shared || cloud.IsExternal
+		if devices[i].PostureAttrs == nil {
+			devices[i].PostureAttrs = map[string]any{}
+		}
+		if cloud.ClientVersion != "" {
+			devices[i].PostureAttrs["node:tsVersion"] = cloud.ClientVersion
+		}
+		if cloud.OS != "" {
+			devices[i].PostureAttrs["node:os"] = strings.ToLower(cloud.OS)
+		}
+		if len(cloud.PostureIdentity) > 0 {
+			devices[i].PostureAttrs["node:postureIdentity"] = cloud.PostureIdentity
+		}
+	}
+}
+
+func enrichDeviceRolesFromCloudUsers(devices []api.Device, users []cloudapi.User) {
+	rolesByLogin := map[string]string{}
+	for _, user := range users {
+		login := strings.TrimSpace(user.LoginName)
+		role := strings.TrimSpace(user.Role)
+		if login == "" || role == "" {
+			continue
+		}
+		rolesByLogin[login] = role
+	}
+	for i := range devices {
+		if devices[i].Owner == "" || len(devices[i].Tags) > 0 {
+			continue
+		}
+		role := rolesByLogin[devices[i].Owner]
+		if role == "" {
+			continue
+		}
+		devices[i].Roles = mergeRoles(devices[i].Roles, []string{role})
+	}
+}
+
+func enrichDevicePostureAttributes(ctx context.Context, client postureAttributeClient, devices []api.Device, cloudDevices []cloudapi.Device, logger *slog.Logger) {
+	cloudByIP := map[string]cloudapi.Device{}
+	for _, cloud := range cloudDevices {
+		for _, ip := range cloud.Addresses {
+			if ip != "" {
+				cloudByIP[ip] = cloud
+			}
+		}
+	}
+	for i := range devices {
+		var cloud cloudapi.Device
+		var ok bool
+		for _, ip := range devices[i].TailscaleIPs {
+			cloud, ok = cloudByIP[ip]
+			if ok {
+				break
+			}
+		}
+		if !ok {
+			continue
+		}
+		deviceID := firstNonEmpty(cloud.NodeID, cloud.ID)
+		if deviceID == "" {
+			continue
+		}
+		attrs, err := client.DevicePostureAttributes(ctx, deviceID)
+		if err != nil {
+			if logger != nil {
+				logger.Debug("cloud posture attributes unavailable", "device", deviceID, "error", err.Error())
+			}
+			continue
+		}
+		if len(attrs.Attributes) == 0 {
+			continue
+		}
+		if devices[i].PostureAttrs == nil {
+			devices[i].PostureAttrs = map[string]any{}
+		}
+		for key, value := range attrs.Attributes {
+			if key != "" && value != nil {
+				devices[i].PostureAttrs[key] = value
+			}
+		}
+	}
+}
+
+func mergeRoles(existing, roles []string) []string {
+	out := append([]string(nil), existing...)
+	for _, role := range roles {
+		role = strings.TrimSpace(role)
+		if role == "" {
+			continue
+		}
+		found := false
+		for _, existingRole := range out {
+			if strings.EqualFold(existingRole, role) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			out = append(out, role)
+		}
+	}
+	return out
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func serviceDevicesFromCloud(services []cloudapi.VIPService) []api.Device {
+	out := make([]api.Device, 0, len(services))
+	for _, service := range services {
+		name := strings.TrimSpace(service.Name)
+		if name == "" {
+			continue
+		}
+		ip := ""
+		if len(service.Addrs) > 0 {
+			ip = service.Addrs[0]
+		}
+		out = append(out, api.Device{
+			ID:           name,
+			Kind:         "service",
+			Name:         name,
+			IP:           ip,
+			TailscaleIPs: append([]string(nil), service.Addrs...),
+			Online:       true,
+			Tags:         append([]string(nil), service.Tags...),
+		})
+	}
+	return out
 }
 
 func (s *Service) TopologyTailnet(ctx context.Context) string {

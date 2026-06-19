@@ -160,3 +160,66 @@ func TestValidateAndSavePolicyUsesExplicitDraftAndRefreshesPolicy(t *testing.T) 
 		t.Fatal("expected empty explicit draft save to fail")
 	}
 }
+
+func TestDevicesUsersPostureAndVIPServicesFetchAuthenticatedMetadata(t *testing.T) {
+	var sawDevicesQuery string
+	var sawUsersQuery string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/tailnet/example.com/acl":
+			_, _ = w.Write([]byte(`{"acls":[]}`))
+		case "/api/v2/tailnet/example.com/devices":
+			sawDevicesQuery = r.URL.RawQuery
+			_, _ = w.Write([]byte(`{"devices":[{"addresses":["100.64.0.1"],"nodeId":"n1","user":"alice@example.com","clientVersion":"1.94.2","os":"linux","isExternal":true}]}`))
+		case "/api/v2/tailnet/example.com/users":
+			sawUsersQuery = r.URL.RawQuery
+			_, _ = w.Write([]byte(`{"users":[{"id":"u1","loginName":"alice@example.com","role":"admin","type":"member"}]}`))
+		case "/api/v2/device/n1/attributes":
+			_, _ = w.Write([]byte(`{"attributes":{"custom:tier":"prod","node:osVersion":"6.8.0"}}`))
+		case "/api/v2/tailnet/example.com/services":
+			_, _ = w.Write([]byte(`{"vipServices":[{"name":"svc:web","addrs":["100.100.0.1"],"tags":["tag:web"]}]}`))
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client := New(WithBaseURL(server.URL))
+	if _, err := client.Authenticate(context.Background(), AuthRequest{Tailnet: "example.com", APIKey: "tskey-api-test"}); err != nil {
+		t.Fatal(err)
+	}
+	devices, err := client.Devices(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sawDevicesQuery != "fields=all" {
+		t.Fatalf("devices query = %q, want fields=all", sawDevicesQuery)
+	}
+	if len(devices) != 1 || !devices[0].IsExternal || devices[0].ClientVersion != "1.94.2" {
+		t.Fatalf("devices = %#v", devices)
+	}
+	users, err := client.Users(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sawUsersQuery != "role=all&type=all" {
+		t.Fatalf("users query = %q, want role=all&type=all", sawUsersQuery)
+	}
+	if len(users) != 1 || users[0].LoginName != "alice@example.com" || users[0].Role != "admin" {
+		t.Fatalf("users = %#v", users)
+	}
+	attrs, err := client.DevicePostureAttributes(context.Background(), "n1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if attrs.Attributes["custom:tier"] != "prod" || attrs.Attributes["node:osVersion"] != "6.8.0" {
+		t.Fatalf("attrs = %#v", attrs.Attributes)
+	}
+	services, err := client.VIPServices(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(services) != 1 || services[0].Name != "svc:web" || services[0].Addrs[0] != "100.100.0.1" {
+		t.Fatalf("services = %#v", services)
+	}
+}

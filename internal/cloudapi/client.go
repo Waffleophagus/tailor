@@ -57,6 +57,56 @@ type Error struct {
 	Message    string
 }
 
+type Device struct {
+	Addresses       []string       `json:"addresses"`
+	ID              string         `json:"id"`
+	NodeID          string         `json:"nodeId"`
+	User            string         `json:"user"`
+	Name            string         `json:"name"`
+	Hostname        string         `json:"hostname"`
+	ClientVersion   string         `json:"clientVersion"`
+	OS              string         `json:"os"`
+	Tags            []string       `json:"tags"`
+	LastSeen        string         `json:"lastSeen"`
+	IsExternal      bool           `json:"isExternal"`
+	EnabledRoutes   []string       `json:"enabledRoutes"`
+	PostureIdentity map[string]any `json:"postureIdentity"`
+}
+
+type devicesResponse struct {
+	Devices []Device `json:"devices"`
+}
+
+type User struct {
+	ID          string `json:"id"`
+	DisplayName string `json:"displayName"`
+	LoginName   string `json:"loginName"`
+	Type        string `json:"type"`
+	Role        string `json:"role"`
+	Status      string `json:"status"`
+}
+
+type usersResponse struct {
+	Users []User `json:"users"`
+}
+
+type DevicePostureAttributes struct {
+	Attributes map[string]any `json:"attributes"`
+}
+
+type VIPService struct {
+	Name        string            `json:"name"`
+	Addrs       []string          `json:"addrs"`
+	Comment     string            `json:"comment,omitempty"`
+	Tags        []string          `json:"tags,omitempty"`
+	Ports       []string          `json:"ports,omitempty"`
+	Annotations map[string]string `json:"annotations,omitempty"`
+}
+
+type vipServicesResponse struct {
+	VIPServices []VIPService `json:"vipServices"`
+}
+
 func (e *Error) Error() string {
 	if e.Message == "" {
 		return fmt.Sprintf("tailscale api returned status %d", e.StatusCode)
@@ -194,6 +244,80 @@ func (c *Client) RefreshPolicy(ctx context.Context) (string, error) {
 	return policy, nil
 }
 
+func (c *Client) Devices(ctx context.Context) ([]Device, error) {
+	session, err := c.ensureSession(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if session.DevMode {
+		return nil, nil
+	}
+	var out devicesResponse
+	if err := c.getJSON(ctx, session, "/devices", url.Values{"fields": []string{"all"}}, &out); err != nil {
+		return nil, err
+	}
+	return out.Devices, nil
+}
+
+func (c *Client) Users(ctx context.Context) ([]User, error) {
+	session, err := c.ensureSession(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if session.DevMode {
+		return nil, nil
+	}
+	var out usersResponse
+	query := url.Values{
+		"type": []string{"all"},
+		"role": []string{"all"},
+	}
+	if err := c.getJSON(ctx, session, "/users", query, &out); err != nil {
+		return nil, err
+	}
+	return out.Users, nil
+}
+
+func (c *Client) DevicePostureAttributes(ctx context.Context, deviceID string) (DevicePostureAttributes, error) {
+	session, err := c.ensureSession(ctx)
+	if err != nil {
+		return DevicePostureAttributes{}, err
+	}
+	if session.DevMode {
+		return DevicePostureAttributes{}, nil
+	}
+	deviceID = strings.TrimSpace(deviceID)
+	if deviceID == "" {
+		return DevicePostureAttributes{}, errors.New("device ID is required")
+	}
+	var out DevicePostureAttributes
+	if err := c.getJSONAPI(ctx, session, "/device/"+url.PathEscape(deviceID)+"/attributes", nil, &out); err != nil {
+		return DevicePostureAttributes{}, err
+	}
+	return out, nil
+}
+
+func (c *Client) VIPServices(ctx context.Context) ([]VIPService, error) {
+	session, err := c.ensureSession(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if session.DevMode {
+		return nil, nil
+	}
+	var out vipServicesResponse
+	if err := c.getJSON(ctx, session, "/services", nil, &out); err != nil {
+		var apiErr *Error
+		if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusNotFound {
+			return nil, err
+		}
+		if err := c.getJSON(ctx, session, "/vip-services", nil, &out); err != nil {
+			return nil, err
+		}
+	}
+	return out.VIPServices, nil
+}
+
 func (c *Client) ValidatePolicy(ctx context.Context, draft string) error {
 	session, err := c.ensureSession(ctx)
 	if err != nil {
@@ -300,6 +424,43 @@ func (c *Client) fetchPolicy(ctx context.Context, tailnet, apiKey string) (strin
 	}
 	c.logCloudAPI(http.MethodGet, tailnet, "", resp.StatusCode, time.Since(start), nil)
 	return string(body), nil
+}
+
+func (c *Client) getJSON(ctx context.Context, session *Session, path string, query url.Values, target any) error {
+	endpoint := c.baseURL + "/api/v2/tailnet/" + url.PathEscape(session.Tailnet) + path
+	return c.getJSONEndpoint(ctx, session, endpoint, query, target)
+}
+
+func (c *Client) getJSONAPI(ctx context.Context, session *Session, path string, query url.Values, target any) error {
+	endpoint := c.baseURL + "/api/v2" + path
+	return c.getJSONEndpoint(ctx, session, endpoint, query, target)
+}
+
+func (c *Client) getJSONEndpoint(ctx context.Context, session *Session, endpoint string, query url.Values, target any) error {
+	if len(query) > 0 {
+		endpoint += "?" + query.Encode()
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return err
+	}
+	req.SetBasicAuth(session.APIKey, "")
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return apiError(resp.StatusCode, body, "metadata request failed")
+	}
+	if err := json.Unmarshal(body, target); err != nil {
+		return fmt.Errorf("decode tailscale api response: %w", err)
+	}
+	return nil
 }
 
 func (c *Client) sendPolicy(ctx context.Context, method, tailnet, apiKey, suffix, policy string) error {

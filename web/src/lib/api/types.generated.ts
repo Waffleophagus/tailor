@@ -103,6 +103,7 @@ interface DevSpawnDevicesResponse {
 // From api/types.go
 interface Device {
     id: string;
+    kind?: "device" | "service";
     name: string;
     ip: string;
     tailscaleIps: string[];
@@ -417,4 +418,3 @@ interface UnresolvedSelector {
     selector: string;
     role: string;
 }
-

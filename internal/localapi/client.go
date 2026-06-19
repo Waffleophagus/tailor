@@ -131,6 +131,7 @@ type Peer struct {
 	OS            string    `json:"OS"`
 	UserID        int64     `json:"UserID"`
 	Tags          []string  `json:"Tags"`
+	ShareeNode    bool      `json:"ShareeNode"`
 	Online        bool      `json:"Online"`
 	LastSeen      time.Time `json:"LastSeen"`
 }
@@ -217,6 +218,7 @@ func deviceFromPeer(peer Peer, users map[string]User) api.Device {
 		Online:        peer.Online,
 		Owner:         ownerName(peer.UserID, users),
 		Tags:          tags,
+		Shared:        peer.ShareeNode,
 		SubnetRouter:  len(routedSubnets) > 0,
 		RoutedSubnets: routedSubnets,
 		LastSeen:      lastSeen,
@@ -252,10 +254,23 @@ func deviceFromPeerStatus(peer *ipnstate.PeerStatus, users map[tailcfg.UserID]ta
 		Online:        peer.Online,
 		Owner:         ownerNameFromUserProfiles(peer.UserID, users),
 		Tags:          viewStrings(peer.Tags),
+		Shared:        peer.ShareeNode || !peer.AltSharerUserID.IsZero(),
 		SubnetRouter:  len(routedSubnets) > 0,
 		RoutedSubnets: routedSubnets,
+		PostureAttrs:  postureAttrsFromPeerStatus(peer),
 		LastSeen:      lastSeen,
 	}
+}
+
+func postureAttrsFromPeerStatus(peer *ipnstate.PeerStatus) map[string]any {
+	attrs := map[string]any{}
+	if peer.OS != "" {
+		attrs["node:os"] = strings.ToLower(peer.OS)
+	}
+	if len(attrs) == 0 {
+		return nil
+	}
+	return attrs
 }
 
 func routedSubnets(peer Peer) []string {

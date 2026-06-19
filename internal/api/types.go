@@ -27,6 +27,7 @@ type LocalAPIStatusResponse struct {
 
 type Device struct {
 	ID            string         `json:"id"`
+	Kind          string         `json:"kind,omitempty"`
 	Name          string         `json:"name"`
 	IP            string         `json:"ip"`
 	TailscaleIPs  []string       `json:"tailscaleIps"`

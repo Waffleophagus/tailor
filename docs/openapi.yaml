@@ -378,6 +378,9 @@ components:
       properties:
         id:
           type: string
+        kind:
+          type: string
+          enum: [device, service]
         name:
           type: string
         ip:

@@ -33,6 +33,7 @@ func TestDevicesFromStatusParsesSelfAndPeers(t *testing.T) {
 				"OS": "linux",
 				"UserID": 2,
 				"Tags": ["tag:server", "tag:database"],
+				"ShareeNode": true,
 				"Online": false,
 				"LastSeen": "2026-05-25T12:30:00Z"
 			}
@@ -70,6 +71,7 @@ func TestDevicesFromStatusParsesSelfAndPeers(t *testing.T) {
 			Online:        false,
 			Owner:         "ops@example.com",
 			Tags:          []string{"tag:server", "tag:database"},
+			Shared:        true,
 			RoutedSubnets: []string{},
 			LastSeen:      "2026-05-25T12:30:00Z",
 		},
@@ -162,7 +164,7 @@ func assertDevice(t *testing.T, got, want api.Device) {
 	t.Helper()
 	if got.ID != want.ID || got.Name != want.Name || got.IP != want.IP || got.OS != want.OS ||
 		got.Online != want.Online || got.Owner != want.Owner || got.SubnetRouter != want.SubnetRouter ||
-		got.LastSeen != want.LastSeen {
+		got.Shared != want.Shared || got.LastSeen != want.LastSeen {
 		t.Fatalf("device mismatch\ngot:  %#v\nwant: %#v", got, want)
 	}
 	assertStrings(t, "tags", got.Tags, want.Tags)

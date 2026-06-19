@@ -11,6 +11,7 @@ import (
 
 	"github.com/Waffleophagus/tailor/internal/api"
 	"github.com/tailscale/hujson"
+	"tailscale.com/util/cmpver"
 )
 
 type Policy struct {
@@ -41,26 +42,24 @@ type Grant struct {
 }
 
 type SSHRule struct {
-	Action string   `json:"action"`
-	Src    []string `json:"src"`
-	Dst    []string `json:"dst"`
-	Users  []string `json:"users"`
+	Action     string   `json:"action"`
+	Src        []string `json:"src"`
+	Dst        []string `json:"dst"`
+	Users      []string `json:"users"`
+	SrcPosture []string `json:"srcPosture"`
 }
 
 var ErrInvalidPolicy = errors.New("invalid policy")
 
 var supportedPolicySections = map[string]string{
-	"acls":          "ACL rules",
-	"grants":        "Grants",
-	"ssh":           "SSH rules",
-	"groups":        "Groups",
-	"tagOwners":     "Tag owners",
-	"hosts":         "Hosts",
-	"ipsets":        "IP sets",
-	"postures":      "Posture conditions",
-	"nodeAttrs":     "Node attributes",
-	"autoApprovers": "Auto approvers",
-	"tests":         "Tests",
+	"acls":      "ACL rules",
+	"grants":    "Grants",
+	"ssh":       "SSH rules",
+	"groups":    "Groups",
+	"tagOwners": "Tag owners",
+	"hosts":     "Hosts",
+	"ipsets":    "IP sets",
+	"postures":  "Posture conditions",
 }
 
 type EdgeOptions struct {
@@ -377,7 +376,7 @@ func ResolveEffectiveAccess(p Policy, devices []api.Device, options EdgeOptions)
 		proto := normalizeProto(rule.Proto)
 		postures := effectiveSrcPosture(rule.SrcPosture, p.DefaultSrcPosture)
 		for _, src := range rule.Src {
-			srcDevices := devicesForSelector(src, p, devices)
+			srcDevices := devicesForSourceSelector(src, p, devices)
 			srcDevices = filterDevicesByPosture(srcDevices, postures, p)
 			if options.Perspective != "" {
 				if !selectorIncludesPerspective(src, p, options.Perspective) {
@@ -431,7 +430,7 @@ func ResolveEffectiveAccess(p Policy, devices []api.Device, options EdgeOptions)
 		}
 		postures := effectiveSrcPosture(grant.SrcPosture, p.DefaultSrcPosture)
 		for _, src := range grant.Src {
-			srcDevices := devicesForSelector(src, p, devices)
+			srcDevices := devicesForSourceSelector(src, p, devices)
 			srcDevices = filterDevicesByPosture(srcDevices, postures, p)
 			if options.Perspective != "" {
 				if !selectorIncludesPerspective(src, p, options.Perspective) {
@@ -471,6 +470,61 @@ func ResolveEffectiveAccess(p Policy, devices []api.Device, options EdgeOptions)
 						}
 						a.policyRefs = append(a.policyRefs, api.PolicyRef{
 							Section: "grants",
+							Index:   i,
+							Src:     src,
+							Dst:     dst,
+						})
+					}
+				}
+			}
+		}
+	}
+	for i, rule := range p.SSH {
+		action := strings.TrimSpace(strings.ToLower(rule.Action))
+		if action != "accept" && action != "check" {
+			continue
+		}
+		if len(compactStrings(rule.Users)) == 0 {
+			continue
+		}
+		postures := effectiveSrcPosture(rule.SrcPosture, p.DefaultSrcPosture)
+		for _, src := range rule.Src {
+			srcDevices := devicesForSourceSelector(src, p, devices)
+			srcDevices = filterDevicesByPosture(srcDevices, postures, p)
+			if options.Perspective != "" {
+				if !selectorIncludesPerspective(src, p, options.Perspective) {
+					srcDevices = nil
+				} else {
+					srcDevices = intersectDevices(srcDevices, devicesForPerspective(options.Perspective, p, devices))
+				}
+			}
+			for _, dst := range rule.Dst {
+				for _, from := range srcDevices {
+					dstDevices := devicesForDstSelector(dst, from, p, devices)
+					dstDevices = filterOutServices(dstDevices)
+					for _, to := range dstDevices {
+						if from.ID == "" || to.ID == "" {
+							continue
+						}
+						key := from.ID + "\x00" + to.ID
+						a := acc[key]
+						if a == nil {
+							a = &accessAccumulator{
+								from:         from.ID,
+								to:           to.ID,
+								protocols:    map[string]bool{},
+								ports:        map[string]bool{},
+								perspectives: map[string]bool{},
+							}
+							acc[key] = a
+						}
+						a.protocols["tcp"] = true
+						a.ports["22"] = true
+						if options.Perspective != "" {
+							a.perspectives[options.Perspective] = true
+						}
+						a.policyRefs = append(a.policyRefs, api.PolicyRef{
+							Section: "ssh",
 							Index:   i,
 							Src:     src,
 							Dst:     dst,
@@ -589,7 +643,7 @@ func unresolvedSelectors(p Policy, devices []api.Device) []api.UnresolvedSelecto
 			continue
 		}
 		for _, src := range rule.Src {
-			if len(devicesForSelector(src, p, devices)) == 0 {
+			if len(devicesForSourceSelector(src, p, devices)) == 0 {
 				unresolved = append(unresolved, api.UnresolvedSelector{Section: "acls", Index: i, Selector: src, Role: "src"})
 			}
 		}
@@ -602,13 +656,29 @@ func unresolvedSelectors(p Policy, devices []api.Device) []api.UnresolvedSelecto
 	}
 	for i, grant := range p.Grants {
 		for _, src := range grant.Src {
-			if len(devicesForSelector(src, p, devices)) == 0 {
+			if len(devicesForSourceSelector(src, p, devices)) == 0 {
 				unresolved = append(unresolved, api.UnresolvedSelector{Section: "grants", Index: i, Selector: src, Role: "src"})
 			}
 		}
 		for _, dst := range grant.Dst {
 			if len(devicesForSelector(dst, p, devices)) == 0 {
 				unresolved = append(unresolved, api.UnresolvedSelector{Section: "grants", Index: i, Selector: dst, Role: "dst"})
+			}
+		}
+	}
+	for i, rule := range p.SSH {
+		action := strings.TrimSpace(strings.ToLower(rule.Action))
+		if action != "accept" && action != "check" {
+			continue
+		}
+		for _, src := range rule.Src {
+			if len(devicesForSourceSelector(src, p, devices)) == 0 {
+				unresolved = append(unresolved, api.UnresolvedSelector{Section: "ssh", Index: i, Selector: src, Role: "src"})
+			}
+		}
+		for _, dst := range rule.Dst {
+			if len(filterOutServices(devicesForSelector(dst, p, devices))) == 0 {
+				unresolved = append(unresolved, api.UnresolvedSelector{Section: "ssh", Index: i, Selector: dst, Role: "dst"})
 			}
 		}
 	}
@@ -866,10 +936,9 @@ func deviceMatchesPostureAssertion(device api.Device, assertion string) bool {
 		return ok
 	}
 	if strings.HasSuffix(assertion, " NOT SET") {
-		_, ok := postureAttrValue(device, strings.TrimSpace(strings.TrimSuffix(assertion, " NOT SET")))
-		return !ok
+		return false
 	}
-	for _, op := range []string{" NOT IN ", " IN ", "==", "!="} {
+	for _, op := range []string{" NOT IN ", " IN ", ">=", "<=", ">", "<", "==", "!="} {
 		if idx := strings.Index(assertion, op); idx >= 0 {
 			key := strings.TrimSpace(assertion[:idx])
 			rawWant := strings.TrimSpace(assertion[idx+len(op):])
@@ -879,17 +948,64 @@ func deviceMatchesPostureAssertion(device api.Device, assertion string) bool {
 			}
 			switch strings.TrimSpace(op) {
 			case "==":
-				return strings.ToLower(fmt.Sprint(got)) == unquotePostureValue(rawWant)
+				want, ok := parsePostureLiteral(rawWant)
+				return ok && postureValuesEqual(got, want)
 			case "!=":
-				return strings.ToLower(fmt.Sprint(got)) != unquotePostureValue(rawWant)
+				want, ok := parsePostureLiteral(rawWant)
+				return ok && !postureValuesEqual(got, want)
 			case "IN":
-				return contains(postureListValues(rawWant), strings.ToLower(fmt.Sprint(got)))
+				return postureValueIn(got, rawWant)
 			case "NOT IN":
-				return !contains(postureListValues(rawWant), strings.ToLower(fmt.Sprint(got)))
+				return !postureValueIn(got, rawWant)
+			case ">=", ">", "<=", "<":
+				return comparePostureValues(key, got, rawWant, strings.TrimSpace(op))
 			}
 		}
 	}
 	return false
+}
+
+func comparePostureValues(key string, got any, rawWant, op string) bool {
+	want, ok := parsePostureLiteral(rawWant)
+	if !ok {
+		return false
+	}
+	var cmp int
+	switch {
+	case key == "node:osVersion" || key == "node:tsVersion":
+		left, okLeft := postureString(got)
+		right, okRight := postureString(want)
+		if !okLeft || !okRight {
+			return false
+		}
+		cmp = cmpver.Compare(left, right)
+	default:
+		left, okLeft := postureNumber(got)
+		right, okRight := postureNumber(want)
+		if !okLeft || !okRight {
+			return false
+		}
+		switch {
+		case left < right:
+			cmp = -1
+		case left > right:
+			cmp = 1
+		default:
+			cmp = 0
+		}
+	}
+	switch op {
+	case ">=":
+		return cmp >= 0
+	case ">":
+		return cmp > 0
+	case "<=":
+		return cmp <= 0
+	case "<":
+		return cmp < 0
+	default:
+		return false
+	}
 }
 
 func postureAttrValue(device api.Device, key string) (any, bool) {
@@ -909,25 +1025,135 @@ func postureAttrValue(device api.Device, key string) (any, bool) {
 	}
 }
 
-func unquotePostureValue(value string) string {
+func parsePostureLiteral(value string) (any, bool) {
 	value = strings.TrimSpace(value)
-	value = strings.Trim(value, `"'`)
-	return strings.ToLower(value)
+	if value == "" {
+		return nil, false
+	}
+	if strings.HasPrefix(value, "'") && strings.HasSuffix(value, "'") && len(value) >= 2 {
+		return strings.Trim(value, "'"), true
+	}
+	if strings.HasPrefix(value, `"`) && strings.HasSuffix(value, `"`) {
+		var out string
+		if err := json.Unmarshal([]byte(value), &out); err != nil {
+			return nil, false
+		}
+		return out, true
+	}
+	if value == "true" {
+		return true, true
+	}
+	if value == "false" {
+		return false, true
+	}
+	if n, err := strconv.ParseFloat(value, 64); err == nil {
+		return n, true
+	}
+	return nil, false
 }
 
-func postureListValues(raw string) []string {
+func postureListValues(raw string) ([]any, bool) {
 	raw = strings.TrimSpace(raw)
-	raw = strings.TrimPrefix(raw, "[")
-	raw = strings.TrimSuffix(raw, "]")
-	parts := strings.Split(raw, ",")
-	values := make([]string, 0, len(parts))
+	if !strings.HasPrefix(raw, "[") || !strings.HasSuffix(raw, "]") {
+		return nil, false
+	}
+	raw = strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(raw, "["), "]"))
+	if raw == "" {
+		return nil, true
+	}
+	parts := splitPostureList(raw)
+	values := make([]any, 0, len(parts))
 	for _, part := range parts {
-		part = unquotePostureValue(part)
-		if part != "" {
-			values = append(values, part)
+		value, ok := parsePostureLiteral(part)
+		if !ok {
+			return nil, false
+		}
+		values = append(values, value)
+	}
+	return values, true
+}
+
+func splitPostureList(raw string) []string {
+	var parts []string
+	start := 0
+	var quote rune
+	escaped := false
+	for i, r := range raw {
+		if escaped {
+			escaped = false
+			continue
+		}
+		if r == '\\' && quote == '"' {
+			escaped = true
+			continue
+		}
+		if quote != 0 {
+			if r == quote {
+				quote = 0
+			}
+			continue
+		}
+		if r == '\'' || r == '"' {
+			quote = r
+			continue
+		}
+		if r == ',' {
+			parts = append(parts, strings.TrimSpace(raw[start:i]))
+			start = i + len(string(r))
 		}
 	}
-	return values
+	parts = append(parts, strings.TrimSpace(raw[start:]))
+	return parts
+}
+
+func postureValueIn(got any, rawWant string) bool {
+	values, ok := postureListValues(rawWant)
+	if !ok {
+		return false
+	}
+	for _, want := range values {
+		if postureValuesEqual(got, want) {
+			return true
+		}
+	}
+	return false
+}
+
+func postureValuesEqual(left, right any) bool {
+	if leftString, ok := postureString(left); ok {
+		rightString, ok := postureString(right)
+		return ok && leftString == rightString
+	}
+	if leftBool, ok := left.(bool); ok {
+		rightBool, ok := right.(bool)
+		return ok && leftBool == rightBool
+	}
+	if leftNumber, ok := postureNumber(left); ok {
+		rightNumber, ok := postureNumber(right)
+		return ok && leftNumber == rightNumber
+	}
+	return false
+}
+
+func postureString(value any) (string, bool) {
+	text, ok := value.(string)
+	return text, ok
+}
+
+func postureNumber(value any) (float64, bool) {
+	switch typed := value.(type) {
+	case int:
+		return float64(typed), true
+	case int64:
+		return float64(typed), true
+	case float64:
+		return typed, true
+	case json.Number:
+		n, err := typed.Float64()
+		return n, err == nil
+	default:
+		return 0, false
+	}
 }
 
 func filterDevicesByVia(devices []api.Device, via []string) []api.Device {
@@ -1249,6 +1475,9 @@ func devicesForSelector(selector string, p Policy, devices []api.Device) []api.D
 	if strings.HasPrefix(selector, "tag:") {
 		return devicesForTag(selector, devices)
 	}
+	if strings.HasPrefix(selector, "svc:") {
+		return devicesForService(selector, devices)
+	}
 	if strings.HasPrefix(selector, "host:") {
 		selector = strings.TrimPrefix(selector, "host:")
 	}
@@ -1265,6 +1494,20 @@ func devicesForSelector(selector string, p Policy, devices []api.Device) []api.D
 		return devicesForIPSelector(selector, devices)
 	}
 	return nil
+}
+
+func devicesForSourceSelector(selector string, p Policy, devices []api.Device) []api.Device {
+	return filterOutServices(devicesForSelector(selector, p, devices))
+}
+
+func filterOutServices(devices []api.Device) []api.Device {
+	var out []api.Device
+	for _, device := range devices {
+		if device.Kind != "service" {
+			out = append(out, device)
+		}
+	}
+	return out
 }
 
 func devicesWithOwner(devices []api.Device) []api.Device {
@@ -1300,6 +1543,9 @@ func devicesSharedWithTailnet(devices []api.Device) []api.Device {
 func devicesForRole(role string, devices []api.Device) []api.Device {
 	var out []api.Device
 	for _, d := range devices {
+		if len(d.Tags) > 0 {
+			continue
+		}
 		for _, deviceRole := range d.Roles {
 			if strings.EqualFold(deviceRole, role) {
 				out = append(out, d)
@@ -1366,6 +1612,16 @@ func devicesForTag(tag string, devices []api.Device) []api.Device {
 	var out []api.Device
 	for _, d := range devices {
 		if deviceHasTag(d, tag) {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
+func devicesForService(service string, devices []api.Device) []api.Device {
+	var out []api.Device
+	for _, d := range devices {
+		if d.Kind == "service" && d.ID == service {
 			out = append(out, d)
 		}
 	}

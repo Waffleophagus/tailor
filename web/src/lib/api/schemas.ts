@@ -24,6 +24,7 @@ export const localApiStatusResponseSchema = z.object({
 
 export const deviceSchema = z.object({
 	id: z.string(),
+	kind: z.enum(['device', 'service']).optional(),
 	name: z.string(),
 	ip: z.string(),
 	tailscaleIps: z.array(z.string()),
