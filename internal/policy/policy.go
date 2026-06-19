@@ -42,11 +42,13 @@ type Grant struct {
 }
 
 type SSHRule struct {
-	Action     string   `json:"action"`
-	Src        []string `json:"src"`
-	Dst        []string `json:"dst"`
-	Users      []string `json:"users"`
-	SrcPosture []string `json:"srcPosture"`
+	Action      string   `json:"action"`
+	Src         []string `json:"src"`
+	Dst         []string `json:"dst"`
+	Users       []string `json:"users"`
+	SrcPosture  []string `json:"srcPosture"`
+	CheckPeriod string   `json:"checkPeriod,omitempty"`
+	AcceptEnv   []string `json:"acceptEnv,omitempty"`
 }
 
 var ErrInvalidPolicy = errors.New("invalid policy")

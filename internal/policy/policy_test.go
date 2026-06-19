@@ -1115,3 +1115,25 @@ func TestStructuredMapMarksMissingPolicySectionsSupported(t *testing.T) {
 		}
 	}
 }
+
+func TestParsePreservesSSHRuleCheckPeriodAndAcceptEnv(t *testing.T) {
+	raw := `{
+		"ssh": [
+			{"action": "accept", "src": ["alice@example.com"], "dst": ["tag:server"], "users": ["root"], "checkPeriod": "20h", "acceptEnv": ["GIT_*"]}
+		]
+	}`
+	p, err := Parse(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.SSH) != 1 {
+		t.Fatalf("expected 1 SSH rule, got %d", len(p.SSH))
+	}
+	rule := p.SSH[0]
+	if rule.CheckPeriod != "20h" {
+		t.Errorf("CheckPeriod = %q, want %q", rule.CheckPeriod, "20h")
+	}
+	if len(rule.AcceptEnv) != 1 || rule.AcceptEnv[0] != "GIT_*" {
+		t.Errorf("AcceptEnv = %#v, want [\"GIT_*\"]", rule.AcceptEnv)
+	}
+}
