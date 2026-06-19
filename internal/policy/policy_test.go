@@ -1160,3 +1160,23 @@ func TestEffectiveAccessEdgesIPSetSelectorResolvesMembers(t *testing.T) {
 	assertEdge(t, edges, "alice", "srv1", api.AccessScopeHTTP, []string{"443"})
 	assertEdge(t, edges, "alice", "srv2", api.AccessScopeHTTP, []string{"443"})
 }
+
+func TestEffectiveAccessEdgesAutogroupMembersPluralSelector(t *testing.T) {
+	raw := `{
+		"acls": [
+			{"action": "accept", "src": ["autogroup:members"], "dst": ["tag:server:443"]}
+		]
+	}`
+	devices := []api.Device{
+		{ID: "alice", Owner: "alice@example.com", TailscaleIPs: []string{"100.64.0.1"}},
+		{ID: "bob", Owner: "bob@example.com", TailscaleIPs: []string{"100.64.0.2"}},
+		{ID: "server", Tags: []string{"tag:server"}, TailscaleIPs: []string{"100.64.0.10"}},
+	}
+
+	edges, err := EffectiveAccessEdges(raw, devices, EdgeOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEdge(t, edges, "alice", "server", api.AccessScopeHTTP, []string{"443"})
+	assertEdge(t, edges, "bob", "server", api.AccessScopeHTTP, []string{"443"})
+}

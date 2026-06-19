@@ -793,7 +793,7 @@ func selectorIncludesPerspective(selector string, p Policy, perspective string) 
 			}
 		}
 	}
-	if selector == "autogroup:member" {
+	if selector == "autogroup:member" || selector == "autogroup:members" {
 		if strings.Contains(perspective, "@") {
 			return true
 		}
@@ -840,7 +840,7 @@ func devicesForPerspective(perspective string, p Policy, devices []api.Device) [
 		return devicesForTag(perspective, devices)
 	}
 	switch perspective {
-	case "autogroup:member":
+	case "autogroup:member", "autogroup:members":
 		return devicesWithOwner(devices)
 	case "autogroup:owner", "autogroup:admin", "autogroup:it-admin", "autogroup:billing-admin", "autogroup:network-admin", "autogroup:auditor":
 		return devicesForRole(strings.TrimPrefix(perspective, "autogroup:"), devices)
@@ -1478,7 +1478,7 @@ func devicesForSelector(selector string, p Policy, devices []api.Device) []api.D
 	if selector == "*" || selector == "autogroup:danger-all" {
 		return devicesWithOwner(devices)
 	}
-	if selector == "autogroup:member" {
+	if selector == "autogroup:member" || selector == "autogroup:members" {
 		return devicesWithOwner(devices)
 	}
 	if selector == "cohort:member+tagged" {
