@@ -1137,3 +1137,26 @@ func TestParsePreservesSSHRuleCheckPeriodAndAcceptEnv(t *testing.T) {
 		t.Errorf("AcceptEnv = %#v, want [\"GIT_*\"]", rule.AcceptEnv)
 	}
 }
+
+func TestEffectiveAccessEdgesIPSetSelectorResolvesMembers(t *testing.T) {
+	raw := `{
+		"ipsets": {
+			"corp-servers": ["100.64.1.1", "100.64.1.2"]
+		},
+		"acls": [
+			{"action": "accept", "src": ["alice@example.com"], "dst": ["ipset:corp-servers:443"]}
+		]
+	}`
+	devices := []api.Device{
+		{ID: "alice", Owner: "alice@example.com", TailscaleIPs: []string{"100.64.0.1"}},
+		{ID: "srv1", Owner: "ops@example.com", TailscaleIPs: []string{"100.64.1.1"}},
+		{ID: "srv2", Owner: "ops@example.com", TailscaleIPs: []string{"100.64.1.2"}},
+	}
+
+	edges, err := EffectiveAccessEdges(raw, devices, EdgeOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEdge(t, edges, "alice", "srv1", api.AccessScopeHTTP, []string{"443"})
+	assertEdge(t, edges, "alice", "srv2", api.AccessScopeHTTP, []string{"443"})
+}

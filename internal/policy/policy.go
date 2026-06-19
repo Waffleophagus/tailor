@@ -18,6 +18,7 @@ type Policy struct {
 	Groups            map[string][]string `json:"groups"`
 	Hosts             map[string]string   `json:"hosts"`
 	Postures          map[string][]string `json:"postures"`
+	IPSets            map[string][]string `json:"ipsets"`
 	DefaultSrcPosture []string            `json:"defaultSrcPosture"`
 	ACLs              []ACLRule           `json:"acls"`
 	Grants            []Grant             `json:"grants"`
@@ -104,6 +105,9 @@ func Parse(raw string) (Policy, error) {
 	}
 	if p.Postures == nil {
 		p.Postures = map[string][]string{}
+	}
+	if p.IPSets == nil {
+		p.IPSets = map[string][]string{}
 	}
 	return p, nil
 }
@@ -1507,6 +1511,9 @@ func devicesForSelector(selector string, p Policy, devices []api.Device) []api.D
 	if strings.HasPrefix(selector, "host:") {
 		selector = strings.TrimPrefix(selector, "host:")
 	}
+	if strings.HasPrefix(selector, "ipset:") {
+		return devicesForIPSet(selector, p, devices, map[string]bool{})
+	}
 	if host, ok := p.Hosts[selector]; ok {
 		return devicesForIPSelector(host, devices)
 	}
@@ -1520,6 +1527,29 @@ func devicesForSelector(selector string, p Policy, devices []api.Device) []api.D
 		return devicesForIPSelector(selector, devices)
 	}
 	return nil
+}
+
+func devicesForIPSet(selector string, p Policy, devices []api.Device, visited map[string]bool) []api.Device {
+	name := strings.TrimPrefix(selector, "ipset:")
+	if visited[name] {
+		return nil
+	}
+	members := p.IPSets[name]
+	if len(members) == 0 {
+		return nil
+	}
+	visited[name] = true
+	var out []api.Device
+	for _, member := range members {
+		member = strings.TrimSpace(member)
+		if strings.HasPrefix(member, "ipset:") {
+			out = unionDevices(out, devicesForIPSet(member, p, devices, visited))
+		} else {
+			out = unionDevices(out, devicesForSelector(member, p, devices))
+		}
+	}
+	delete(visited, name)
+	return out
 }
 
 func devicesForSourceSelector(selector string, p Policy, devices []api.Device) []api.Device {
