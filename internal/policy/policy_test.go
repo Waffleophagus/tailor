@@ -1180,3 +1180,36 @@ func TestEffectiveAccessEdgesAutogroupMembersPluralSelector(t *testing.T) {
 	assertEdge(t, edges, "alice", "server", api.AccessScopeHTTP, []string{"443"})
 	assertEdge(t, edges, "bob", "server", api.AccessScopeHTTP, []string{"443"})
 }
+
+func TestUnresolvedSelectorsRecognizesLocalpartSSHUser(t *testing.T) {
+	raw := `{
+		"ssh": [
+			{"action": "accept", "src": ["alice@example.com"], "dst": ["tag:server"], "users": ["localpart:*@example.com", "unknownprefix:foo"]}
+		]
+	}`
+	devices := []api.Device{
+		{ID: "alice", Owner: "alice@example.com", TailscaleIPs: []string{"100.64.0.1"}},
+		{ID: "server", Tags: []string{"tag:server"}, TailscaleIPs: []string{"100.64.0.2"}},
+	}
+	p, err := Parse(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unresolved := unresolvedSelectors(p, devices)
+	// localpart:*@domain is a valid SSH user selector and must NOT be flagged.
+	for _, u := range unresolved {
+		if u.Selector == "localpart:*@example.com" {
+			t.Errorf("localpart:*@example.com should be recognized as a valid SSH user selector, but was flagged: %#v", u)
+		}
+	}
+	// negative control: an unrecognized "prefix:" user selector SHOULD be flagged.
+	var foundUnknown bool
+	for _, u := range unresolved {
+		if u.Selector == "unknownprefix:foo" && u.Section == "ssh" && u.Role == "users" {
+			foundUnknown = true
+		}
+	}
+	if !foundUnknown {
+		t.Errorf("unknownprefix:foo should be flagged as an unresolved SSH user selector; got %#v", unresolved)
+	}
+}

@@ -692,6 +692,11 @@ func unresolvedSelectors(p Policy, devices []api.Device) []api.UnresolvedSelecto
 				unresolved = append(unresolved, api.UnresolvedSelector{Section: "ssh", Index: i, Selector: dst, Role: "dst"})
 			}
 		}
+		for _, user := range rule.Users {
+			if !isResolvedSSHUser(user) {
+				unresolved = append(unresolved, api.UnresolvedSelector{Section: "ssh", Index: i, Selector: user, Role: "users"})
+			}
+		}
 	}
 	sort.Slice(unresolved, func(i, j int) bool {
 		if unresolved[i].Section != unresolved[j].Section {
@@ -703,6 +708,26 @@ func unresolvedSelectors(p Policy, devices []api.Device) []api.UnresolvedSelecto
 		return unresolved[i].Selector < unresolved[j].Selector
 	})
 	return unresolved
+}
+
+// isResolvedSSHUser reports whether user is a recognized Tailscale SSH user selector.
+// SSH user selectors are not device selectors (they do not affect edge resolution), but
+// known-valid patterns must be recognized so they are not flagged as unresolved.
+// Recognized: "*", autogroup:* (e.g. autogroup:nonroot), localpart:*@domain,
+// bare usernames (root, ubuntu), and email addresses. An unrecognized "prefix:" form
+// is treated as unresolved.
+func isResolvedSSHUser(user string) bool {
+	user = strings.TrimSpace(user)
+	if user == "" || user == "*" {
+		return true
+	}
+	if strings.HasPrefix(user, "autogroup:") || strings.HasPrefix(user, "localpart:") {
+		return true
+	}
+	if !strings.Contains(user, ":") {
+		return true
+	}
+	return false
 }
 
 func unsupportedSections(raw string) []string {
