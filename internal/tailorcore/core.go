@@ -480,7 +480,7 @@ func (s *Service) enrichTopologyFromCloud(ctx context.Context, devices []api.Dev
 	services, err := s.cloudAPI.VIPServices(ctx)
 	if err != nil {
 		s.logger.Debug("vip services unavailable", "error", err.Error())
-		return devices
+		return s.enrichTopologyFromLocalServices(ctx, devices)
 	}
 	return append(devices, serviceDevicesFromCloud(services)...)
 }
@@ -645,13 +645,14 @@ func serviceDevicesFromCloud(services []cloudapi.VIPService) []api.Device {
 			ip = service.Addrs[0]
 		}
 		out = append(out, api.Device{
-			ID:           name,
-			Kind:         "service",
-			Name:         name,
-			IP:           ip,
-			TailscaleIPs: append([]string(nil), service.Addrs...),
-			Online:       true,
-			Tags:         append([]string(nil), service.Tags...),
+			ID:            name,
+			Kind:          "service",
+			Name:          name,
+			IP:            ip,
+			TailscaleIPs:  append([]string{}, service.Addrs...),
+			RoutedSubnets: []string{},
+			Online:        true,
+			Tags:          append([]string{}, service.Tags...),
 		})
 	}
 	return out

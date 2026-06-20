@@ -778,6 +778,7 @@ func TestEffectiveAccessEdgesAutogroupInternetMatchesPublicRoutesOnly(t *testing
 		{ID: "alice", Owner: "alice@example.com", TailscaleIPs: []string{"100.64.0.1"}},
 		{ID: "exit", Tags: []string{"tag:exit"}, TailscaleIPs: []string{"100.64.0.2"}, RoutedSubnets: []string{"0.0.0.0/0"}},
 		{ID: "private", Tags: []string{"tag:private"}, TailscaleIPs: []string{"100.64.0.3"}, RoutedSubnets: []string{"10.0.0.0/8"}},
+		{ID: "private-subnet", Tags: []string{"tag:private"}, TailscaleIPs: []string{"100.64.0.5"}, RoutedSubnets: []string{"10.1.0.0/16"}},
 		{ID: "ipv6", Tags: []string{"tag:ipv6"}, TailscaleIPs: []string{"100.64.0.4"}, RoutedSubnets: []string{"2000::/3"}},
 	}
 
@@ -785,7 +786,7 @@ func TestEffectiveAccessEdgesAutogroupInternetMatchesPublicRoutesOnly(t *testing
 	assertEdge(t, edges, "alice", "exit", api.AccessScopeHTTP, []string{"443"})
 	assertEdge(t, edges, "alice", "ipv6", api.AccessScopeHTTP, []string{"443"})
 	for _, edge := range edges {
-		if edge.To == "private" {
+		if edge.To == "private" || edge.To == "private-subnet" {
 			t.Fatalf("private-only route should not match autogroup:internet: %#v", edge)
 		}
 	}

@@ -102,7 +102,7 @@ func upsertPostureEntry(raw, key string, assertions []string) (string, error) {
 		return "", fmt.Errorf("posture name and at least one assertion are required")
 	}
 	if !strings.HasPrefix(key, "posture:") {
-		return "", fmt.Errorf("posture name must start with posture:")
+		return "", fmt.Errorf("posture name must start with posture")
 	}
 	return upsertObjectMapEntry(raw, "postures", key, assertions)
 }

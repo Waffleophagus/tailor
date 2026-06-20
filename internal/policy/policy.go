@@ -1533,9 +1533,7 @@ func devicesForSelector(selector string, p Policy, devices []api.Device) []api.D
 	if strings.HasPrefix(selector, "svc:") {
 		return devicesForService(selector, devices)
 	}
-	if strings.HasPrefix(selector, "host:") {
-		selector = strings.TrimPrefix(selector, "host:")
-	}
+	selector = strings.TrimPrefix(selector, "host:")
 	if strings.HasPrefix(selector, "ipset:") {
 		return devicesForIPSet(selector, p, devices, map[string]bool{})
 	}
@@ -1817,7 +1815,7 @@ func devicesForInternet(devices []api.Device) []api.Device {
 func publicInternetOverlaps(prefix netip.Prefix) bool {
 	if prefix.Addr().Is4() {
 		for _, private := range []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10", "169.254.0.0/16"} {
-			if prefix.String() == private {
+			if netip.MustParsePrefix(private).Contains(prefix.Addr()) {
 				return false
 			}
 		}

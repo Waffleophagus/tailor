@@ -234,13 +234,14 @@ func VIPServiceDevicesFromIPNStatus(status *ipnstate.Status) []api.Device {
 			ip = tailscaleIPs[0]
 		}
 		devices = append(devices, api.Device{
-			ID:           name,
-			Kind:         "service",
-			Name:         name,
-			IP:           ip,
-			TailscaleIPs: tailscaleIPs,
-			Online:       true,
-			Tags:         []string{},
+			ID:            name,
+			Kind:          "service",
+			Name:          name,
+			IP:            ip,
+			TailscaleIPs:  tailscaleIPs,
+			RoutedSubnets: []string{},
+			Online:        true,
+			Tags:          []string{},
 		})
 	}
 	return devices

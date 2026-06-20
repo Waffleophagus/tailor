@@ -147,6 +147,12 @@ func TestServiceDevicesFromCloudCreatesServiceNodes(t *testing.T) {
 	if got.ID != "svc:web" || got.Kind != "service" || got.IP != "100.100.0.1" || !got.Online {
 		t.Fatalf("service node = %#v", got)
 	}
+	if len(got.Tags) == 0 || len(got.TailscaleIPs) == 0 {
+		t.Fatalf("service arrays must be non-empty: %#v", got)
+	}
+	if got.RoutedSubnets == nil {
+		t.Fatalf("routed subnets must be an empty, non-nil slice: %#v", got)
+	}
 	if len(got.TailscaleIPs) != 2 || got.TailscaleIPs[1] != "fd7a:115c:a1e0::1" {
 		t.Fatalf("service addrs = %#v", got.TailscaleIPs)
 	}

@@ -410,7 +410,11 @@ func (c *Client) fetchPolicy(ctx context.Context, tailnet, apiKey string) (strin
 		c.logCloudAPI(http.MethodGet, tailnet, "", 0, time.Since(start), err)
 		return "", fmt.Errorf("policy fetch failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			c.logger.Warn("close cloud api response body", "error", err)
+		}
+	}()
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
 	if err != nil {
@@ -449,7 +453,11 @@ func (c *Client) getJSONEndpoint(ctx context.Context, session *Session, endpoint
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			c.logger.Warn("close cloud api response body", "error", err)
+		}
+	}()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
 	if err != nil {
 		return err
@@ -479,7 +487,11 @@ func (c *Client) sendPolicy(ctx context.Context, method, tailnet, apiKey, suffix
 		c.logCloudAPI(method, tailnet, suffix, 0, time.Since(start), err)
 		return fmt.Errorf("policy request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			c.logger.Warn("close cloud api response body", "error", err)
+		}
+	}()
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
 	if err != nil {

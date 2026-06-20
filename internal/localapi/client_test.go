@@ -240,13 +240,14 @@ func TestVIPServiceDevicesFromIPNStatusUsesServiceHostCapMap(t *testing.T) {
 		t.Fatalf("got %d devices, want 1: %#v", len(got), got)
 	}
 	assertDevice(t, got[0], api.Device{
-		ID:           "svc:web",
-		Kind:         "service",
-		Name:         "svc:web",
-		IP:           "100.100.0.1",
-		TailscaleIPs: []string{"100.100.0.1", "fd7a:115c:a1e0::1"},
-		Online:       true,
-		Tags:         []string{},
+		ID:            "svc:web",
+		Kind:          "service",
+		Name:          "svc:web",
+		IP:            "100.100.0.1",
+		TailscaleIPs:  []string{"100.100.0.1", "fd7a:115c:a1e0::1"},
+		RoutedSubnets: []string{},
+		Online:        true,
+		Tags:          []string{},
 	})
 }
 
@@ -303,7 +304,7 @@ func assertDevice(t *testing.T, got, want api.Device) {
 
 func assertStrings(t *testing.T, label string, got, want []string) {
 	t.Helper()
-	if len(got) != len(want) {
+	if (got == nil) != (want == nil) || len(got) != len(want) {
 		t.Fatalf("%s mismatch: got %#v want %#v", label, got, want)
 	}
 	for i := range want {
