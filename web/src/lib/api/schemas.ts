@@ -24,15 +24,19 @@ export const localApiStatusResponseSchema = z.object({
 
 export const deviceSchema = z.object({
 	id: z.string(),
+	kind: z.enum(['device', 'service']).optional(),
 	name: z.string(),
 	ip: z.string(),
 	tailscaleIps: z.array(z.string()),
 	os: z.string(),
 	online: z.boolean(),
 	owner: z.string(),
+	roles: z.array(z.string()).optional(),
 	tags: z.array(z.string()),
+	shared: z.boolean().optional(),
 	subnetRouter: z.boolean(),
 	routedSubnets: z.array(z.string()),
+	postureAttrs: z.record(z.string(), z.unknown()).optional(),
 	lastSeen: z.string().optional()
 });
 
@@ -131,7 +135,8 @@ export const aclDraftSchema = z.object({
 	action: z.string(),
 	src: z.array(z.string()),
 	dst: z.array(z.string()),
-	proto: z.string().optional()
+	proto: z.string().optional(),
+	srcPosture: z.array(z.string()).optional()
 });
 
 export const policyDraftResponseSchema = z.object({
@@ -253,7 +258,8 @@ export const policyMutationSchema = z.object({
 			action: z.string().optional(),
 			src: z.array(z.string()).optional(),
 			dst: z.array(z.string()).optional(),
-			proto: z.string().optional()
+			proto: z.string().optional(),
+			srcPosture: z.array(z.string()).optional()
 		})
 		.optional(),
 	grant: z
@@ -261,11 +267,14 @@ export const policyMutationSchema = z.object({
 			src: z.array(z.string()).optional(),
 			dst: z.array(z.string()).optional(),
 			ip: z.array(z.string()).optional(),
-			app: z.record(z.string(), z.unknown()).optional()
+			app: z.record(z.string(), z.unknown()).optional(),
+			srcPosture: z.array(z.string()).optional(),
+			via: z.array(z.string()).optional()
 		})
 		.optional(),
 	host: z.string().optional(),
 	ipSet: z.array(z.string()).optional(),
+	posture: z.array(z.string()).optional(),
 	members: z.array(z.string()).optional(),
 	owners: z.array(z.string()).optional(),
 	value: z.unknown().optional()

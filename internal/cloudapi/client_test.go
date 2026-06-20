@@ -160,3 +160,180 @@ func TestValidateAndSavePolicyUsesExplicitDraftAndRefreshesPolicy(t *testing.T) 
 		t.Fatal("expected empty explicit draft save to fail")
 	}
 }
+
+func TestDevicesUsersPostureAndVIPServicesFetchAuthenticatedMetadata(t *testing.T) {
+	var sawDevicesQuery string
+	var sawUsersQuery string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/tailnet/example.com/acl":
+			_, _ = w.Write([]byte(`{"acls":[]}`))
+		case "/api/v2/tailnet/example.com/devices":
+			sawDevicesQuery = r.URL.RawQuery
+			_, _ = w.Write([]byte(`{"devices":[{"addresses":["100.64.0.1"],"nodeId":"n1","user":"alice@example.com","clientVersion":"1.94.2","os":"linux","isExternal":true}]}`))
+		case "/api/v2/tailnet/example.com/users":
+			sawUsersQuery = r.URL.RawQuery
+			_, _ = w.Write([]byte(`{"users":[{"id":"u1","loginName":"alice@example.com","role":"admin","type":"member"}]}`))
+		case "/api/v2/device/n1/attributes":
+			_, _ = w.Write([]byte(`{"attributes":{"custom:tier":"prod","node:osVersion":"6.8.0"}}`))
+		case "/api/v2/tailnet/example.com/services":
+			_, _ = w.Write([]byte(`{"vipServices":[{"name":"svc:web","addrs":["100.100.0.1"],"tags":["tag:web"]}]}`))
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client := New(WithBaseURL(server.URL))
+	if _, err := client.Authenticate(context.Background(), AuthRequest{Tailnet: "example.com", APIKey: "tskey-api-test"}); err != nil {
+		t.Fatal(err)
+	}
+	devices, err := client.Devices(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sawDevicesQuery != "fields=all" {
+		t.Fatalf("devices query = %q, want fields=all", sawDevicesQuery)
+	}
+	if len(devices) != 1 || !devices[0].IsExternal || devices[0].ClientVersion != "1.94.2" {
+		t.Fatalf("devices = %#v", devices)
+	}
+	users, err := client.Users(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sawUsersQuery != "role=all&type=all" {
+		t.Fatalf("users query = %q, want role=all&type=all", sawUsersQuery)
+	}
+	if len(users) != 1 || users[0].LoginName != "alice@example.com" || users[0].Role != "admin" {
+		t.Fatalf("users = %#v", users)
+	}
+	attrs, err := client.DevicePostureAttributes(context.Background(), "n1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if attrs.Attributes["custom:tier"] != "prod" || attrs.Attributes["node:osVersion"] != "6.8.0" {
+		t.Fatalf("attrs = %#v", attrs.Attributes)
+	}
+	services, err := client.VIPServices(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(services) != 1 || services[0].Name != "svc:web" || services[0].Addrs[0] != "100.100.0.1" {
+		t.Fatalf("services = %#v", services)
+	}
+}
+
+func TestMetadataMethodsReturnNilInDevMode(t *testing.T) {
+	client := New()
+	client.session = &Session{Tailnet: "demo.tailor.ts.net", APIKey: "tskey-api-tailor-dev", Policy: `{"acls":[]}`, DevMode: true}
+
+	if devices, err := client.Devices(context.Background()); err != nil || devices != nil {
+		t.Fatalf("dev devices = %#v, %v; want nil, nil", devices, err)
+	}
+	if users, err := client.Users(context.Background()); err != nil || users != nil {
+		t.Fatalf("dev users = %#v, %v; want nil, nil", users, err)
+	}
+	if attrs, err := client.DevicePostureAttributes(context.Background(), "n1"); err != nil || len(attrs.Attributes) != 0 {
+		t.Fatalf("dev attrs = %#v, %v; want empty, nil", attrs, err)
+	}
+	if services, err := client.VIPServices(context.Background()); err != nil || services != nil {
+		t.Fatalf("dev services = %#v, %v; want nil, nil", services, err)
+	}
+}
+
+func TestDevicePostureAttributesValidatesAndEscapesDeviceID(t *testing.T) {
+	var sawPath string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/tailnet/example.com/acl":
+			_, _ = w.Write([]byte(`{"acls":[]}`))
+		case "/api/v2/device/node/with/slash/attributes":
+			sawPath = r.URL.EscapedPath()
+			_, _ = w.Write([]byte(`{"attributes":{"custom:enabled":true,"custom:score":90}}`))
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client := New(WithBaseURL(server.URL))
+	if _, err := client.Authenticate(context.Background(), AuthRequest{Tailnet: "example.com", APIKey: "tskey-api-test"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.DevicePostureAttributes(context.Background(), " "); err == nil {
+		t.Fatal("expected blank device ID to fail")
+	}
+	attrs, err := client.DevicePostureAttributes(context.Background(), "node/with/slash")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sawPath != "/api/v2/device/node%2Fwith%2Fslash/attributes" {
+		t.Fatalf("escaped path = %q", sawPath)
+	}
+	if attrs.Attributes["custom:enabled"] != true || attrs.Attributes["custom:score"].(float64) != 90 {
+		t.Fatalf("attrs = %#v", attrs.Attributes)
+	}
+}
+
+func TestVIPServicesFallsBackOnlyOnNotFound(t *testing.T) {
+	var paths []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		switch r.URL.Path {
+		case "/api/v2/tailnet/example.com/acl":
+			_, _ = w.Write([]byte(`{"acls":[]}`))
+		case "/api/v2/tailnet/example.com/services":
+			http.Error(w, `{"message":"missing"}`, http.StatusNotFound)
+		case "/api/v2/tailnet/example.com/vip-services":
+			_, _ = w.Write([]byte(`{"vipServices":[{"name":"svc:fallback","addrs":["100.100.0.2"]}]}`))
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client := New(WithBaseURL(server.URL))
+	if _, err := client.Authenticate(context.Background(), AuthRequest{Tailnet: "example.com", APIKey: "tskey-api-test"}); err != nil {
+		t.Fatal(err)
+	}
+	services, err := client.VIPServices(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(services) != 1 || services[0].Name != "svc:fallback" {
+		t.Fatalf("services = %#v", services)
+	}
+	if strings.Join(paths, ",") != "/api/v2/tailnet/example.com/acl,/api/v2/tailnet/example.com/services,/api/v2/tailnet/example.com/vip-services" {
+		t.Fatalf("paths = %#v", paths)
+	}
+}
+
+func TestVIPServicesDoesNotFallBackOnServerError(t *testing.T) {
+	var sawFallback bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/tailnet/example.com/acl":
+			_, _ = w.Write([]byte(`{"acls":[]}`))
+		case "/api/v2/tailnet/example.com/services":
+			http.Error(w, `{"message":"boom"}`, http.StatusInternalServerError)
+		case "/api/v2/tailnet/example.com/vip-services":
+			sawFallback = true
+			_, _ = w.Write([]byte(`{"vipServices":[]}`))
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client := New(WithBaseURL(server.URL))
+	if _, err := client.Authenticate(context.Background(), AuthRequest{Tailnet: "example.com", APIKey: "tskey-api-test"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.VIPServices(context.Background()); err == nil {
+		t.Fatal("expected server error")
+	}
+	if sawFallback {
+		t.Fatal("should not fall back to /vip-services for non-404 errors")
+	}
+}

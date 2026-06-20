@@ -11,51 +11,63 @@ import (
 
 	"github.com/Waffleophagus/tailor/internal/api"
 	"github.com/tailscale/hujson"
+	"tailscale.com/util/cmpver"
 )
 
 type Policy struct {
-	Groups map[string][]string `json:"groups"`
-	Hosts  map[string]string   `json:"hosts"`
-	ACLs   []ACLRule           `json:"acls"`
-	Grants []Grant             `json:"grants"`
-	SSH    []SSHRule           `json:"ssh"`
+	Groups            map[string][]string `json:"groups"`
+	Hosts             map[string]string   `json:"hosts"`
+	Postures          map[string][]string `json:"postures"`
+	IPSets            map[string][]string `json:"ipsets"`
+	DefaultSrcPosture []string            `json:"defaultSrcPosture"`
+	ACLs              []ACLRule           `json:"acls"`
+	Grants            []Grant             `json:"grants"`
+	SSH               []SSHRule           `json:"ssh"`
 }
 
 type ACLRule struct {
-	Action string   `json:"action"`
-	Src    []string `json:"src"`
-	Dst    []string `json:"dst"`
-	Proto  string   `json:"proto"`
+	Action     string   `json:"action"`
+	Src        []string `json:"src"`
+	Dst        []string `json:"dst"`
+	Proto      string   `json:"proto"`
+	SrcPosture []string `json:"srcPosture"`
 }
 
 type Grant struct {
-	Src []string       `json:"src"`
-	Dst []string       `json:"dst"`
-	IP  []string       `json:"ip"`
-	App map[string]any `json:"app"`
+	Src        []string       `json:"src"`
+	Dst        []string       `json:"dst"`
+	IP         []string       `json:"ip"`
+	App        map[string]any `json:"app"`
+	SrcPosture []string       `json:"srcPosture"`
+	Via        []string       `json:"via"`
 }
 
 type SSHRule struct {
-	Action string   `json:"action"`
-	Src    []string `json:"src"`
-	Dst    []string `json:"dst"`
-	Users  []string `json:"users"`
+	Action      string   `json:"action"`
+	Src         []string `json:"src"`
+	Dst         []string `json:"dst"`
+	Users       []string `json:"users"`
+	SrcPosture  []string `json:"srcPosture"`
+	CheckPeriod string   `json:"checkPeriod,omitempty"`
+	AcceptEnv   []string `json:"acceptEnv,omitempty"`
 }
 
 var ErrInvalidPolicy = errors.New("invalid policy")
 
 var supportedPolicySections = map[string]string{
-	"acls":          "ACL rules",
-	"grants":        "Grants",
-	"ssh":           "SSH rules",
-	"groups":        "Groups",
-	"tagOwners":     "Tag owners",
-	"hosts":         "Hosts",
-	"ipsets":        "IP sets",
-	"postures":      "Posture conditions",
-	"nodeAttrs":     "Node attributes",
-	"autoApprovers": "Auto approvers",
-	"tests":         "Tests",
+	"acls":              "ACL rules",
+	"grants":            "Grants",
+	"ssh":               "SSH rules",
+	"groups":            "Groups",
+	"tagOwners":         "Tag owners",
+	"hosts":             "Hosts",
+	"ipsets":            "IP sets",
+	"postures":          "Posture conditions",
+	"sshTests":          "SSH tests",
+	"defaultSrcPosture": "Default source posture",
+	"nodeAttrs":         "Node attributes",
+	"autoApprovers":     "Auto approvers",
+	"tests":             "Tests",
 }
 
 type EdgeOptions struct {
@@ -91,6 +103,12 @@ func Parse(raw string) (Policy, error) {
 	if p.Hosts == nil {
 		p.Hosts = map[string]string{}
 	}
+	if p.Postures == nil {
+		p.Postures = map[string][]string{}
+	}
+	if p.IPSets == nil {
+		p.IPSets = map[string][]string{}
+	}
 	return p, nil
 }
 
@@ -115,6 +133,26 @@ func ValidateTailscaleConstraints(raw string) error {
 			src = strings.TrimSpace(src)
 			if strings.HasPrefix(src, "tag:") {
 				return fmt.Errorf("%w: ssh[%d] uses action \"check\" with tagged source %q; Tailscale SSH check rules do not support tags in src. Use action \"accept\" for tagged device sources, or change src to a user, group, or supported autogroup", ErrInvalidPolicy, index, src)
+			}
+		}
+	}
+	for index, rule := range p.ACLs {
+		for _, dst := range rule.Dst {
+			parsed := parseDstSelector(dst)
+			if err := validatePorts(parsed.Ports); err != nil {
+				return fmt.Errorf("%w: acls[%d] destination %q has invalid ports: %w", ErrInvalidPolicy, index, dst, err)
+			}
+		}
+	}
+	for index, grant := range p.Grants {
+		for _, ip := range grant.IP {
+			if err := validateGrantIP(ip); err != nil {
+				return fmt.Errorf("%w: grants[%d] ip %q is invalid: %w", ErrInvalidPolicy, index, ip, err)
+			}
+		}
+		for _, via := range grant.Via {
+			if !strings.HasPrefix(strings.TrimSpace(via), "tag:") {
+				return fmt.Errorf("%w: grants[%d] via %q must be a tag selector", ErrInvalidPolicy, index, via)
 			}
 		}
 	}
@@ -347,8 +385,10 @@ func ResolveEffectiveAccess(p Policy, devices []api.Device, options EdgeOptions)
 			continue
 		}
 		proto := normalizeProto(rule.Proto)
+		postures := effectiveSrcPosture(rule.SrcPosture, p.DefaultSrcPosture)
 		for _, src := range rule.Src {
-			srcDevices := devicesForSelector(src, p, devices)
+			srcDevices := devicesForSourceSelector(src, p, devices)
+			srcDevices = filterDevicesByPosture(srcDevices, postures, p)
 			if options.Perspective != "" {
 				if !selectorIncludesPerspective(src, p, options.Perspective) {
 					srcDevices = nil
@@ -399,8 +439,10 @@ func ResolveEffectiveAccess(p Policy, devices []api.Device, options EdgeOptions)
 		if len(grantScopes) == 0 {
 			continue
 		}
+		postures := effectiveSrcPosture(grant.SrcPosture, p.DefaultSrcPosture)
 		for _, src := range grant.Src {
-			srcDevices := devicesForSelector(src, p, devices)
+			srcDevices := devicesForSourceSelector(src, p, devices)
+			srcDevices = filterDevicesByPosture(srcDevices, postures, p)
 			if options.Perspective != "" {
 				if !selectorIncludesPerspective(src, p, options.Perspective) {
 					srcDevices = nil
@@ -411,6 +453,7 @@ func ResolveEffectiveAccess(p Policy, devices []api.Device, options EdgeOptions)
 			for _, dst := range grant.Dst {
 				for _, from := range srcDevices {
 					dstDevices := devicesForDstSelector(dst, from, p, devices)
+					dstDevices = filterDevicesByVia(dstDevices, grant.Via)
 					for _, to := range dstDevices {
 						if from.ID == "" || to.ID == "" {
 							continue
@@ -438,6 +481,61 @@ func ResolveEffectiveAccess(p Policy, devices []api.Device, options EdgeOptions)
 						}
 						a.policyRefs = append(a.policyRefs, api.PolicyRef{
 							Section: "grants",
+							Index:   i,
+							Src:     src,
+							Dst:     dst,
+						})
+					}
+				}
+			}
+		}
+	}
+	for i, rule := range p.SSH {
+		action := strings.TrimSpace(strings.ToLower(rule.Action))
+		if action != "accept" && action != "check" {
+			continue
+		}
+		if len(compactStrings(rule.Users)) == 0 {
+			continue
+		}
+		postures := effectiveSrcPosture(rule.SrcPosture, p.DefaultSrcPosture)
+		for _, src := range rule.Src {
+			srcDevices := devicesForSourceSelector(src, p, devices)
+			srcDevices = filterDevicesByPosture(srcDevices, postures, p)
+			if options.Perspective != "" {
+				if !selectorIncludesPerspective(src, p, options.Perspective) {
+					srcDevices = nil
+				} else {
+					srcDevices = intersectDevices(srcDevices, devicesForPerspective(options.Perspective, p, devices))
+				}
+			}
+			for _, dst := range rule.Dst {
+				for _, from := range srcDevices {
+					dstDevices := devicesForDstSelector(dst, from, p, devices)
+					dstDevices = filterOutServices(dstDevices)
+					for _, to := range dstDevices {
+						if from.ID == "" || to.ID == "" {
+							continue
+						}
+						key := from.ID + "\x00" + to.ID
+						a := acc[key]
+						if a == nil {
+							a = &accessAccumulator{
+								from:         from.ID,
+								to:           to.ID,
+								protocols:    map[string]bool{},
+								ports:        map[string]bool{},
+								perspectives: map[string]bool{},
+							}
+							acc[key] = a
+						}
+						a.protocols["tcp"] = true
+						a.ports["22"] = true
+						if options.Perspective != "" {
+							a.perspectives[options.Perspective] = true
+						}
+						a.policyRefs = append(a.policyRefs, api.PolicyRef{
+							Section: "ssh",
 							Index:   i,
 							Src:     src,
 							Dst:     dst,
@@ -556,7 +654,7 @@ func unresolvedSelectors(p Policy, devices []api.Device) []api.UnresolvedSelecto
 			continue
 		}
 		for _, src := range rule.Src {
-			if len(devicesForSelector(src, p, devices)) == 0 {
+			if len(devicesForSourceSelector(src, p, devices)) == 0 {
 				unresolved = append(unresolved, api.UnresolvedSelector{Section: "acls", Index: i, Selector: src, Role: "src"})
 			}
 		}
@@ -569,13 +667,34 @@ func unresolvedSelectors(p Policy, devices []api.Device) []api.UnresolvedSelecto
 	}
 	for i, grant := range p.Grants {
 		for _, src := range grant.Src {
-			if len(devicesForSelector(src, p, devices)) == 0 {
+			if len(devicesForSourceSelector(src, p, devices)) == 0 {
 				unresolved = append(unresolved, api.UnresolvedSelector{Section: "grants", Index: i, Selector: src, Role: "src"})
 			}
 		}
 		for _, dst := range grant.Dst {
 			if len(devicesForSelector(dst, p, devices)) == 0 {
 				unresolved = append(unresolved, api.UnresolvedSelector{Section: "grants", Index: i, Selector: dst, Role: "dst"})
+			}
+		}
+	}
+	for i, rule := range p.SSH {
+		action := strings.TrimSpace(strings.ToLower(rule.Action))
+		if action != "accept" && action != "check" {
+			continue
+		}
+		for _, src := range rule.Src {
+			if len(devicesForSourceSelector(src, p, devices)) == 0 {
+				unresolved = append(unresolved, api.UnresolvedSelector{Section: "ssh", Index: i, Selector: src, Role: "src"})
+			}
+		}
+		for _, dst := range rule.Dst {
+			if len(filterOutServices(devicesForSelector(dst, p, devices))) == 0 {
+				unresolved = append(unresolved, api.UnresolvedSelector{Section: "ssh", Index: i, Selector: dst, Role: "dst"})
+			}
+		}
+		for _, user := range rule.Users {
+			if !isResolvedSSHUser(user) {
+				unresolved = append(unresolved, api.UnresolvedSelector{Section: "ssh", Index: i, Selector: user, Role: "users"})
 			}
 		}
 	}
@@ -589,6 +708,26 @@ func unresolvedSelectors(p Policy, devices []api.Device) []api.UnresolvedSelecto
 		return unresolved[i].Selector < unresolved[j].Selector
 	})
 	return unresolved
+}
+
+// isResolvedSSHUser reports whether user is a recognized Tailscale SSH user selector.
+// SSH user selectors are not device selectors (they do not affect edge resolution), but
+// known-valid patterns must be recognized so they are not flagged as unresolved.
+// Recognized: "*", autogroup:* (e.g. autogroup:nonroot), localpart:*@domain,
+// bare usernames (root, ubuntu), and email addresses. An unrecognized "prefix:" form
+// is treated as unresolved.
+func isResolvedSSHUser(user string) bool {
+	user = strings.TrimSpace(user)
+	if user == "" || user == "*" {
+		return true
+	}
+	if strings.HasPrefix(user, "autogroup:") || strings.HasPrefix(user, "localpart:") {
+		return true
+	}
+	if !strings.Contains(user, ":") {
+		return true
+	}
+	return false
 }
 
 func unsupportedSections(raw string) []string {
@@ -679,7 +818,7 @@ func selectorIncludesPerspective(selector string, p Policy, perspective string) 
 			}
 		}
 	}
-	if selector == "autogroup:member" {
+	if selector == "autogroup:member" || selector == "autogroup:members" {
 		if strings.Contains(perspective, "@") {
 			return true
 		}
@@ -698,7 +837,7 @@ func selectorIncludesPerspective(selector string, p Policy, perspective string) 
 			return true
 		}
 	}
-	if selector == "autogroup:admin" && (perspective == "autogroup:admin" || strings.Contains(perspective, "@")) {
+	if strings.HasPrefix(selector, "autogroup:") && selector == perspective {
 		return true
 	}
 	if strings.HasPrefix(selector, "group:") {
@@ -726,14 +865,16 @@ func devicesForPerspective(perspective string, p Policy, devices []api.Device) [
 		return devicesForTag(perspective, devices)
 	}
 	switch perspective {
-	case "autogroup:member":
-		return devicesWithOwnerUntagged(devices)
-	case "autogroup:admin":
+	case "autogroup:member", "autogroup:members":
 		return devicesWithOwner(devices)
+	case "autogroup:owner", "autogroup:admin", "autogroup:it-admin", "autogroup:billing-admin", "autogroup:network-admin", "autogroup:auditor":
+		return devicesForRole(strings.TrimPrefix(perspective, "autogroup:"), devices)
 	case "autogroup:tagged":
 		return devicesWithTags(devices)
+	case "autogroup:shared":
+		return devicesSharedWithTailnet(devices)
 	case "cohort:member+tagged":
-		return unionDevices(devicesWithOwnerUntagged(devices), devicesWithTags(devices))
+		return unionDevices(devicesWithOwner(devices), devicesWithTags(devices))
 	}
 	if strings.Contains(perspective, "@") {
 		return devicesForUser(perspective, devices)
@@ -780,6 +921,313 @@ func devicesForDstSelector(selector string, from api.Device, p Policy, devices [
 	return devicesForSelector(selector, p, devices)
 }
 
+func effectiveSrcPosture(rulePosture, defaultPosture []string) []string {
+	if len(rulePosture) > 0 {
+		return rulePosture
+	}
+	return defaultPosture
+}
+
+func filterDevicesByPosture(devices []api.Device, postures []string, p Policy) []api.Device {
+	postures = compactStrings(postures)
+	if len(postures) == 0 {
+		return devices
+	}
+	var out []api.Device
+	for _, device := range devices {
+		if deviceMatchesAnyPosture(device, postures, p.Postures) {
+			out = append(out, device)
+		}
+	}
+	return out
+}
+
+func deviceMatchesAnyPosture(device api.Device, postureNames []string, definitions map[string][]string) bool {
+	for _, name := range postureNames {
+		assertions := definitions[name]
+		if len(assertions) == 0 {
+			continue
+		}
+		matched := true
+		for _, assertion := range assertions {
+			if !deviceMatchesPostureAssertion(device, assertion) {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			return true
+		}
+	}
+	return false
+}
+
+func deviceMatchesPostureAssertion(device api.Device, assertion string) bool {
+	assertion = strings.TrimSpace(assertion)
+	if assertion == "" {
+		return true
+	}
+	if strings.HasSuffix(assertion, " IS SET") {
+		_, ok := postureAttrValue(device, strings.TrimSpace(strings.TrimSuffix(assertion, " IS SET")))
+		return ok
+	}
+	if strings.HasSuffix(assertion, " NOT SET") {
+		return false
+	}
+	for _, op := range []string{" NOT IN ", " IN ", ">=", "<=", ">", "<", "==", "!="} {
+		if idx := strings.Index(assertion, op); idx >= 0 {
+			key := strings.TrimSpace(assertion[:idx])
+			rawWant := strings.TrimSpace(assertion[idx+len(op):])
+			got, ok := postureAttrValue(device, key)
+			if !ok {
+				return false
+			}
+			if !postureScalarSupported(got) {
+				return false
+			}
+			switch strings.TrimSpace(op) {
+			case "==":
+				want, ok := parsePostureLiteral(rawWant)
+				return ok && postureValuesEqual(got, want)
+			case "!=":
+				want, ok := parsePostureLiteral(rawWant)
+				return ok && !postureValuesEqual(got, want)
+			case "IN":
+				return postureValueIn(got, rawWant)
+			case "NOT IN":
+				return !postureValueIn(got, rawWant)
+			case ">=", ">", "<=", "<":
+				return comparePostureValues(key, got, rawWant, strings.TrimSpace(op))
+			}
+		}
+	}
+	return false
+}
+
+func comparePostureValues(key string, got any, rawWant, op string) bool {
+	want, ok := parsePostureLiteral(rawWant)
+	if !ok {
+		return false
+	}
+	var cmp int
+	switch {
+	case key == "node:osVersion" || key == "node:tsVersion":
+		left, okLeft := postureString(got)
+		right, okRight := postureString(want)
+		if !okLeft || !okRight {
+			return false
+		}
+		cmp = cmpver.Compare(left, right)
+	default:
+		left, okLeft := postureNumber(got)
+		right, okRight := postureNumber(want)
+		if !okLeft || !okRight {
+			return false
+		}
+		switch {
+		case left < right:
+			cmp = -1
+		case left > right:
+			cmp = 1
+		default:
+			cmp = 0
+		}
+	}
+	switch op {
+	case ">=":
+		return cmp >= 0
+	case ">":
+		return cmp > 0
+	case "<=":
+		return cmp <= 0
+	case "<":
+		return cmp < 0
+	default:
+		return false
+	}
+}
+
+func postureAttrValue(device api.Device, key string) (any, bool) {
+	if device.PostureAttrs != nil {
+		if value, ok := device.PostureAttrs[key]; ok {
+			return value, true
+		}
+	}
+	switch key {
+	case "node:os":
+		if device.OS == "" {
+			return nil, false
+		}
+		return strings.ToLower(device.OS), true
+	default:
+		return nil, false
+	}
+}
+
+func parsePostureLiteral(value string) (any, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil, false
+	}
+	if strings.HasPrefix(value, "'") && strings.HasSuffix(value, "'") && len(value) >= 2 {
+		return strings.Trim(value, "'"), true
+	}
+	if strings.HasPrefix(value, `"`) && strings.HasSuffix(value, `"`) {
+		var out string
+		if err := json.Unmarshal([]byte(value), &out); err != nil {
+			return nil, false
+		}
+		return out, true
+	}
+	if value == "true" {
+		return true, true
+	}
+	if value == "false" {
+		return false, true
+	}
+	if n, err := strconv.ParseFloat(value, 64); err == nil {
+		return n, true
+	}
+	return nil, false
+}
+
+func postureListValues(raw string) ([]any, bool) {
+	raw = strings.TrimSpace(raw)
+	if !strings.HasPrefix(raw, "[") || !strings.HasSuffix(raw, "]") {
+		return nil, false
+	}
+	raw = strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(raw, "["), "]"))
+	if raw == "" {
+		return nil, true
+	}
+	parts := splitPostureList(raw)
+	values := make([]any, 0, len(parts))
+	for _, part := range parts {
+		value, ok := parsePostureLiteral(part)
+		if !ok {
+			return nil, false
+		}
+		values = append(values, value)
+	}
+	return values, true
+}
+
+func splitPostureList(raw string) []string {
+	var parts []string
+	start := 0
+	var quote rune
+	escaped := false
+	for i, r := range raw {
+		if escaped {
+			escaped = false
+			continue
+		}
+		if r == '\\' && quote == '"' {
+			escaped = true
+			continue
+		}
+		if quote != 0 {
+			if r == quote {
+				quote = 0
+			}
+			continue
+		}
+		if r == '\'' || r == '"' {
+			quote = r
+			continue
+		}
+		if r == ',' {
+			parts = append(parts, strings.TrimSpace(raw[start:i]))
+			start = i + len(string(r))
+		}
+	}
+	parts = append(parts, strings.TrimSpace(raw[start:]))
+	return parts
+}
+
+func postureValueIn(got any, rawWant string) bool {
+	values, ok := postureListValues(rawWant)
+	if !ok {
+		return false
+	}
+	for _, want := range values {
+		if postureValuesEqual(got, want) {
+			return true
+		}
+	}
+	return false
+}
+
+func postureValuesEqual(left, right any) bool {
+	if leftString, ok := postureString(left); ok {
+		rightString, ok := postureString(right)
+		return ok && leftString == rightString
+	}
+	if leftBool, ok := left.(bool); ok {
+		rightBool, ok := right.(bool)
+		return ok && leftBool == rightBool
+	}
+	if leftNumber, ok := postureNumber(left); ok {
+		rightNumber, ok := postureNumber(right)
+		return ok && leftNumber == rightNumber
+	}
+	return false
+}
+
+func postureScalarSupported(value any) bool {
+	// Tailscale documents posture attribute values as string, number, or bool.
+	// Array/object values are treated as unsupported so negative comparisons do
+	// not accidentally match just because scalar equality failed.
+	if _, ok := postureString(value); ok {
+		return true
+	}
+	if _, ok := value.(bool); ok {
+		return true
+	}
+	if _, ok := postureNumber(value); ok {
+		return true
+	}
+	return false
+}
+
+func postureString(value any) (string, bool) {
+	text, ok := value.(string)
+	return text, ok
+}
+
+func postureNumber(value any) (float64, bool) {
+	switch typed := value.(type) {
+	case int:
+		return float64(typed), true
+	case int64:
+		return float64(typed), true
+	case float64:
+		return typed, true
+	case json.Number:
+		n, err := typed.Float64()
+		return n, err == nil
+	default:
+		return 0, false
+	}
+}
+
+func filterDevicesByVia(devices []api.Device, via []string) []api.Device {
+	via = compactStrings(via)
+	if len(via) == 0 {
+		return devices
+	}
+	var out []api.Device
+	for _, device := range devices {
+		for _, tag := range via {
+			if deviceHasTag(device, tag) {
+				out = append(out, device)
+				break
+			}
+		}
+	}
+	return out
+}
+
 func findObjectMemberValue(obj *hujson.Object, name string) *hujson.Value {
 	for i := range obj.Members {
 		lit, ok := obj.Members[i].Name.Value.(hujson.Literal)
@@ -801,6 +1249,9 @@ func marshalRule(rule api.ACLDraft) []byte {
 	}
 	if rule.Proto != "" {
 		payload["proto"] = rule.Proto
+	}
+	if len(rule.SrcPosture) > 0 {
+		payload["srcPosture"] = rule.SrcPosture
 	}
 	b, _ := json.Marshal(payload)
 	return b
@@ -1049,14 +1500,14 @@ func devicesForSelector(selector string, p Policy, devices []api.Device) []api.D
 	if selector == "" {
 		return nil
 	}
-	if selector == "*" || selector == "autogroup:admin" {
+	if selector == "*" || selector == "autogroup:danger-all" {
 		return devicesWithOwner(devices)
 	}
-	if selector == "autogroup:member" {
-		return devicesWithOwnerUntagged(devices)
+	if selector == "autogroup:member" || selector == "autogroup:members" {
+		return devicesWithOwner(devices)
 	}
 	if selector == "cohort:member+tagged" {
-		return unionDevices(devicesWithOwnerUntagged(devices), devicesWithTags(devices))
+		return unionDevices(devicesWithOwner(devices), devicesWithTags(devices))
 	}
 	if selector == "autogroup:tagged" {
 		return devicesWithTags(devices)
@@ -1064,14 +1515,33 @@ func devicesForSelector(selector string, p Policy, devices []api.Device) []api.D
 	if selector == "autogroup:self" {
 		return devicesWithOwner(devices)
 	}
+	if selector == "autogroup:internet" {
+		return devicesForInternet(devices)
+	}
+	if selector == "autogroup:shared" {
+		return devicesSharedWithTailnet(devices)
+	}
+	if strings.HasPrefix(selector, "autogroup:") {
+		return devicesForRole(strings.TrimPrefix(selector, "autogroup:"), devices)
+	}
 	if strings.HasPrefix(selector, "group:") {
 		return devicesForUsers(p.Groups[selector], devices)
 	}
 	if strings.HasPrefix(selector, "tag:") {
 		return devicesForTag(selector, devices)
 	}
+	if strings.HasPrefix(selector, "svc:") {
+		return devicesForService(selector, devices)
+	}
+	selector = strings.TrimPrefix(selector, "host:")
+	if strings.HasPrefix(selector, "ipset:") {
+		return devicesForIPSet(selector, p, devices, map[string]bool{})
+	}
 	if host, ok := p.Hosts[selector]; ok {
 		return devicesForIPSelector(host, devices)
+	}
+	if strings.HasPrefix(selector, "user:") {
+		selector = strings.TrimPrefix(selector, "user:")
 	}
 	if strings.Contains(selector, "@") {
 		return devicesForUser(selector, devices)
@@ -1080,6 +1550,43 @@ func devicesForSelector(selector string, p Policy, devices []api.Device) []api.D
 		return devicesForIPSelector(selector, devices)
 	}
 	return nil
+}
+
+func devicesForIPSet(selector string, p Policy, devices []api.Device, visited map[string]bool) []api.Device {
+	name := strings.TrimPrefix(selector, "ipset:")
+	if visited[name] {
+		return nil
+	}
+	members := p.IPSets[name]
+	if len(members) == 0 {
+		return nil
+	}
+	visited[name] = true
+	var out []api.Device
+	for _, member := range members {
+		member = strings.TrimSpace(member)
+		if strings.HasPrefix(member, "ipset:") {
+			out = unionDevices(out, devicesForIPSet(member, p, devices, visited))
+		} else {
+			out = unionDevices(out, devicesForSelector(member, p, devices))
+		}
+	}
+	delete(visited, name)
+	return out
+}
+
+func devicesForSourceSelector(selector string, p Policy, devices []api.Device) []api.Device {
+	return filterOutServices(devicesForSelector(selector, p, devices))
+}
+
+func filterOutServices(devices []api.Device) []api.Device {
+	var out []api.Device
+	for _, device := range devices {
+		if device.Kind != "service" {
+			out = append(out, device)
+		}
+	}
+	return out
 }
 
 func devicesWithOwner(devices []api.Device) []api.Device {
@@ -1097,6 +1604,32 @@ func devicesWithOwnerUntagged(devices []api.Device) []api.Device {
 	for _, d := range devices {
 		if d.Owner != "" && len(d.Tags) == 0 {
 			out = append(out, d)
+		}
+	}
+	return out
+}
+
+func devicesSharedWithTailnet(devices []api.Device) []api.Device {
+	var out []api.Device
+	for _, d := range devices {
+		if d.Shared {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
+func devicesForRole(role string, devices []api.Device) []api.Device {
+	var out []api.Device
+	for _, d := range devices {
+		if len(d.Tags) > 0 {
+			continue
+		}
+		for _, deviceRole := range d.Roles {
+			if strings.EqualFold(deviceRole, role) {
+				out = append(out, d)
+				break
+			}
 		}
 	}
 	return out
@@ -1128,7 +1661,7 @@ func devicesWithTags(devices []api.Device) []api.Device {
 func devicesForUsers(users []string, devices []api.Device) []api.Device {
 	userSet := map[string]bool{}
 	for _, user := range users {
-		userSet[user] = true
+		userSet[normalizeUserSelector(user)] = true
 	}
 	var out []api.Device
 	for _, d := range devices {
@@ -1140,6 +1673,7 @@ func devicesForUsers(users []string, devices []api.Device) []api.Device {
 }
 
 func devicesForUser(user string, devices []api.Device) []api.Device {
+	user = normalizeUserSelector(user)
 	var out []api.Device
 	for _, d := range devices {
 		if d.Owner == user {
@@ -1149,32 +1683,53 @@ func devicesForUser(user string, devices []api.Device) []api.Device {
 	return out
 }
 
+func normalizeUserSelector(user string) string {
+	return strings.TrimPrefix(strings.TrimSpace(user), "user:")
+}
+
 func devicesForTag(tag string, devices []api.Device) []api.Device {
 	var out []api.Device
 	for _, d := range devices {
-		for _, deviceTag := range d.Tags {
-			if deviceTag == tag {
-				out = append(out, d)
-				break
-			}
-		}
-	}
-	return out
-}
-
-func devicesForIPSelector(selector string, devices []api.Device) []api.Device {
-	prefix, prefixErr := netip.ParsePrefix(selector)
-	addr, addrErr := netip.ParseAddr(selector)
-	var out []api.Device
-	for _, d := range devices {
-		if deviceMatchesIP(d, prefix, prefixErr == nil, addr, addrErr == nil) {
+		if deviceHasTag(d, tag) {
 			out = append(out, d)
 		}
 	}
 	return out
 }
 
-func deviceMatchesIP(d api.Device, prefix netip.Prefix, prefixOK bool, addr netip.Addr, addrOK bool) bool {
+func devicesForService(service string, devices []api.Device) []api.Device {
+	var out []api.Device
+	for _, d := range devices {
+		if d.Kind == "service" && d.ID == service {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
+func deviceHasTag(device api.Device, tag string) bool {
+	for _, deviceTag := range device.Tags {
+		if deviceTag == tag {
+			return true
+		}
+	}
+	return false
+}
+
+func devicesForIPSelector(selector string, devices []api.Device) []api.Device {
+	ipRange, rangeOK := parseIPRange(selector)
+	prefix, prefixErr := netip.ParsePrefix(selector)
+	addr, addrErr := netip.ParseAddr(selector)
+	var out []api.Device
+	for _, d := range devices {
+		if deviceMatchesIP(d, prefix, prefixErr == nil, addr, addrErr == nil, ipRange, rangeOK) {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
+func deviceMatchesIP(d api.Device, prefix netip.Prefix, prefixOK bool, addr netip.Addr, addrOK bool, ipRange addrRange, rangeOK bool) bool {
 	for _, raw := range d.TailscaleIPs {
 		ip, err := netip.ParseAddr(raw)
 		if err != nil {
@@ -1184,6 +1739,9 @@ func deviceMatchesIP(d api.Device, prefix netip.Prefix, prefixOK bool, addr neti
 			return true
 		}
 		if prefixOK && prefix.Contains(ip) {
+			return true
+		}
+		if rangeOK && ipRange.contains(ip) {
 			return true
 		}
 	}
@@ -1198,8 +1756,72 @@ func deviceMatchesIP(d api.Device, prefix netip.Prefix, prefixOK bool, addr neti
 		if addrOK && devicePrefix.Contains(addr) {
 			return true
 		}
+		if rangeOK && ipRange.overlapsPrefix(devicePrefix) {
+			return true
+		}
 	}
 	return false
+}
+
+type addrRange struct {
+	from netip.Addr
+	to   netip.Addr
+}
+
+func parseIPRange(selector string) (addrRange, bool) {
+	left, right, ok := strings.Cut(selector, "-")
+	if !ok {
+		return addrRange{}, false
+	}
+	from, err := netip.ParseAddr(strings.TrimSpace(left))
+	if err != nil {
+		return addrRange{}, false
+	}
+	to, err := netip.ParseAddr(strings.TrimSpace(right))
+	if err != nil || from.BitLen() != to.BitLen() || from.Compare(to) > 0 {
+		return addrRange{}, false
+	}
+	return addrRange{from: from, to: to}, true
+}
+
+func (r addrRange) contains(addr netip.Addr) bool {
+	return addr.BitLen() == r.from.BitLen() && r.from.Compare(addr) <= 0 && r.to.Compare(addr) >= 0
+}
+
+func (r addrRange) overlapsPrefix(prefix netip.Prefix) bool {
+	if prefix.Addr().BitLen() != r.from.BitLen() {
+		return false
+	}
+	return prefix.Contains(r.from) || prefix.Contains(r.to) || r.contains(prefix.Addr())
+}
+
+func devicesForInternet(devices []api.Device) []api.Device {
+	var out []api.Device
+	for _, device := range devices {
+		for _, raw := range device.RoutedSubnets {
+			prefix, err := netip.ParsePrefix(raw)
+			if err != nil {
+				continue
+			}
+			if publicInternetOverlaps(prefix) {
+				out = append(out, device)
+				break
+			}
+		}
+	}
+	return out
+}
+
+func publicInternetOverlaps(prefix netip.Prefix) bool {
+	if prefix.Addr().Is4() {
+		for _, private := range []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10", "169.254.0.0/16"} {
+			if netip.MustParsePrefix(private).Contains(prefix.Addr()) {
+				return false
+			}
+		}
+		return prefixesOverlap(prefix, netip.MustParsePrefix("0.0.0.0/0"))
+	}
+	return prefixesOverlap(prefix, netip.MustParsePrefix("2000::/3"))
 }
 
 func prefixesOverlap(a, b netip.Prefix) bool {
@@ -1207,6 +1829,9 @@ func prefixesOverlap(a, b netip.Prefix) bool {
 }
 
 func isIPSelector(selector string) bool {
+	if _, ok := parseIPRange(selector); ok {
+		return true
+	}
 	if _, err := netip.ParseAddr(selector); err == nil {
 		return true
 	}
@@ -1250,6 +1875,52 @@ func parsePorts(raw string) []string {
 	}
 	sort.Strings(ports)
 	return ports
+}
+
+func validateGrantIP(value string) error {
+	value = strings.TrimSpace(value)
+	if value == "" || value == "*" {
+		return nil
+	}
+	portsRaw := value
+	if idx := strings.Index(value, ":"); idx >= 0 {
+		portsRaw = value[idx+1:]
+	}
+	return validatePorts(parsePorts(portsRaw))
+}
+
+func validatePorts(ports []string) error {
+	for _, port := range ports {
+		if port == "*" {
+			continue
+		}
+		if strings.Contains(port, "-") {
+			left, right, ok := strings.Cut(port, "-")
+			if !ok {
+				return fmt.Errorf("invalid range %q", port)
+			}
+			start, err := strconv.Atoi(left)
+			if err != nil {
+				return fmt.Errorf("invalid range start %q", left)
+			}
+			end, err := strconv.Atoi(right)
+			if err != nil {
+				return fmt.Errorf("invalid range end %q", right)
+			}
+			if start < 0 || end > 65535 || start > end {
+				return fmt.Errorf("range %q must be between 0 and 65535", port)
+			}
+			continue
+		}
+		value, err := strconv.Atoi(port)
+		if err != nil {
+			return fmt.Errorf("invalid port %q", port)
+		}
+		if value < 0 || value > 65535 {
+			return fmt.Errorf("port %q must be between 0 and 65535", port)
+		}
+	}
+	return nil
 }
 
 func normalizeProto(proto string) string {

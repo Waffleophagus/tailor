@@ -28,15 +28,21 @@ export type LocalApiStatusResponse = {
 
 export type Device = {
     id: string;
+    kind?: 'device' | 'service';
     name: string;
     ip: string;
     tailscaleIps: Array<string>;
     os: string;
     online: boolean;
     owner: string;
+    roles?: Array<string>;
     tags: Array<string>;
+    shared?: boolean;
     subnetRouter: boolean;
     routedSubnets: Array<string>;
+    postureAttrs?: {
+        [key: string]: unknown;
+    };
     lastSeen?: string;
 };
 
@@ -87,6 +93,13 @@ export type CloudAuthStatusResponse = {
     devMode?: boolean;
     callerRole?: string;
     canEditPolicy: boolean;
+    hasAppCapabilityGrant?: boolean;
+    appCapability?: string;
+    needsSetupGrant?: boolean;
+    bootstrapActive?: boolean;
+    bootstrapExpiresAt?: string;
+    statusMessage?: string;
+    setupGrantSnippet?: string;
 };
 
 export type PolicyResponse = {
@@ -136,6 +149,7 @@ export type AclDraft = {
     src: Array<string>;
     dst: Array<string>;
     proto?: string;
+    srcPosture?: Array<string>;
 };
 
 export type PolicyDraftResponse = {
