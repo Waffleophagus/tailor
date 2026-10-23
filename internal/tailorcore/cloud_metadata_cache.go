@@ -14,7 +14,8 @@ import (
 // and services change slowly, so share them across callers for a short TTL to stay
 // well under Tailscale's API rate limits. Live state (online, peers) still comes
 // from LocalAPI on every tick.
-const (
+// Variables so tests can shorten them.
+var (
 	cloudMetadataTTL      = 30 * time.Second
 	cloudMetadataErrorTTL = 5 * time.Second
 )
@@ -44,21 +45,21 @@ func newCachedCloudMetadata(source cloudMetadata, tailnet func() string) *cached
 }
 
 func (c *cachedCloudMetadata) Devices(ctx context.Context) ([]cloudapi.Device, error) {
-	return c.devices.get(c.tailnet(), func() ([]cloudapi.Device, error) { return c.source.Devices(ctx) })
+	return c.devices.get(ctx, c.tailnet(), func() ([]cloudapi.Device, error) { return c.source.Devices(ctx) })
 }
 
 func (c *cachedCloudMetadata) Users(ctx context.Context) ([]cloudapi.User, error) {
-	return c.users.get(c.tailnet(), func() ([]cloudapi.User, error) { return c.source.Users(ctx) })
+	return c.users.get(ctx, c.tailnet(), func() ([]cloudapi.User, error) { return c.source.Users(ctx) })
 }
 
 func (c *cachedCloudMetadata) DevicePostureAttributes(ctx context.Context, deviceID string) (cloudapi.DevicePostureAttributes, error) {
-	return c.posture.get(c.tailnet()+"|"+deviceID, func() (cloudapi.DevicePostureAttributes, error) {
+	return c.posture.get(ctx, c.tailnet()+"|"+deviceID, func() (cloudapi.DevicePostureAttributes, error) {
 		return c.source.DevicePostureAttributes(ctx, deviceID)
 	})
 }
 
 func (c *cachedCloudMetadata) VIPServices(ctx context.Context) ([]cloudapi.VIPService, error) {
-	return c.services.get(c.tailnet(), func() ([]cloudapi.VIPService, error) { return c.source.VIPServices(ctx) })
+	return c.services.get(ctx, c.tailnet(), func() ([]cloudapi.VIPService, error) { return c.source.VIPServices(ctx) })
 }
 
 // Invalidate drops all cached metadata, e.g. after re-authentication.
@@ -78,32 +79,55 @@ type ttlCache[T any] struct {
 }
 
 type ttlEntry[T any] struct {
-	mu      sync.Mutex
-	value   T
-	err     error
-	expires time.Time
+	mu       sync.Mutex // held briefly, never across a fetch
+	value    T
+	err      error
+	expires  time.Time
+	inflight chan struct{} // non-nil while one caller fetches; closed when done
 }
 
-func (c *ttlCache[T]) get(key string, fetch func() (T, error)) (T, error) {
-	entry := c.entry(key)
-	entry.mu.Lock()
-	defer entry.mu.Unlock()
-	now := time.Now()
-	if now.Before(entry.expires) {
-		return entry.value, entry.err
+// get returns the cached value for key, or runs fetch. Concurrent callers share a
+// single in-flight fetch, but each stops waiting as soon as its own ctx ends.
+func (c *ttlCache[T]) get(ctx context.Context, key string, fetch func() (T, error)) (T, error) {
+	for {
+		entry := c.entry(key)
+		entry.mu.Lock()
+		if time.Now().Before(entry.expires) {
+			value, err := entry.value, entry.err
+			entry.mu.Unlock()
+			return value, err
+		}
+		if wait := entry.inflight; wait != nil {
+			entry.mu.Unlock()
+			select {
+			case <-wait:
+				continue // re-check: the fetch may have been cancelled and stored nothing
+			case <-ctx.Done():
+				var zero T
+				return zero, ctx.Err()
+			}
+		}
+		done := make(chan struct{})
+		entry.inflight = done
+		entry.mu.Unlock()
+
+		value, err := fetch()
+
+		entry.mu.Lock()
+		entry.inflight = nil
+		// A cancelled caller stores nothing, so the next caller fetches afresh.
+		if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+			ttl := cloudMetadataTTL
+			if err != nil {
+				ttl = cloudMetadataErrorTTL
+			}
+			// The TTL starts when the data arrives, not when the fetch began.
+			entry.value, entry.err, entry.expires = value, err, time.Now().Add(ttl)
+		}
+		entry.mu.Unlock()
+		close(done)
+		return value, err
 	}
-	value, err := fetch()
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		// The caller went away; don't make the next caller wait out an error TTL.
-		var zero T
-		return zero, err
-	}
-	ttl := cloudMetadataTTL
-	if err != nil {
-		ttl = cloudMetadataErrorTTL
-	}
-	entry.value, entry.err, entry.expires = value, err, now.Add(ttl)
-	return value, err
 }
 
 func (c *ttlCache[T]) entry(key string) *ttlEntry[T] {
@@ -117,7 +141,7 @@ func (c *ttlCache[T]) entry(key string) *ttlEntry[T] {
 	if now.Sub(c.lastPurge) > cloudMetadataTTL {
 		for k, e := range c.entries {
 			if e.mu.TryLock() {
-				if now.After(e.expires) {
+				if e.inflight == nil && now.After(e.expires) {
 					delete(c.entries, k)
 				}
 				e.mu.Unlock()

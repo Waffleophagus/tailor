@@ -30,6 +30,9 @@ export function focusTrap(onEscape?: () => void): Attachment<HTMLElement> {
 		);
 		(field ?? focusableWithin(container)[0] ?? container).focus();
 
+		// Listen on the document, not the container: focus can leave the dialog (a
+		// backdrop click, or the focused button being removed from the DOM), and
+		// keyboard events would then never reach the container.
 		function handleKeydown(event: KeyboardEvent) {
 			if (event.key === 'Escape') {
 				event.preventDefault();
@@ -46,18 +49,31 @@ export function focusTrap(onEscape?: () => void): Attachment<HTMLElement> {
 			}
 			const first = elements[0];
 			const last = elements[elements.length - 1];
-			if (event.shiftKey && document.activeElement === first) {
+			const active = document.activeElement;
+			if (!container.contains(active)) {
+				event.preventDefault();
+				(event.shiftKey ? last : first).focus();
+			} else if (event.shiftKey && active === first) {
 				event.preventDefault();
 				last.focus();
-			} else if (!event.shiftKey && document.activeElement === last) {
+			} else if (!event.shiftKey && active === last) {
 				event.preventDefault();
 				first.focus();
 			}
 		}
 
-		container.addEventListener('keydown', handleKeydown);
+		// Pull focus back if something outside the dialog receives it.
+		function handleFocusIn(event: FocusEvent) {
+			if (event.target instanceof Node && !container.contains(event.target)) {
+				(focusableWithin(container)[0] ?? container).focus();
+			}
+		}
+
+		document.addEventListener('keydown', handleKeydown, true);
+		document.addEventListener('focusin', handleFocusIn, true);
 		return () => {
-			container.removeEventListener('keydown', handleKeydown);
+			document.removeEventListener('keydown', handleKeydown, true);
+			document.removeEventListener('focusin', handleFocusIn, true);
 			if (opener?.isConnected) opener.focus();
 		};
 	};

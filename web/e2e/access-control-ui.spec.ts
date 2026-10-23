@@ -50,7 +50,10 @@ test('auth dialog is a keyboard-accessible modal', async ({ page }) => {
 		await expect(dialog.locator(':focus')).toHaveCount(1);
 	}
 
-	// Escape closes it and returns focus to the button that opened it.
+	// Clicking the backdrop drops focus out of the dialog; Escape must still close it
+	// and return focus to the button that opened it.
+	await page.mouse.click(5, 5);
+	await expect(dialog.locator(':focus')).toHaveCount(0);
 	await page.keyboard.press('Escape');
 	await expect(dialog).toBeHidden();
 	await expect(opener).toBeFocused();

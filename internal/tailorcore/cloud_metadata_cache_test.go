@@ -7,6 +7,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/Waffleophagus/tailor/internal/cloudapi"
 )
@@ -102,4 +103,55 @@ func TestCloudMetadataInvalidateRefetches(t *testing.T) {
 	if got := source.deviceCalls.Load(); got != 2 {
 		t.Fatalf("device fetches = %d, want 2", got)
 	}
+}
+
+func TestCloudMetadataWaiterStopsWhenItsContextEnds(t *testing.T) {
+	source := &countingCloudMetadata{release: make(chan struct{})}
+	cache := newTestCloudMetadata(source)
+	defer close(source.release)
+
+	// First caller starts a slow fetch.
+	go func() { _, _ = cache.Devices(context.Background()) }()
+	for source.deviceCalls.Load() == 0 {
+		runtime.Gosched()
+	}
+
+	// A second caller gives up while that fetch is still in flight.
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	_, err := cache.Devices(ctx)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v, want context.DeadlineExceeded", err)
+	}
+	if waited := time.Since(start); waited > time.Second {
+		t.Fatalf("cancelled waiter was held for %v by someone else's fetch", waited)
+	}
+	if got := source.deviceCalls.Load(); got != 1 {
+		t.Fatalf("device fetches = %d, want 1 (still a single in-flight fetch)", got)
+	}
+}
+
+func TestCloudMetadataTTLStartsWhenFetchFinishes(t *testing.T) {
+	defer func(ttl time.Duration) { cloudMetadataErrorTTL = ttl }(cloudMetadataErrorTTL)
+	cloudMetadataErrorTTL = 100 * time.Millisecond
+	slow := &slowFailingMetadata{delay: cloudMetadataErrorTTL + 50*time.Millisecond}
+	cache := newTestCloudMetadata(slow)
+	_, _ = cache.Devices(context.Background())
+	_, _ = cache.Devices(context.Background())
+	if got := slow.calls.Load(); got != 1 {
+		t.Fatalf("a slow error was refetched immediately (%d fetches); its TTL must start after the fetch", got)
+	}
+}
+
+type slowFailingMetadata struct {
+	countingCloudMetadata
+	delay time.Duration
+	calls atomic.Int32
+}
+
+func (s *slowFailingMetadata) Devices(context.Context) ([]cloudapi.Device, error) {
+	s.calls.Add(1)
+	time.Sleep(s.delay)
+	return nil, errors.New("rate limited")
 }

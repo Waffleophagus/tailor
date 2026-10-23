@@ -10,7 +10,8 @@
 //	go run ./tools/check-policyref-drift
 //
 // It exits 0 when nothing drifted, 1 when a page was validated after the index
-// version or could not be fetched, and 2 on usage or local errors.
+// version, has no "Last validated" date, or could not be fetched, and 2 on usage
+// or local errors.
 package main
 
 import (
@@ -112,6 +113,8 @@ func main() {
 			drift++
 			fmt.Printf("HTTP %d %s\n", res.status, res.source)
 		case res.validated.IsZero():
+			// The page format may have changed; that needs a human look too.
+			drift++
 			fmt.Printf("UNKNOWN  %s: no \"Last validated\" line\n", res.source)
 		case res.validated.After(version):
 			drift++
@@ -122,7 +125,7 @@ func main() {
 		if res.err == nil && res.finalURL != "" && res.finalURL != markdownURL(res.source) {
 			fmt.Printf("         redirected to %s\n", res.finalURL)
 		}
-		if res.err != nil || res.status != http.StatusOK || res.validated.After(version) {
+		if res.err != nil || res.status != http.StatusOK || res.validated.IsZero() || res.validated.After(version) {
 			fmt.Printf("         topics: %s\n", strings.Join(topicsBySource[res.source], ", "))
 		}
 	}

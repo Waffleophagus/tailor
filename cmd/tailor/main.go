@@ -13,6 +13,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -170,11 +171,16 @@ func main() {
 		logger.Info("shutting down")
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 		defer cancel()
+		// Drain both servers in parallel within the one grace period, then close tsnet.
+		var drained sync.WaitGroup
 		for _, srv := range []*http.Server{localSrv, tsnetSrv} {
-			if err := srv.Shutdown(shutdownCtx); err != nil {
-				logger.Warn("http shutdown incomplete", "error", err)
-			}
+			drained.Go(func() {
+				if err := srv.Shutdown(shutdownCtx); err != nil {
+					logger.Warn("http shutdown incomplete", "error", err)
+				}
+			})
 		}
+		drained.Wait()
 		closeTSNet()
 	}
 }
