@@ -29,6 +29,8 @@ type fakeACLServer struct {
 	// changeAfterGet, when set, replaces the policy right after the next GET is
 	// served: an edit landing between Tailor's read and its write.
 	changeAfterGet string
+	// noETag drops the ETag header, as a proxy or API change might.
+	noETag bool
 }
 
 func (f *fakeACLServer) etagLocked() string {
@@ -63,7 +65,9 @@ func (f *fakeACLServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write(body)
 		return
 	}
-	w.Header().Set("ETag", f.etagLocked())
+	if !f.noETag {
+		w.Header().Set("ETag", f.etagLocked())
+	}
 	_, _ = io.WriteString(w, f.policy)
 	if f.changeAfterGet != "" {
 		f.policy, f.changeAfterGet = f.changeAfterGet, ""
@@ -224,5 +228,34 @@ func TestStaleEditorDraftCannotOverwriteNewerSave(t *testing.T) {
 	defer fake.mu.Unlock()
 	if !strings.Contains(fake.policy, "autogroup:admin") {
 		t.Fatalf("editor A's change was overwritten: %s", fake.policy)
+	}
+}
+
+func TestSaveStagedPolicyRefusesWithoutPolicyVersion(t *testing.T) {
+	ctx := context.Background()
+	fake := &fakeACLServer{policy: `{"acls":[{"action":"accept","src":["*"],"dst":["*:*"]}]}`, noETag: true}
+	cloud := httptest.NewServer(fake)
+	defer cloud.Close()
+	service := newTestService(t, cloud.URL)
+	if _, err := service.AuthenticateCloud(ctx, cloudapi.AuthRequest{Tailnet: "example.com", APIKey: "tskey-api-test"}); err != nil {
+		t.Fatal(err)
+	}
+	current, err := service.Policy(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	staged, err := service.StagePolicyDraft(ctx, api.PolicyStageRequest{HuJSON: current.HuJSON, Source: "ui", BaseRevision: current.Revision})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = service.SaveStagedPolicy(ctx, api.PolicySaveRequest{DraftID: staged.Draft.ID, DraftHash: staged.Draft.DraftHash})
+	if !errors.Is(err, cloudapi.ErrPolicyVersionUnavailable) {
+		t.Fatalf("err = %v, want ErrPolicyVersionUnavailable", err)
+	}
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if fake.saveCalls != 0 {
+		t.Fatalf("saved %d times without conflict protection", fake.saveCalls)
 	}
 }

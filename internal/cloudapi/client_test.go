@@ -380,3 +380,21 @@ func TestVIPServicesDoesNotFallBackOnServerError(t *testing.T) {
 		t.Fatal("should not fall back to /vip-services for non-404 errors")
 	}
 }
+
+func TestRefreshPolicyVersionRequiresETag(t *testing.T) {
+	// Without an ETag a save could not be conditional; refuse instead of risking
+	// an unconditional overwrite.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"acls":[]}`))
+	}))
+	defer server.Close()
+
+	ctx := context.Background()
+	client := New(WithBaseURL(server.URL))
+	if _, err := client.Authenticate(ctx, AuthRequest{Tailnet: "example.com", APIKey: "tskey-api-test"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.RefreshPolicyVersion(ctx); !errors.Is(err, ErrPolicyVersionUnavailable) {
+		t.Fatalf("err = %v, want ErrPolicyVersionUnavailable", err)
+	}
+}

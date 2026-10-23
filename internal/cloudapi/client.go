@@ -28,6 +28,11 @@ var ErrNotAuthenticated = errors.New("cloud api is not authenticated")
 // conditional save (If-Match) was rejected by Tailscale.
 var ErrPolicyChanged = errors.New("tailnet policy changed since it was read")
 
+// ErrPolicyVersionUnavailable means Tailscale returned the policy without an ETag,
+// so a save could not be made conditional on it. Saving is refused rather than
+// risking an unconditional overwrite of a concurrent change.
+var ErrPolicyVersionUnavailable = errors.New("Tailscale returned the tailnet policy without a version (ETag); refusing to save without conflict protection")
+
 // PolicyVersion is a tailnet policy together with the ETag Tailscale returned for it.
 // ETag is empty in dev mode.
 type PolicyVersion struct {
@@ -278,7 +283,7 @@ func (c *Client) RefreshPolicy(ctx context.Context) (string, error) {
 }
 
 // RefreshPolicyVersion returns the live tailnet policy and its ETag, for use with
-// SavePolicyIfMatch.
+// SavePolicyIfMatch. Outside dev mode, a response without an ETag is an error.
 func (c *Client) RefreshPolicyVersion(ctx context.Context) (PolicyVersion, error) {
 	session, err := c.ensureSession(ctx)
 	if err != nil {
@@ -292,6 +297,9 @@ func (c *Client) RefreshPolicyVersion(ctx context.Context) (PolicyVersion, error
 		return PolicyVersion{}, err
 	}
 	c.cachePolicy(session, policy)
+	if etag == "" {
+		return PolicyVersion{}, ErrPolicyVersionUnavailable
+	}
 	return PolicyVersion{HuJSON: policy, ETag: etag}, nil
 }
 
