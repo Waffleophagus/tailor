@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/Waffleophagus/tailor/internal/api"
 	"github.com/Waffleophagus/tailor/internal/cloudapi"
+	"tailscale.com/client/local"
 )
 
 // fakeACLServer serves a tailnet policy that can be edited out-of-band, the way an
@@ -67,14 +69,38 @@ func (f *fakeACLServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// newTestService returns a Service talking to a fake Cloud API at cloudURL and a
+// fake local tailscaled, so tests never depend on Tailscale running on the host.
+func newTestService(t *testing.T, cloudURL string) *Service {
+	t.Helper()
+	tailscaled := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/localapi/v0/status" {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = io.WriteString(w, `{"BackendState":"Running","Self":{"ID":"nTailor","HostName":"tailor","DNSName":"tailor.example.ts.net."},"Peer":{}}`)
+	}))
+	t.Cleanup(tailscaled.Close)
+	localClient := &local.Client{Dial: func(ctx context.Context, _, _ string) (net.Conn, error) {
+		var dialer net.Dialer
+		return dialer.DialContext(ctx, "tcp", tailscaled.Listener.Addr().String())
+	}}
+	service := New(Options{
+		LocalClient:      localClient,
+		LocalAPIEndpoint: "fake tailscaled",
+		CloudAPIOptions:  []cloudapi.Option{cloudapi.WithBaseURL(cloudURL)},
+	})
+	t.Cleanup(service.Close)
+	return service
+}
+
 func TestSaveStagedPolicyRejectsOutOfBandPolicyChange(t *testing.T) {
 	ctx := context.Background()
 	fake := &fakeACLServer{policy: `{"acls":[{"action":"accept","src":["*"],"dst":["*:*"]}]}`}
 	cloud := httptest.NewServer(fake)
 	defer cloud.Close()
 
-	service := New(Options{CloudAPIOptions: []cloudapi.Option{cloudapi.WithBaseURL(cloud.URL)}})
-	defer service.Close()
+	service := newTestService(t, cloud.URL)
 
 	if _, err := service.AuthenticateCloud(ctx, cloudapi.AuthRequest{
 		Tailnet: "example.com",
@@ -117,8 +143,7 @@ func TestSaveStagedPolicyRejectsChangeBetweenReadAndWrite(t *testing.T) {
 	cloud := httptest.NewServer(fake)
 	defer cloud.Close()
 
-	service := New(Options{CloudAPIOptions: []cloudapi.Option{cloudapi.WithBaseURL(cloud.URL)}})
-	defer service.Close()
+	service := newTestService(t, cloud.URL)
 
 	if _, err := service.AuthenticateCloud(ctx, cloudapi.AuthRequest{
 		Tailnet: "example.com",
