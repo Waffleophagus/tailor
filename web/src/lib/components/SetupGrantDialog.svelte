@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { focusTrap } from '../ui/focus-trap';
+
 	let {
 		open = $bindable(false),
 		snippet = '',
@@ -45,6 +47,7 @@
 			role="dialog"
 			aria-modal="true"
 			aria-labelledby="setup-grant-title"
+			{@attach focusTrap(handleClose)}
 		>
 			<div class="flex items-center justify-between gap-4 border-b border-panel-strong p-4">
 				<div>
@@ -53,6 +56,7 @@
 				<button
 					type="button"
 					title="Close"
+					aria-label="Close"
 					onclick={handleClose}
 					class="grid h-8 w-8 cursor-pointer place-items-center rounded-md border border-panel-border bg-panel-weak text-xl leading-none text-primary transition-[background-color,border-color] duration-[160ms] ease-out hover:border-teal hover:bg-hover"
 					>×</button

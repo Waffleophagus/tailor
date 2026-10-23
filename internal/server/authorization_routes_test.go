@@ -48,3 +48,34 @@ func TestViewerCannotAccessAnyPolicyRoute(t *testing.T) {
 		})
 	}
 }
+
+func TestCrossSiteBrowserRequestsCannotChangeState(t *testing.T) {
+	handler := New(Options{})
+
+	tests := []struct {
+		name        string
+		header      http.Header
+		wantBlocked bool
+	}{
+		{name: "cross-site fetch", header: http.Header{"Sec-Fetch-Site": {"cross-site"}}, wantBlocked: true},
+		{name: "foreign origin without fetch metadata", header: http.Header{"Origin": {"https://evil.example"}}, wantBlocked: true},
+		{name: "same-origin fetch", header: http.Header{"Sec-Fetch-Site": {"same-origin"}}},
+		{name: "non-browser client", header: http.Header{}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			request := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "http://localhost:8080/api/policy/stage", bytes.NewBufferString(`{}`))
+			for key, values := range tt.header {
+				request.Header[key] = values
+			}
+			response := httptest.NewRecorder()
+
+			handler.ServeHTTP(response, request)
+
+			blocked := response.Code == http.StatusForbidden && bytes.Contains(response.Body.Bytes(), []byte("Cross-origin"))
+			if blocked != tt.wantBlocked {
+				t.Fatalf("blocked = %v, want %v (status %d, body %s)", blocked, tt.wantBlocked, response.Code, response.Body.String())
+			}
+		})
+	}
+}

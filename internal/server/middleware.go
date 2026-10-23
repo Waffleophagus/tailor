@@ -40,6 +40,10 @@ type AuthOptions struct {
 	TailnetStatus TailnetStatusClient
 	AppCapability string
 	MCPPath       string
+	// PolicyAdmin reports whether a login holds a Tailscale role that may edit the
+	// tailnet policy (Owner, Admin, Network admin). Such users get full access
+	// without the app capability grant.
+	PolicyAdmin func(ctx context.Context, login string) bool
 
 	mu                 sync.Mutex
 	resolvedCapability string
@@ -147,7 +151,7 @@ func IdentityMiddleware(logger *slog.Logger, opts *AuthOptions, next http.Handle
 			return
 		}
 
-		who, err := opts.WhoIsClient.WhoIs(r.Context(), r.RemoteAddr)
+		identity, err := opts.resolveIdentity(r.Context(), r.RemoteAddr, logger)
 		if err != nil {
 			logger.Warn("tailnet identity lookup failed",
 				"path", r.URL.Path,
@@ -158,9 +162,6 @@ func IdentityMiddleware(logger *slog.Logger, opts *AuthOptions, next http.Handle
 			writeTailnetIdentityRequired(w, r)
 			return
 		}
-
-		appCapability := opts.resolveAppCapability(r.Context(), logger)
-		identity := identityFromWhoIs(who, appCapability)
 		logger.Debug("tailnet identity attached",
 			"path", r.URL.Path,
 			"login", identity.LoginName,
@@ -170,6 +171,30 @@ func IdentityMiddleware(logger *slog.Logger, opts *AuthOptions, next http.Handle
 		)
 		next.ServeHTTP(w, r.WithContext(authz.WithIdentity(r.Context(), identity)))
 	})
+}
+
+// resolveIdentity returns the caller's current identity and role: full for
+// everyone outside tailnet mode; otherwise from WhoIs, the app capability, and the
+// caller's tailnet admin role. Long-lived connections call it again to pick up
+// role changes.
+func (opts *AuthOptions) resolveIdentity(ctx context.Context, remoteAddr string, logger *slog.Logger) (authz.TailnetIdentity, error) {
+	if !opts.TailnetMode {
+		return authz.TailnetIdentity{Role: authz.RoleFull}, nil
+	}
+	if opts.WhoIsClient == nil {
+		return authz.TailnetIdentity{}, errors.New("tailnet identity lookup unavailable")
+	}
+	who, err := opts.WhoIsClient.WhoIs(ctx, remoteAddr)
+	if err != nil {
+		return authz.TailnetIdentity{}, err
+	}
+	identity := identityFromWhoIs(who, opts.resolveAppCapability(ctx, logger))
+	// Tagged devices act for no person, so only the app capability can grant them access.
+	if identity.Role != authz.RoleFull && len(identity.NodeTags) == 0 && opts.PolicyAdmin != nil &&
+		opts.PolicyAdmin(ctx, identity.LoginName) {
+		identity.Role = authz.RoleFull
+	}
+	return identity, nil
 }
 
 func (opts *AuthOptions) resolveAppCapability(ctx context.Context, logger *slog.Logger) string {

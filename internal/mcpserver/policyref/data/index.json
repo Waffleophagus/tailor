@@ -1,15 +1,22 @@
 {
-  "version": "2026-06-04",
+  "version": "2026-10-22",
   "topics": [
     {
       "id": "overview",
       "title": "Overview",
       "useWhen": [
-        "Understanding policy file structure",
+        "Understanding policy file structure and top-level sections",
         "Choosing grants over legacy ACLs",
-        "Remembering deny-by-default behavior"
+        "Remembering deny-by-default and additive rule behavior"
       ],
-      "related": ["hujson_editing", "grants", "legacy_acls", "tests", "gotchas"]
+      "related": ["hujson_editing", "grants", "legacy_acls", "ssh", "tests", "gotchas", "external_tailnets"],
+      "sourceUrls": [
+        "https://tailscale.com/docs/reference/syntax/policy-file",
+        "https://tailscale.com/docs/reference/grants-vs-acls",
+        "https://tailscale.com/docs/reference/migrate-acls-grants",
+        "https://tailscale.com/docs/features/device-posture/postures-in-access-rules",
+        "https://tailscale.com/docs/features/declarative-node-sharing"
+      ]
     },
     {
       "id": "hujson_editing",
@@ -19,27 +26,48 @@
         "Preserving comments and trailing commas",
         "Understanding HuJSON limits"
       ],
-      "related": ["overview", "examples", "gotchas"]
+      "related": ["overview", "examples", "gotchas"],
+      "sourceUrls": [
+        "https://tailscale.com/docs/features/tailnet-policy-file",
+        "https://tailscale.com/docs/reference/syntax/policy-file",
+        "https://github.com/tailscale/hujson",
+        "https://nigeltao.github.io/blog/2021/json-with-commas-comments.html"
+      ]
     },
     {
       "id": "grants",
       "title": "Grants",
       "useWhen": [
         "Adding or changing modern network access rules",
-        "Adding application capabilities",
-        "Using route filtering with via"
+        "Writing grant ip entries or application capabilities",
+        "Using route filtering with via or svc: destinations"
       ],
-      "related": ["selectors", "posture", "tests", "gotchas", "examples"]
+      "related": ["selectors", "posture", "ip_sets", "tests", "gotchas", "examples"],
+      "sourceUrls": [
+        "https://tailscale.com/docs/reference/syntax/grants",
+        "https://tailscale.com/docs/reference/syntax/policy-file",
+        "https://tailscale.com/docs/features/access-control/grants/grants-app-capabilities",
+        "https://tailscale.com/docs/features/access-control/grants/grants-via",
+        "https://tailscale.com/docs/features/peer-relay",
+        "https://tailscale.com/docs/reference/targets-and-selectors"
+      ]
     },
     {
       "id": "selectors",
       "title": "Selectors",
       "useWhen": [
         "Choosing legal src or dst selectors",
-        "Editing tag owners, auto approvers, SSH, or tests",
-        "Checking autogroup behavior"
+        "Checking autogroup, user, group, or protocol alias rules",
+        "Editing tag owners, auto approvers, SSH, or tests"
       ],
-      "related": ["grants", "definitions", "ssh", "automation", "tests", "gotchas"]
+      "related": ["grants", "definitions", "ip_sets", "ssh", "automation", "tests", "gotchas", "external_tailnets"],
+      "sourceUrls": [
+        "https://tailscale.com/docs/reference/targets-and-selectors",
+        "https://tailscale.com/docs/reference/syntax/policy-file",
+        "https://tailscale.com/docs/reference/syntax/grants",
+        "https://tailscale.com/docs/features/tags",
+        "https://tailscale.com/docs/features/tailnet-policy-file/ip-sets"
+      ]
     },
     {
       "id": "legacy_acls",
@@ -47,29 +75,63 @@
       "useWhen": [
         "Understanding existing acls",
         "Migrating ACLs to grants",
-        "Editing legacy ACL destination ports"
+        "Editing legacy ACL destination ports or proto"
       ],
-      "related": ["grants", "selectors", "examples", "gotchas"]
+      "related": ["grants", "selectors", "examples", "gotchas"],
+      "sourceUrls": [
+        "https://tailscale.com/docs/reference/syntax/policy-file",
+        "https://tailscale.com/docs/reference/migrate-acls-grants",
+        "https://tailscale.com/docs/features/access-control/acls",
+        "https://tailscale.com/docs/reference/grants-vs-acls"
+      ]
     },
     {
       "id": "ssh",
       "title": "SSH",
       "useWhen": [
         "Adding or modifying Tailscale SSH rules",
-        "Choosing accept versus check",
-        "Writing sshTests"
+        "Choosing accept versus check or setting checkPeriod",
+        "Configuring SSH session recording"
       ],
-      "related": ["selectors", "posture", "tests", "gotchas", "examples"]
+      "related": ["selectors", "posture", "tests", "gotchas", "examples"],
+      "sourceUrls": [
+        "https://tailscale.com/docs/features/tailscale-ssh",
+        "https://tailscale.com/docs/reference/syntax/policy-file",
+        "https://tailscale.com/docs/reference/targets-and-selectors",
+        "https://tailscale.com/docs/features/tailscale-ssh/tailscale-ssh-session-recording",
+        "https://tailscale.com/docs/features/tsrecorder",
+        "https://tailscale.com/docs/features/device-posture/postures-and-attributes"
+      ]
     },
     {
       "id": "definitions",
       "title": "Definitions",
       "useWhen": [
-        "Editing groups, tagOwners, hosts, or ipsets",
+        "Editing groups, tagOwners, or hosts",
         "Creating reusable selectors",
         "Checking ownership and nesting restrictions"
       ],
-      "related": ["selectors", "automation", "examples", "gotchas"]
+      "related": ["selectors", "ip_sets", "automation", "examples", "gotchas"],
+      "sourceUrls": [
+        "https://tailscale.com/docs/reference/syntax/policy-file",
+        "https://tailscale.com/docs/features/tags",
+        "https://tailscale.com/docs/features/tailnet-policy-file/ip-sets"
+      ]
+    },
+    {
+      "id": "ip_sets",
+      "title": "IP Sets",
+      "useWhen": [
+        "Grouping IPs, CIDRs, or hosts into a named network segment",
+        "Excluding addresses with ipset remove operations",
+        "Customizing autogroup:internet for exit node access"
+      ],
+      "related": ["definitions", "selectors", "grants", "legacy_acls", "posture"],
+      "sourceUrls": [
+        "https://tailscale.com/docs/features/tailnet-policy-file/ip-sets",
+        "https://tailscale.com/docs/reference/targets-and-selectors",
+        "https://tailscale.com/docs/features/device-posture/postures-and-attributes"
+      ]
     },
     {
       "id": "posture",
@@ -77,19 +139,35 @@
       "useWhen": [
         "Adding device posture controls",
         "Reasoning about srcPosture or defaultSrcPosture",
-        "Checking unset attribute behavior"
+        "Checking posture attributes, operators, or unset attribute behavior"
       ],
-      "related": ["grants", "ssh", "selectors", "tests", "gotchas"]
+      "related": ["grants", "ssh", "selectors", "tests", "gotchas"],
+      "sourceUrls": [
+        "https://tailscale.com/docs/features/device-posture/postures-and-attributes",
+        "https://tailscale.com/docs/features/device-posture/postures-in-access-rules",
+        "https://tailscale.com/docs/features/device-posture/monitoring-postures",
+        "https://tailscale.com/docs/features/device-posture",
+        "https://tailscale.com/docs/reference/syntax/policy-file",
+        "https://tailscale.com/docs/integrations/crowdstrike-zta"
+      ]
     },
     {
       "id": "automation",
       "title": "Automation",
       "useWhen": [
-        "Auto-approving routes, exit nodes, or app connectors",
-        "Managing nodeAttrs",
-        "Enabling Funnel or client network options"
+        "Auto-approving routes, exit node advertisements, app connector routes, or Service hosts",
+        "Managing nodeAttrs or app connectors",
+        "Enabling Funnel or network-wide client options"
       ],
-      "related": ["definitions", "selectors", "gotchas", "examples"]
+      "related": ["definitions", "selectors", "grants", "gotchas", "examples"],
+      "sourceUrls": [
+        "https://tailscale.com/docs/reference/syntax/policy-file",
+        "https://tailscale.com/docs/features/app-connectors/how-to/setup",
+        "https://tailscale.com/docs/features/app-connectors",
+        "https://tailscale.com/docs/features/tailscale-services",
+        "https://tailscale.com/docs/features/tailscale-funnel",
+        "https://tailscale.com/docs/reference/targets-and-selectors"
+      ]
     },
     {
       "id": "tests",
@@ -97,9 +175,14 @@
       "useWhen": [
         "Adding validation tests to policy drafts",
         "Proving intended allow or deny behavior",
-        "Testing SSH or posture-dependent access"
+        "Testing SSH, ICMP, Service, or posture-dependent access"
       ],
-      "related": ["grants", "ssh", "posture", "selectors", "examples"]
+      "related": ["grants", "ssh", "posture", "selectors", "examples"],
+      "sourceUrls": [
+        "https://tailscale.com/docs/reference/syntax/policy-file",
+        "https://tailscale.com/docs/reference/targets-and-selectors",
+        "https://tailscale.com/docs/features/tailscale-services"
+      ]
     },
     {
       "id": "gotchas",
@@ -109,7 +192,17 @@
         "Checking common ACL and grant mistakes",
         "Reviewing subtle selector semantics"
       ],
-      "related": ["overview", "grants", "selectors", "definitions", "posture", "automation", "tests"]
+      "related": ["overview", "grants", "selectors", "definitions", "ip_sets", "posture", "automation", "ssh", "tests"],
+      "sourceUrls": [
+        "https://tailscale.com/docs/reference/syntax/policy-file",
+        "https://tailscale.com/docs/reference/syntax/grants",
+        "https://tailscale.com/docs/reference/targets-and-selectors",
+        "https://tailscale.com/docs/features/device-posture/postures-in-access-rules",
+        "https://tailscale.com/docs/features/device-posture/postures-and-attributes",
+        "https://tailscale.com/docs/reference/migrate-acls-grants",
+        "https://tailscale.com/docs/features/tags",
+        "https://tailscale.com/docs/features/tailnet-policy-file/ip-sets"
+      ]
     },
     {
       "id": "examples",
@@ -119,7 +212,28 @@
         "Converting examples into draft edits",
         "Adding tests alongside changes"
       ],
-      "related": ["grants", "legacy_acls", "ssh", "definitions", "posture", "automation", "tests"]
+      "related": ["grants", "legacy_acls", "ssh", "definitions", "posture", "automation", "tests"],
+      "sourceUrls": [
+        "https://tailscale.com/docs/reference/examples/grants",
+        "https://tailscale.com/docs/reference/syntax/policy-file",
+        "https://tailscale.com/docs/features/access-control/grants/grants-via",
+        "https://tailscale.com/docs/reference/migrate-acls-grants",
+        "https://tailscale.com/docs/features/tailscale-services",
+        "https://tailscale.com/docs/features/tailscale-ssh"
+      ]
+    },
+    {
+      "id": "external_tailnets",
+      "title": "External Tailnets",
+      "useWhen": [
+        "Sharing resources with another trusted tailnet through policy",
+        "Editing the externalTailnets section",
+        "Using group:// or tag:// external selectors"
+      ],
+      "related": ["grants", "selectors", "overview"],
+      "sourceUrls": [
+        "https://tailscale.com/docs/features/declarative-node-sharing"
+      ]
     }
   ]
 }

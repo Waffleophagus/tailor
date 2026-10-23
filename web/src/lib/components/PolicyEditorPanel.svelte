@@ -62,8 +62,7 @@
 				spellcheck="false"
 				autocapitalize="off"
 				autocomplete="off"
-				aria-label="Policy HuJSON"
-			></textarea>
+				aria-label="Policy HuJSON"></textarea>
 
 			{#if errors.length > 0}
 				<div class="error-panel" role="alert">

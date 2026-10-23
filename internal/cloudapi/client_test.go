@@ -2,6 +2,7 @@ package cloudapi
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -84,12 +85,54 @@ func TestFetchPolicyEscapesTailnet(t *testing.T) {
 	defer server.Close()
 
 	client := New(WithBaseURL(server.URL))
-	policy, err := client.fetchPolicy(context.Background(), "example.com@github", "token")
+	policy, _, err := client.fetchPolicy(context.Background(), "example.com@github", "token")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if policy == "" {
 		t.Fatal("expected policy")
+	}
+}
+
+func TestSavePolicyIfMatchSendsETagAndReportsConflicts(t *testing.T) {
+	const etag = `"abc123"`
+	var gotIfMatch string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			gotIfMatch = r.Header.Get("If-Match")
+			if gotIfMatch != etag {
+				http.Error(w, `{"message":"precondition failed"}`, http.StatusPreconditionFailed)
+				return
+			}
+			return
+		}
+		w.Header().Set("ETag", etag)
+		_, _ = w.Write([]byte(`{"acls":[]}`))
+	}))
+	defer server.Close()
+
+	ctx := context.Background()
+	client := New(WithBaseURL(server.URL))
+	if _, err := client.Authenticate(ctx, AuthRequest{Tailnet: "example.com", APIKey: "tskey-api-test"}); err != nil {
+		t.Fatal(err)
+	}
+	version, err := client.RefreshPolicyVersion(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if version.ETag != etag {
+		t.Fatalf("ETag = %q, want %q", version.ETag, etag)
+	}
+	if _, err := client.SavePolicyIfMatch(ctx, `{"acls":[]}`, version.ETag); err != nil {
+		t.Fatalf("matching save failed: %v", err)
+	}
+	if gotIfMatch != etag {
+		t.Fatalf("If-Match = %q, want %q", gotIfMatch, etag)
+	}
+
+	_, err = client.SavePolicyIfMatch(ctx, `{"acls":[]}`, `"stale"`)
+	if !errors.Is(err, ErrPolicyChanged) {
+		t.Fatalf("stale save error = %v, want ErrPolicyChanged", err)
 	}
 }
 
@@ -335,5 +378,23 @@ func TestVIPServicesDoesNotFallBackOnServerError(t *testing.T) {
 	}
 	if sawFallback {
 		t.Fatal("should not fall back to /vip-services for non-404 errors")
+	}
+}
+
+func TestRefreshPolicyVersionRequiresETag(t *testing.T) {
+	// Without an ETag a save could not be conditional; refuse instead of risking
+	// an unconditional overwrite.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"acls":[]}`))
+	}))
+	defer server.Close()
+
+	ctx := context.Background()
+	client := New(WithBaseURL(server.URL))
+	if _, err := client.Authenticate(ctx, AuthRequest{Tailnet: "example.com", APIKey: "tskey-api-test"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.RefreshPolicyVersion(ctx); !errors.Is(err, ErrPolicyVersionUnavailable) {
+		t.Fatalf("err = %v, want ErrPolicyVersionUnavailable", err)
 	}
 }

@@ -307,7 +307,7 @@ func (s *Server) handlePolicySave(w http.ResponseWriter, r *http.Request) {
 		}
 		if errors.Is(err, tailorcore.ErrStagedDraftBaseMismatch) {
 			logAPIError(s.logger, r, http.StatusConflict, err, "policy save stale base policy")
-			writeError(w, http.StatusConflict, "Staged draft is based on an older policy.")
+			writeError(w, http.StatusConflict, "The tailnet policy changed since this draft was started. Reload the policy and reapply your changes.")
 			return
 		}
 		if errors.Is(err, policy.ErrInvalidPolicy) {

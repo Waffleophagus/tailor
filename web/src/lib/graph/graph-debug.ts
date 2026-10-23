@@ -56,8 +56,7 @@ declare global {
 
 export function installGraphDebug(
 	getGraph: () =>
-		| { cy: Core | undefined; visibleEdges: RenderEdge[]; selectedEdgeId?: string }
-		| undefined
+		{ cy: Core | undefined; visibleEdges: RenderEdge[]; selectedEdgeId?: string } | undefined
 ) {
 	if (!import.meta.env.DEV) return;
 	window.__tailorGraphDebug = () => {

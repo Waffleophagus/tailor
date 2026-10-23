@@ -10,8 +10,11 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
+	"syscall"
 	"time"
 
 	"github.com/Waffleophagus/tailor/internal/deploy"
@@ -118,6 +121,15 @@ func main() {
 		IdleTimeout:       60 * time.Second,
 	}
 
+	tsnetSrv := &http.Server{
+		Handler:           handler,
+		ReadTimeout:       15 * time.Second,
+		ReadHeaderTimeout: 5 * time.Second,
+		// Streamable MCP may keep a response open while the session is active.
+		WriteTimeout: 0,
+		IdleTimeout:  60 * time.Second,
+	}
+
 	if tsnetServer != nil {
 		go func() {
 			certDomain, err := prepareTSNetHTTPS(context.Background(), tsnetServer, tsnetLocalClient, logger)
@@ -134,15 +146,7 @@ func main() {
 				"addr", ln.Addr().String(),
 				"url", "https://"+certDomain+"/",
 			)
-			srv := &http.Server{
-				Handler:           handler,
-				ReadTimeout:       15 * time.Second,
-				ReadHeaderTimeout: 5 * time.Second,
-				// Streamable MCP may keep a response open while the session is active.
-				WriteTimeout: 0,
-				IdleTimeout:  60 * time.Second,
-			}
-			if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			if err := tsnetSrv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				errs <- fmt.Errorf("tsnet server: %w", err)
 			}
 		}()
@@ -154,11 +158,34 @@ func main() {
 		}
 	}()
 
-	if err := <-errs; err != nil {
+	// Stop cleanly on docker stop / Ctrl-C so in-flight requests finish and the
+	// embedded tsnet node shuts down instead of being killed mid-write.
+	signals, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
+
+	select {
+	case err := <-errs:
 		logger.Error("server failed", "error", err)
 		exit(1)
+	case <-signals.Done():
+		logger.Info("shutting down")
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		defer cancel()
+		// Drain both servers in parallel within the one grace period, then close tsnet.
+		var drained sync.WaitGroup
+		for _, srv := range []*http.Server{localSrv, tsnetSrv} {
+			drained.Go(func() {
+				if err := srv.Shutdown(shutdownCtx); err != nil {
+					logger.Warn("http shutdown incomplete", "error", err)
+				}
+			})
+		}
+		drained.Wait()
+		closeTSNet()
 	}
 }
+
+const shutdownTimeout = 10 * time.Second
 
 func shouldUseTsnet(env deploy.Environment) bool {
 	if env.TailscaleMode == "external" || env.WantsHostSocket {

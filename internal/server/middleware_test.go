@@ -168,3 +168,40 @@ func TestResolveAppCapabilitySkipsTailnetStatusOutsideTailnetMode(t *testing.T) 
 		t.Fatalf("capability = %q, want empty outside tailnet mode", got)
 	}
 }
+
+func TestIdentityMiddlewarePromotesTailnetAdminsButNotTaggedDevices(t *testing.T) {
+	tests := []struct {
+		name     string
+		tags     []string
+		admin    bool
+		wantRole authz.Role
+	}{
+		{name: "tailnet admin", admin: true, wantRole: authz.RoleFull},
+		{name: "member", admin: false, wantRole: authz.RoleViewer},
+		{name: "tagged device of an admin", tags: []string{"tag:ci"}, admin: true, wantRole: authz.RoleViewer},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			who := fakeWhoIsClient{response: &apitype.WhoIsResponse{
+				UserProfile: &tailcfg.UserProfile{LoginName: "someone@example.com"},
+				Node:        &tailcfg.Node{Name: "device.example.ts.net.", Tags: tt.tags},
+			}}
+			var got authz.Role
+			handler := IdentityMiddleware(nil, &AuthOptions{
+				TailnetMode:   true,
+				WhoIsClient:   who,
+				AppCapability: "tailor.example.ts.net/cap/admin",
+				PolicyAdmin:   func(context.Context, string) bool { return tt.admin },
+			}, http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+				identity, _ := authz.IdentityFromContext(r.Context())
+				got = identity.Role
+			}))
+			request := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/cloud/status", nil)
+			request.RemoteAddr = "100.64.0.5:1234"
+			handler.ServeHTTP(httptest.NewRecorder(), request)
+			if got != tt.wantRole {
+				t.Fatalf("role = %q, want %q", got, tt.wantRole)
+			}
+		})
+	}
+}

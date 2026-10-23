@@ -17,6 +17,21 @@ import { computeGraphLayout } from './layout';
 import { computeParallelEdgeBundles, edgeElementData } from './parallel-edges';
 import { graphEdgeStylesheet } from './style-catalog';
 
+/** Drop edges whose endpoints aren't drawn; cytoscape throws on edges to missing nodes. */
+function withRenderableEdges<T extends SyncOptions>(opts: T): T {
+	const nodeIDs = new Set(opts.visibleDevices.map((device) => device.id));
+	const renderable = opts.visibleEdges.filter(
+		(edge) => nodeIDs.has(edge.from) && nodeIDs.has(edge.to)
+	);
+	return renderable.length === opts.visibleEdges.length
+		? opts
+		: { ...opts, visibleEdges: renderable };
+}
+
+function indexEdges(edges: RenderEdge[]) {
+	return new Map(edges.map((edge) => [edge.id, edge]));
+}
+
 export type ColorBy = 'status' | 'tag' | 'owner' | 'os';
 
 export interface SyncOptions {
@@ -92,7 +107,8 @@ export function createEngine(opts: GraphInitOptions) {
 
 	const lastOnlineState = new Map<string, boolean>();
 
-	let current = opts;
+	let current = withRenderableEdges(opts);
+	let edgesById = indexEdges(current.visibleEdges);
 
 	installGraphDebug(() => ({
 		cy: graph,
@@ -154,6 +170,10 @@ export function createEngine(opts: GraphInitOptions) {
 
 	function graphDevices() {
 		return current.visibleDevices;
+	}
+
+	function edgeForId(id: string) {
+		return edgesById.get(id);
 	}
 
 	function edgeClassesFor(edge: RenderEdge) {
@@ -268,7 +288,7 @@ export function createEngine(opts: GraphInitOptions) {
 		});
 		const selectedEdgeID = current.selectedEdge?.id;
 		graph.edges().forEach((edge) => {
-			const renderEdge = current.visibleEdges.find((candidate) => candidate.id === edge.id());
+			const renderEdge = edgeForId(edge.id());
 			if (renderEdge) edge.classes(edgeClassesFor(renderEdge));
 			edge.toggleClass('selected', selectedEdgeID === edge.id());
 		});
@@ -427,9 +447,17 @@ export function createEngine(opts: GraphInitOptions) {
 			node.remove();
 			return;
 		}
+		node.addClass('leaving');
 		node.animate(
 			{ style: { opacity: 0, 'underlay-opacity': 0 } },
-			{ duration: 180, easing: 'ease-out-cubic', complete: () => node.remove() }
+			{
+				duration: 180,
+				easing: 'ease-out-cubic',
+				// A later sync may have revived this node while it was fading out.
+				complete: () => {
+					if (node.hasClass('leaving')) node.remove();
+				}
+			}
 		);
 	}
 
@@ -438,10 +466,25 @@ export function createEngine(opts: GraphInitOptions) {
 			edge.remove();
 			return;
 		}
+		edge.addClass('leaving');
 		edge.animate(
 			{ style: { opacity: 0, width: 0.2 } },
-			{ duration: 160, easing: 'ease-out-cubic', complete: () => edge.remove() }
+			{
+				duration: 160,
+				easing: 'ease-out-cubic',
+				complete: () => {
+					if (edge.hasClass('leaving')) edge.remove();
+				}
+			}
 		);
+	}
+
+	/** Cancel a pending fade-out so a reused element is fully visible again. */
+	function revive(element: NodeSingular | EdgeSingular, fadedStyles: string) {
+		if (!element.hasClass('leaving')) return;
+		element.stop(true, false);
+		element.removeClass('leaving');
+		element.removeStyle(fadedStyles);
 	}
 
 	function addNode(device: Device, targetPosition: { x: number; y: number }) {
@@ -519,6 +562,7 @@ export function createEngine(opts: GraphInitOptions) {
 				addNode(device, targetPosition);
 				continue;
 			}
+			revive(node, 'opacity underlay-opacity');
 			node.data(deviceData(device));
 			node.classes(deviceClasses(device));
 			const currentPosition = node.position();
@@ -534,6 +578,7 @@ export function createEngine(opts: GraphInitOptions) {
 		for (const edge of edges) {
 			const existing = graph.getElementById(edge.id);
 			if (existing.length) {
+				revive(existing as EdgeSingular, 'opacity width');
 				existing.data(cytoscapeEdgeData(edge, bundles));
 				existing.classes(edgeClassesFor(edge));
 				continue;
@@ -732,7 +777,7 @@ export function createEngine(opts: GraphInitOptions) {
 
 		graph.on('tap', 'edge', (event: CyEventObject) => {
 			const edgeID = event.target.id();
-			const edge = current.visibleEdges.find((candidate) => candidate.id === edgeID);
+			const edge = edgeForId(edgeID);
 			if (!edge) return;
 			onEdgeSelect(edge);
 			updateGraphSelection();
@@ -767,7 +812,9 @@ export function createEngine(opts: GraphInitOptions) {
 	}
 
 	function fitGraph() {
-		graph?.animate({
+		if (!graph) return;
+		graph.stop(true, false);
+		graph.animate({
 			fit: { eles: graph.elements(), padding: 64 },
 			duration: 260,
 			easing: 'ease-out-cubic'
@@ -803,7 +850,8 @@ export function createEngine(opts: GraphInitOptions) {
 	}
 
 	function sync(opts: SyncOptions) {
-		current = { ...current, ...opts };
+		current = withRenderableEdges({ ...current, ...opts });
+		edgesById = indexEdges(current.visibleEdges);
 		if (!graph) {
 			renderGraph();
 			return;
@@ -811,13 +859,22 @@ export function createEngine(opts: GraphInitOptions) {
 		syncGraph();
 	}
 
+	// ResizeObserver fires every frame during sidebar transitions and drags; refit once it settles.
+	const RESIZE_FIT_DEBOUNCE_MS = 120;
+	let resizeFitTimer: number | undefined;
+
 	function resizeGraph() {
 		if (!graph) return;
 		graph.resize();
-		fitGraph();
+		window.clearTimeout(resizeFitTimer);
+		resizeFitTimer = window.setTimeout(() => {
+			resizeFitTimer = undefined;
+			fitGraph();
+		}, RESIZE_FIT_DEBOUNCE_MS);
 	}
 
 	function destroy() {
+		window.clearTimeout(resizeFitTimer);
 		cancelSelectionSettled();
 		uninstallGraphDebug();
 		graph?.destroy();

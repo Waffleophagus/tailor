@@ -107,8 +107,6 @@ type CloudAuthStatusResponse struct {
 	HasAppCapabilityGrant bool   `json:"hasAppCapabilityGrant,omitempty"`
 	AppCapability         string `json:"appCapability,omitempty"`
 	NeedsSetupGrant       bool   `json:"needsSetupGrant,omitempty"`
-	BootstrapActive       bool   `json:"bootstrapActive,omitempty"`
-	BootstrapExpiresAt    string `json:"bootstrapExpiresAt,omitempty"`
 	StatusMessage         string `json:"statusMessage,omitempty"`
 	SetupGrantSnippet     string `json:"setupGrantSnippet,omitempty"`
 }
@@ -123,8 +121,6 @@ type SetupGrantResponse struct {
 	HasAppCapabilityGrant bool   `json:"hasAppCapabilityGrant"`
 	CallerRole            string `json:"callerRole,omitempty"`
 	CanEditPolicy         bool   `json:"canEditPolicy"`
-	BootstrapActive       bool   `json:"bootstrapActive,omitempty"`
-	BootstrapExpiresAt    string `json:"bootstrapExpiresAt,omitempty"`
 	StatusMessage         string `json:"statusMessage,omitempty"`
 	SetupGrantSnippet     string `json:"setupGrantSnippet,omitempty"`
 }
@@ -132,6 +128,9 @@ type SetupGrantResponse struct {
 type PolicyResponse struct {
 	Tailnet string `json:"tailnet"`
 	HuJSON  string `json:"hujson"`
+	// Revision identifies this policy text. Pass it as PolicyStageRequest.BaseRevision
+	// so a draft edited from it cannot overwrite a newer policy.
+	Revision string `json:"revision"`
 }
 
 type PolicyMapResponse struct {
@@ -228,6 +227,10 @@ type PolicyStageRequest struct {
 	HuJSON  string `json:"hujson"`
 	Source  string `json:"source,omitempty"`
 	Summary string `json:"summary,omitempty"`
+	// BaseRevision is the revision of the policy the draft was edited from. When
+	// set, saving fails if the live policy has changed since; when empty, the
+	// policy current at staging time is assumed.
+	BaseRevision string `json:"baseRevision,omitempty"`
 }
 
 type PolicySaveRequest struct {
@@ -236,9 +239,10 @@ type PolicySaveRequest struct {
 }
 
 type PolicySaveResponse struct {
-	Saved   bool   `json:"saved"`
-	Tailnet string `json:"tailnet"`
-	HuJSON  string `json:"hujson"`
+	Saved    bool   `json:"saved"`
+	Tailnet  string `json:"tailnet"`
+	HuJSON   string `json:"hujson"`
+	Revision string `json:"revision"`
 }
 
 type StagedDraft struct {

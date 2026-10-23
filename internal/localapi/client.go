@@ -15,6 +15,7 @@ import (
 	"tailscale.com/client/local"
 	"tailscale.com/ipn/ipnstate"
 	"tailscale.com/tailcfg"
+	"tailscale.com/tailcfg/nodecap"
 	"tailscale.com/types/views"
 )
 
@@ -116,8 +117,10 @@ func (c *Client) TailnetName(ctx context.Context) (string, error) {
 	if status.CurrentTailnet != nil && status.CurrentTailnet.MagicDNSSuffix != "" {
 		return status.CurrentTailnet.MagicDNSSuffix, nil
 	}
-	if status.MagicDNSSuffix != "" {
-		return status.MagicDNSSuffix, nil
+	// Older host tailscaled versions (external mode) only populate the legacy field.
+	//lint:ignore SA1019 fallback for older tailscaled
+	if legacy := status.MagicDNSSuffix; legacy != "" {
+		return legacy, nil
 	}
 	if status.CurrentTailnet != nil && status.CurrentTailnet.Name != "" {
 		return status.CurrentTailnet.Name, nil
@@ -202,7 +205,7 @@ func VIPServiceDevicesFromIPNStatus(status *ipnstate.Status) []api.Device {
 	if status == nil || status.Self == nil || len(status.Self.CapMap) == 0 {
 		return nil
 	}
-	mappings, err := tailcfg.UnmarshalNodeCapJSON[tailcfg.ServiceIPMappings](status.Self.CapMap, tailcfg.NodeAttrServiceHost)
+	mappings, err := tailcfg.UnmarshalNodeCapJSON[tailcfg.ServiceIPMappings](status.Self.CapMap, nodecap.ServiceHost)
 	if err != nil || len(mappings) == 0 {
 		return nil
 	}

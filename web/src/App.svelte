@@ -1,29 +1,14 @@
 <script lang="ts">
 	import { onDestroy, onMount } from 'svelte';
-	import {
-		authenticateCloud,
-		discardStagedPolicyDraft,
-		evaluatePolicyDraft,
-		fetchCloudStatus,
-		fetchPolicy,
-		fetchStagedPolicyDraft,
-		fetchStagedPolicyDrafts,
-		saveValidatedPolicyDraft,
-		saveSetupGrant,
-		stagePolicyDraft,
-		validatePolicyDraft
-	} from './lib/api/cloud';
+	import { authenticateCloud, fetchCloudStatus, saveSetupGrant } from './lib/api/cloud';
 	import { fetchHealth } from './lib/api/health';
 	import type {
 		CloudAuthStatusResponse,
 		Device,
 		Edge,
 		LocalAPIStatusResponse,
-		TailscaleSetupInfo,
-		PolicyEvaluateDraftResponse,
-		PolicyResponse,
 		SetupGrantResponse,
-		StagedDraft
+		TailscaleSetupInfo
 	} from './lib/api/schemas';
 	import { fetchTopology } from './lib/api/topology';
 	import { connectTopologySocket } from './lib/api/topologySocket';
@@ -50,6 +35,7 @@
 	import SidebarLeft from './lib/components/SidebarLeft.svelte';
 	import SidebarRight from './lib/components/SidebarRight.svelte';
 	import SidebarToggleButton from './lib/components/SidebarToggleButton.svelte';
+	import { PolicySession } from './lib/policy/policy-session.svelte';
 	import { viewport } from './lib/ui/viewport.svelte';
 
 	let apiStatus = $state('checking');
@@ -64,19 +50,6 @@
 		canEditPolicy: false
 	});
 	let cloudError = $state('');
-	let policy = $state<PolicyResponse | undefined>();
-	let policyEvaluation = $state<PolicyEvaluateDraftResponse | undefined>();
-	let previewEvaluation = $state<PolicyEvaluateDraftResponse | undefined>();
-	let editorHuJSON = $state('');
-	let validatedHuJSON = $state('');
-	let editorOpen = $state(false);
-	let editorValid = $state<boolean | null>(null);
-	let editorBusy = $state(false);
-	let editorStatus = $state('');
-	let editorErrors = $state<string[]>([]);
-	let stagedDrafts = $state<StagedDraft[]>([]);
-	let selectedStagedDraft = $state<StagedDraft | undefined>();
-	let stagedBusy = $state(false);
 	let phase2Open = $state(false);
 	let setupGrantOpen = $state(false);
 	let setupGrantBusy = $state(false);
@@ -107,7 +80,6 @@
 		  }
 		| undefined;
 	let disconnectTopologySocket: (() => void) | undefined;
-	let topologyEvalTimer: number | undefined;
 
 	const visibleDevices = $derived(
 		devices.filter((device) => {
@@ -126,19 +98,14 @@
 	const hasUntaggedDevices = $derived(devices.some((device) => device.tags.length === 0));
 	const hasUnownedDevices = $derived(devices.some((device) => !device.owner));
 	const canEditPolicy = $derived(cloudStatus.authenticated && cloudStatus.canEditPolicy);
+	const session = new PolicySession({
+		canEdit: () => canEditPolicy,
+		onError: (message) => {
+			cloudError = message;
+		}
+	});
 	const osOptions = $derived(unique(devices.map((device) => device.os).filter(Boolean)));
 	const rootDevice = $derived(devices[0]);
-	const editorDirty = $derived(Boolean(policy && editorHuJSON !== policy.hujson));
-	const validationStale = $derived(validatedHuJSON !== '' && editorHuJSON !== validatedHuJSON);
-	const effectiveValid = $derived(validationStale ? null : editorValid);
-	const effectiveErrors = $derived(validationStale ? [] : editorErrors);
-	const effectivePreviewEvaluation = $derived(validationStale ? undefined : previewEvaluation);
-	const stagedPreviewActive = $derived(Boolean(selectedStagedDraft?.valid && previewEvaluation));
-	const hasValidatedPending = $derived(
-		!validationStale && editorValid === true && validatedHuJSON !== ''
-	);
-	const hasPendingDraft = $derived(editorDirty || hasValidatedPending);
-	const mcpStagedDrafts = $derived(stagedDrafts.filter((draft) => draft.source === 'mcp'));
 	const deviceCollapse = $derived(
 		collapseDevicesByTag(visibleDevices, {
 			enabled: collapseTaggedFleets,
@@ -161,18 +128,19 @@
 		const policyRendered = resolveBaseGraphEdges({
 			cloudAuthenticated: cloudStatus.authenticated,
 			topologyEdges: edges,
-			previewEvaluation: effectivePreviewEvaluation,
-			policyEvaluation,
-			editorOpen,
-			editorDirty,
-			hasValidatedPending,
-			stagedPreviewActive
+			previewEvaluation: session.effectivePreviewEvaluation,
+			policyEvaluation: session.policyEvaluation,
+			editorOpen: session.editorOpen,
+			editorDirty: session.editorDirty,
+			hasValidatedPending: session.hasValidatedPending,
+			stagedPreviewActive: session.stagedPreviewActive
 		});
 
 		let rendered: RenderEdge[];
 		if (policyRendered) {
+			// Both endpoints must be on the graph: cytoscape throws on edges to missing nodes.
 			rendered = policyRendered.filter(
-				(edge) => visibleDeviceIDs.has(edge.from) || visibleDeviceIDs.has(edge.to)
+				(edge) => visibleDeviceIDs.has(edge.from) && visibleDeviceIDs.has(edge.to)
 			);
 		} else {
 			const root = graphRootDevice;
@@ -223,43 +191,16 @@
 		selectedDevice = member ?? devices[0];
 	});
 
-	function scheduleTopologyRefresh() {
-		if (!canEditPolicy) {
-			return;
-		}
-		if (topologyEvalTimer !== undefined) {
-			window.clearTimeout(topologyEvalTimer);
-		}
-		topologyEvalTimer = window.setTimeout(() => {
-			topologyEvalTimer = undefined;
-			void runTopologyRefresh();
-		}, 300);
-	}
-
-	async function runTopologyRefresh() {
-		if (!canEditPolicy) {
-			return;
-		}
-
-		if (hasValidatedPending && !validationStale && validatedHuJSON) {
-			await evaluatePolicy(validatedHuJSON, true);
-			return;
-		}
-
-		if (stagedPreviewActive && editorHuJSON && !validationStale) {
-			await evaluatePolicy(editorHuJSON, true);
-			return;
-		}
-
-		const savedPolicy = policy;
-		if (!savedPolicy || editorDirty || hasValidatedPending) {
-			return;
-		}
-		await evaluatePolicy(savedPolicy.hujson);
-	}
-
 	function unique(values: string[]) {
 		return [...new Set(values)].sort((a, b) => a.localeCompare(b));
+	}
+
+	function reconcileSelectedDevice(nextDevices: Device[]): Device | undefined {
+		const selected = selectedDevice;
+		if (!selected) return nextDevices[0];
+		// Collapsed fleet nodes only exist in graphDevices (recomputed from the new `devices`).
+		const candidates = isAggregateDeviceId(selected.id) ? graphDevices : nextDevices;
+		return candidates.find((device) => device.id === selected.id) ?? nextDevices[0];
 	}
 
 	function chooseDevice(device: Device) {
@@ -278,7 +219,7 @@
 		if (!viewport.isMobile) return;
 		leftOpen = false;
 		rightOpen = false;
-		if (editorOpen) editorOpen = false;
+		if (session.editorOpen) session.editorOpen = false;
 	});
 
 	function localApiErrorMessage(error: LocalAPIStatusResponse | Error | undefined) {
@@ -287,38 +228,6 @@
 			return error.error ?? `Unable to reach ${error.localApiEndpoint}`;
 		}
 		return error.message;
-	}
-
-	function resetEditorFromPolicy() {
-		if (!policy) return;
-		editorHuJSON = policy.hujson;
-		validatedHuJSON = '';
-		editorValid = null;
-		editorStatus = '';
-		editorErrors = [];
-		previewEvaluation = undefined;
-		selectedStagedDraft = undefined;
-	}
-
-	async function evaluatePolicy(hujson: string, preview = false) {
-		const result = await evaluatePolicyDraft({ hujson });
-		result.match({
-			ok: (value) => {
-				if (preview) {
-					previewEvaluation = value;
-					return;
-				}
-				policyEvaluation = value;
-				previewEvaluation = undefined;
-			},
-			err: (error) => {
-				if (preview) {
-					previewEvaluation = undefined;
-					editorStatus = 'Validated, but graph preview is unavailable.';
-				}
-				cloudError = error.message;
-			}
-		});
 	}
 
 	async function enableACLEditing(data: { tailnet: string; apiKey: string }) {
@@ -331,28 +240,26 @@
 		});
 		await result.match({
 			ok: async (value) => {
-				const topology = await fetchTopology();
-				if (topology.isErr()) {
-					cloudError = topology.error.message;
-					return;
-				}
-				devices = topology.value.devices;
-				edges = topology.value.edges;
-				tailnetName = topology.value.tailnet;
-				stagedDrafts = topology.value.stagedDrafts ?? stagedDrafts;
-				selectedDevice = selectedDevice
-					? (topology.value.devices.find((device) => device.id === selectedDevice?.id) ??
-						topology.value.devices[0])
-					: topology.value.devices[0];
+				// The backend is now authenticated; reflect that even if the topology refresh fails.
 				cloudStatus = value;
 				phase2Open = false;
+				const topology = await fetchTopology();
+				if (topology.isOk()) {
+					devices = topology.value.devices;
+					edges = topology.value.edges;
+					tailnetName = topology.value.tailnet;
+					session.stagedDrafts = topology.value.stagedDrafts ?? session.stagedDrafts;
+					selectedDevice = reconcileSelectedDevice(topology.value.devices);
+				} else {
+					cloudError = topology.error.message;
+				}
+				if (value.canEditPolicy) {
+					await session.loadPolicy();
+				}
+				// The grant is optional delegation; offer it without blocking editing.
 				if (value.needsSetupGrant) {
 					setupGrantError = '';
 					setupGrantOpen = true;
-					return;
-				}
-				if (value.canEditPolicy) {
-					await loadPolicy();
 				}
 			},
 			err: async (error) => {
@@ -360,193 +267,6 @@
 			}
 		});
 		cloudBusy = false;
-	}
-
-	async function loadPolicy() {
-		const result = await fetchPolicy();
-		result.match({
-			ok: async (value) => {
-				policy = value;
-				resetEditorFromPolicy();
-				cloudError = '';
-				await evaluatePolicy(value.hujson);
-				await loadStagedDrafts();
-			},
-			err: async (error) => {
-				cloudError = error.message;
-			}
-		});
-	}
-
-	async function loadStagedDrafts() {
-		if (!canEditPolicy) return;
-		const result = await fetchStagedPolicyDrafts();
-		result.match({
-			ok: (value) => {
-				setStagedDrafts(value.drafts);
-			},
-			err: (error) => {
-				cloudError = error.message;
-			}
-		});
-	}
-
-	function setStagedDrafts(drafts: StagedDraft[]) {
-		stagedDrafts = drafts;
-		if (!selectedStagedDraft) return;
-		const found = drafts.find((draft) => draft.id === selectedStagedDraft?.id);
-		if (selectedStagedDraft.hujson && found && !found.hujson) {
-			found.hujson = selectedStagedDraft.hujson;
-		}
-		selectedStagedDraft = found;
-	}
-
-	function openPolicyEditor() {
-		const open = () => {
-			if (policy && !hasPendingDraft) {
-				resetEditorFromPolicy();
-			}
-			editorOpen = true;
-		};
-		if (policy) {
-			open();
-			return;
-		}
-		void loadPolicy().then(open);
-	}
-
-	function closePolicyEditor() {
-		editorOpen = false;
-		if (!hasValidatedPending) {
-			previewEvaluation = undefined;
-		}
-	}
-
-	async function validateEditor() {
-		if (editorBusy || !editorDirty) return;
-		editorBusy = true;
-		cloudError = '';
-		editorErrors = [];
-		const result = await validatePolicyDraft(editorHuJSON);
-		await result.match({
-			ok: async (value) => {
-				editorValid = value.valid;
-				if (value.valid) {
-					validatedHuJSON = editorHuJSON;
-					editorStatus = 'Policy validated. Preview updated on the graph.';
-					await evaluatePolicy(editorHuJSON, true);
-				} else {
-					validatedHuJSON = '';
-					editorStatus = 'Fix validation errors before saving.';
-					editorErrors = value.errors ?? ['Policy failed validation.'];
-					previewEvaluation = undefined;
-				}
-			},
-			err: async (error) => {
-				editorValid = false;
-				validatedHuJSON = '';
-				editorErrors = [error.message];
-				editorStatus = 'Validation failed.';
-				previewEvaluation = undefined;
-			}
-		});
-		editorBusy = false;
-	}
-
-	function discardEditorChanges() {
-		resetEditorFromPolicy();
-	}
-
-	async function loadStagedDraft(draft: StagedDraft) {
-		if (!policy || stagedBusy) return;
-		stagedBusy = true;
-		const result = await fetchStagedPolicyDraft(draft.id);
-		result.match({
-			ok: (value) => {
-				selectedStagedDraft = value.draft;
-				editorHuJSON = value.draft.hujson ?? '';
-				validatedHuJSON = value.draft.hujson ?? '';
-				editorValid = value.draft.valid;
-				editorErrors = value.draft.errors ?? [];
-				previewEvaluation = value.draft.evaluation;
-				editorStatus = `${value.draft.source.toUpperCase()} staged draft loaded for review.`;
-				editorOpen = true;
-			},
-			err: (error) => {
-				cloudError = error.message;
-			}
-		});
-		stagedBusy = false;
-	}
-
-	async function discardStagedDraft(draft: StagedDraft) {
-		if (stagedBusy) return;
-		stagedBusy = true;
-		const result = await discardStagedPolicyDraft(draft.id);
-		result.match({
-			ok: () => {
-				stagedDrafts = stagedDrafts.filter((item) => item.id !== draft.id);
-				if (selectedStagedDraft?.id === draft.id) {
-					resetEditorFromPolicy();
-				}
-			},
-			err: (error) => {
-				cloudError = error.message;
-			}
-		});
-		stagedBusy = false;
-	}
-
-	async function saveEditorPolicy() {
-		if (editorBusy || !hasValidatedPending) return;
-		editorBusy = true;
-		cloudError = '';
-		let result: Awaited<ReturnType<typeof saveValidatedPolicyDraft>> | undefined;
-		if (selectedStagedDraft?.hujson === validatedHuJSON) {
-			result = await saveValidatedPolicyDraft({
-				draftId: selectedStagedDraft.id,
-				draftHash: selectedStagedDraft.draftHash
-			});
-		} else {
-			const staged = await stagePolicyDraft({
-				hujson: validatedHuJSON,
-				source: 'ui',
-				summary: 'Staged from policy editor'
-			});
-			await staged.match({
-				ok: async (value) => {
-					result = await saveValidatedPolicyDraft({
-						draftId: value.draft.id,
-						draftHash: value.draft.draftHash
-					});
-				},
-				err: async (error) => {
-					cloudError = error.message;
-				}
-			});
-		}
-		if (!result) {
-			editorBusy = false;
-			return;
-		}
-		await result.match({
-			ok: async (value) => {
-				const savedDraftID = selectedStagedDraft?.id;
-				policy = { tailnet: value.tailnet, hujson: value.hujson };
-				resetEditorFromPolicy();
-				if (savedDraftID) {
-					stagedDrafts = stagedDrafts.filter((draft) => draft.id !== savedDraftID);
-				}
-				editorOpen = false;
-				editorStatus = 'Policy saved.';
-				await evaluatePolicy(value.hujson);
-				await loadStagedDrafts();
-			},
-			err: async (error) => {
-				cloudError = error.message;
-			}
-		});
-		editorBusy = false;
 	}
 
 	function closePhase2Dialog() {
@@ -566,46 +286,26 @@
 			callerRole: result.callerRole,
 			hasAppCapabilityGrant: result.hasAppCapabilityGrant,
 			appCapability: result.appCapability ?? cloudStatus.appCapability,
-			needsSetupGrant:
-				!result.hasAppCapabilityGrant && !result.bootstrapActive && !result.canEditPolicy,
-			bootstrapActive: result.bootstrapActive,
-			bootstrapExpiresAt: result.bootstrapExpiresAt,
+			needsSetupGrant: !result.hasAppCapabilityGrant && result.canEditPolicy,
 			statusMessage: result.statusMessage,
 			setupGrantSnippet: result.setupGrantSnippet
 		};
 	}
 
-	async function applyRecommendedSetupGrant() {
+	/** Applies the recommended grant, or the user's edited snippet when given. */
+	async function applySetupGrant(editedSnippet?: string) {
 		if (setupGrantBusy) return;
 		setupGrantBusy = true;
 		setupGrantError = '';
-		const result = await saveSetupGrant();
+		const result = await saveSetupGrant(
+			editedSnippet === undefined ? undefined : { editedSnippet }
+		);
 		await result.match({
 			ok: async (value) => {
 				applySetupGrantResult(value);
 				setupGrantOpen = false;
 				if (value.canEditPolicy) {
-					await loadPolicy();
-				}
-			},
-			err: async (error) => {
-				setupGrantError = error.message;
-			}
-		});
-		setupGrantBusy = false;
-	}
-
-	async function applyEditedSetupGrant(snippet: string) {
-		if (setupGrantBusy) return;
-		setupGrantBusy = true;
-		setupGrantError = '';
-		const result = await saveSetupGrant({ editedSnippet: snippet });
-		await result.match({
-			ok: async (value) => {
-				applySetupGrantResult(value);
-				setupGrantOpen = false;
-				if (value.canEditPolicy) {
-					await loadPolicy();
+					await session.loadPolicy();
 				}
 			},
 			err: async (error) => {
@@ -654,7 +354,7 @@
 			});
 
 			if (canEditPolicy) {
-				await loadPolicy();
+				await session.loadPolicy();
 			}
 
 			disconnectTopologySocket = connectTopologySocket({
@@ -671,12 +371,10 @@
 					edges = value.edges;
 					tailnetName = value.tailnet;
 					if (value.stagedDrafts) {
-						setStagedDrafts(value.stagedDrafts);
+						session.setStagedDrafts(value.stagedDrafts);
 					}
-					selectedDevice = selectedDevice
-						? (value.devices.find((device) => device.id === selectedDevice?.id) ?? value.devices[0])
-						: value.devices[0];
-					scheduleTopologyRefresh();
+					selectedDevice = reconcileSelectedDevice(value.devices);
+					session.scheduleTopologyRefresh();
 				},
 				onUnavailable: (status) => {
 					tailscaleSetup = status.setup ?? undefined;
@@ -716,9 +414,7 @@
 	});
 
 	onDestroy(() => {
-		if (topologyEvalTimer !== undefined) {
-			window.clearTimeout(topologyEvalTimer);
-		}
+		session.dispose();
 		disconnectTopologySocket?.();
 	});
 </script>
@@ -756,24 +452,25 @@
 			>
 				{#if !viewport.isMobile}
 					{#if canEditPolicy}
-						{#if hasValidatedPending}
+						{#if session.hasValidatedPending}
 							<button
 								class="btn-save"
 								type="button"
-								disabled={editorBusy}
-								onclick={saveEditorPolicy}
+								disabled={session.editorBusy}
+								onclick={session.save}
 							>
 								Save validated policy
 							</button>
 						{/if}
-						<button class="btn-primary" type="button" onclick={openPolicyEditor}>Edit policy</button
+						<button class="btn-primary" type="button" onclick={session.openEditor}
+							>Edit policy</button
 						>
 					{:else if cloudStatus.authenticated}
 						<span
 							class="view-only-pill"
 							title={cloudStatus.statusMessage || 'View-only tailnet access'}
 						>
-							{cloudStatus.bootstrapActive ? 'Temporary access' : 'View-only'}
+							View-only
 						</span>
 					{:else}
 						<button class="btn-primary" type="button" onclick={() => (phase2Open = true)}>
@@ -798,10 +495,6 @@
 				role="status"
 			>
 				{cloudStatus.statusMessage}
-				{#if cloudStatus.setupGrantSnippet && cloudStatus.bootstrapActive}
-					<pre
-						class="mt-2 overflow-x-auto rounded-md border border-panel-border bg-panel-weak p-3 font-mono text-[0.76rem] whitespace-pre-wrap text-primary">{cloudStatus.setupGrantSnippet}</pre>
-				{/if}
 			</div>
 		{/if}
 
@@ -857,7 +550,7 @@
 								<span class="hud-chip"
 									><strong class="hud-chip-strong">{visibleEdges.length}</strong> links</span
 								>
-								{#if effectivePreviewEvaluation}
+								{#if session.effectivePreviewEvaluation}
 									<span class="hud-chip hud-chip-warn">Preview</span>
 								{/if}
 							</div>
@@ -881,7 +574,7 @@
 							<span class="hud-chip"
 								><strong class="hud-chip-strong">{visibleEdges.length}</strong> links</span
 							>
-							{#if effectivePreviewEvaluation}
+							{#if session.effectivePreviewEvaluation}
 								<span class="hud-chip hud-chip-warn">Preview</span>
 							{/if}
 							{#if canEditPolicy && graphMode === 'focused' && graphRootDevice}
@@ -908,24 +601,28 @@
 							<button
 								type="button"
 								title="Zoom in"
+								aria-label="Zoom in"
 								onclick={() => graphAPI?.zoom(1.2)}
 								class="graph-control">+</button
 							>
 							<button
 								type="button"
 								title="Zoom out"
+								aria-label="Zoom out"
 								onclick={() => graphAPI?.zoom(0.8)}
 								class="graph-control">-</button
 							>
 							<button
 								type="button"
 								title="Fit to view"
+								aria-label="Fit to view"
 								onclick={() => graphAPI?.fit()}
 								class="graph-control">⌖</button
 							>
 							<button
 								type="button"
 								title="Reflow layout"
+								aria-label="Reflow layout"
 								onclick={() => graphAPI?.reflow()}
 								class="graph-control">↻</button
 							>
@@ -997,24 +694,24 @@
 						</div>
 					{/if}
 
-					{#if !viewport.isMobile && mcpStagedDrafts.length > 0}
+					{#if !viewport.isMobile && session.mcpStagedDrafts.length > 0}
 						<div class="staged-drafts" aria-label="MCP staged drafts">
 							<div class="staged-drafts-header">
 								<div>
 									<p class="staged-eyebrow">MCP staged draft available</p>
-									<h2 class="staged-title">{mcpStagedDrafts.length} pending review</h2>
+									<h2 class="staged-title">{session.mcpStagedDrafts.length} pending review</h2>
 								</div>
 								<button
 									type="button"
 									class="staged-refresh"
-									onclick={loadStagedDrafts}
-									disabled={stagedBusy}
+									onclick={session.loadStagedDrafts}
+									disabled={session.stagedBusy}
 								>
 									Refresh
 								</button>
 							</div>
 							<div class="staged-list">
-								{#each mcpStagedDrafts as draft (draft.id)}
+								{#each session.mcpStagedDrafts as draft (draft.id)}
 									<article class="staged-item">
 										<div class="staged-item-main">
 											<div class="staged-row">
@@ -1038,16 +735,16 @@
 											<button
 												type="button"
 												class="staged-load"
-												onclick={() => loadStagedDraft(draft)}
-												disabled={stagedBusy || !draft.valid}
+												onclick={() => session.loadStagedDraft(draft)}
+												disabled={session.stagedBusy || !draft.valid}
 											>
 												Load
 											</button>
 											<button
 												type="button"
 												class="staged-discard"
-												onclick={() => discardStagedDraft(draft)}
-												disabled={stagedBusy}
+												onclick={() => session.discardStagedDraft(draft)}
+												disabled={session.stagedBusy}
 											>
 												Discard
 											</button>
@@ -1060,19 +757,19 @@
 
 					{#if !viewport.isMobile}
 						<PolicyEditorPanel
-							bind:open={editorOpen}
-							{policy}
-							bind:editorText={editorHuJSON}
-							isDirty={editorDirty}
-							valid={effectiveValid}
-							busy={editorBusy}
-							status={editorStatus}
-							errors={effectiveErrors}
-							stagedDraft={selectedStagedDraft}
-							onValidate={validateEditor}
-							onSave={saveEditorPolicy}
-							onDiscard={discardEditorChanges}
-							onClose={closePolicyEditor}
+							bind:open={session.editorOpen}
+							policy={session.policy}
+							bind:editorText={session.editorHuJSON}
+							isDirty={session.editorDirty}
+							valid={session.effectiveValid}
+							busy={session.editorBusy}
+							status={session.editorStatus}
+							errors={session.effectiveErrors}
+							stagedDraft={session.selectedStagedDraft}
+							onValidate={session.validate}
+							onSave={session.save}
+							onDiscard={session.discardChanges}
+							onClose={session.closeEditor}
 						/>
 					{/if}
 				</section>
@@ -1197,8 +894,8 @@
 			busy={setupGrantBusy}
 			error={setupGrantError}
 			onClose={closeSetupGrantDialog}
-			onAccept={applyRecommendedSetupGrant}
-			onSaveEdited={applyEditedSetupGrant}
+			onAccept={() => applySetupGrant()}
+			onSaveEdited={applySetupGrant}
 		/>
 	{/if}
 </main>

@@ -22,20 +22,26 @@ export const localApiStatusResponseSchema = z.object({
 	setup: tailscaleSetupInfoSchema.optional()
 });
 
+/** A string list that tolerates null/missing (treated as empty) so one malformed device cannot reject a whole topology snapshot. */
+const stringList = z
+	.array(z.string())
+	.nullish()
+	.transform((values) => values ?? []);
+
 export const deviceSchema = z.object({
 	id: z.string(),
 	kind: z.enum(['device', 'service']).optional(),
 	name: z.string(),
 	ip: z.string(),
-	tailscaleIps: z.array(z.string()),
+	tailscaleIps: stringList,
 	os: z.string(),
 	online: z.boolean(),
 	owner: z.string(),
 	roles: z.array(z.string()).optional(),
-	tags: z.array(z.string()),
+	tags: stringList,
 	shared: z.boolean().optional(),
 	subnetRouter: z.boolean(),
-	routedSubnets: z.array(z.string()),
+	routedSubnets: stringList,
 	postureAttrs: z.record(z.string(), z.unknown()).optional(),
 	lastSeen: z.string().optional()
 });
@@ -72,8 +78,6 @@ export const cloudAuthStatusResponseSchema = z.object({
 	hasAppCapabilityGrant: z.boolean().optional(),
 	appCapability: z.string().optional(),
 	needsSetupGrant: z.boolean().optional(),
-	bootstrapActive: z.boolean().optional(),
-	bootstrapExpiresAt: z.string().optional(),
 	statusMessage: z.string().optional(),
 	setupGrantSnippet: z.string().optional()
 });
@@ -84,8 +88,6 @@ export const setupGrantResponseSchema = z.object({
 	hasAppCapabilityGrant: z.boolean(),
 	callerRole: z.enum(['full', 'viewer']).optional(),
 	canEditPolicy: z.boolean().default(false),
-	bootstrapActive: z.boolean().optional(),
-	bootstrapExpiresAt: z.string().optional(),
 	statusMessage: z.string().optional(),
 	setupGrantSnippet: z.string().optional()
 });
@@ -97,7 +99,8 @@ export const cloudAuthRequestSchema = z.object({
 
 export const policyResponseSchema = z.object({
 	tailnet: z.string(),
-	hujson: z.string()
+	hujson: z.string(),
+	revision: z.string()
 });
 
 export const policySectionEntrySchema = z.object({
@@ -194,7 +197,8 @@ export const policyValidateResponseSchema = z.object({
 export const policyStageRequestSchema = z.object({
 	hujson: z.string(),
 	source: z.string().optional(),
-	summary: z.string().optional()
+	summary: z.string().optional(),
+	baseRevision: z.string().optional()
 });
 
 export const policySaveRequestSchema = z.object({
@@ -245,7 +249,8 @@ export const topologyResponseSchema = z.object({
 export const policySaveResponseSchema = z.object({
 	saved: z.boolean(),
 	tailnet: z.string(),
-	hujson: z.string()
+	hujson: z.string(),
+	revision: z.string()
 });
 
 export const policyMutationSchema = z.object({

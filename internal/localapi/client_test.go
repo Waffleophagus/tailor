@@ -9,6 +9,7 @@ import (
 	"github.com/Waffleophagus/tailor/internal/api"
 	"tailscale.com/ipn/ipnstate"
 	"tailscale.com/tailcfg"
+	"tailscale.com/tailcfg/nodecap"
 	"tailscale.com/types/views"
 )
 
@@ -214,7 +215,7 @@ func TestVIPServiceDevicesFromIPNStatusHandlesMissingAndInvalidCapMap(t *testing
 	got := VIPServiceDevicesFromIPNStatus(&ipnstate.Status{
 		Self: &ipnstate.PeerStatus{
 			CapMap: tailcfg.NodeCapMap{
-				tailcfg.NodeAttrServiceHost: {
+				nodecap.ServiceHost: {
 					tailcfg.RawMessage(`not-json`),
 				},
 			},
@@ -229,7 +230,7 @@ func TestVIPServiceDevicesFromIPNStatusUsesServiceHostCapMap(t *testing.T) {
 	got := VIPServiceDevicesFromIPNStatus(&ipnstate.Status{
 		Self: &ipnstate.PeerStatus{
 			CapMap: tailcfg.NodeCapMap{
-				tailcfg.NodeAttrServiceHost: {
+				nodecap.ServiceHost: {
 					tailcfg.RawMessage(`{"svc:web":["100.100.0.1","fd7a:115c:a1e0::1"]}`),
 				},
 			},
@@ -255,7 +256,7 @@ func TestVIPServiceDevicesFromIPNStatusSkipsBlankServiceNames(t *testing.T) {
 	got := VIPServiceDevicesFromIPNStatus(&ipnstate.Status{
 		Self: &ipnstate.PeerStatus{
 			CapMap: tailcfg.NodeCapMap{
-				tailcfg.NodeAttrServiceHost: {
+				nodecap.ServiceHost: {
 					tailcfg.RawMessage(`{"":["100.100.0.1"],"svc:web":["100.100.0.2"]}`),
 				},
 			},
@@ -271,7 +272,7 @@ func TestVIPServiceDevicesFromIPNStatusMergesServiceHostCapMapInOrder(t *testing
 	got := VIPServiceDevicesFromIPNStatus(&ipnstate.Status{
 		Self: &ipnstate.PeerStatus{
 			CapMap: tailcfg.NodeCapMap{
-				tailcfg.NodeAttrServiceHost: {
+				nodecap.ServiceHost: {
 					tailcfg.RawMessage(`{"svc:web":["100.100.0.1"],"svc:db":["100.100.0.2"]}`),
 					tailcfg.RawMessage(`{"svc:web":["100.100.0.3"]}`),
 				},

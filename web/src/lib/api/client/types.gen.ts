@@ -96,8 +96,6 @@ export type CloudAuthStatusResponse = {
     hasAppCapabilityGrant?: boolean;
     appCapability?: string;
     needsSetupGrant?: boolean;
-    bootstrapActive?: boolean;
-    bootstrapExpiresAt?: string;
     statusMessage?: string;
     setupGrantSnippet?: string;
 };
@@ -105,6 +103,10 @@ export type CloudAuthStatusResponse = {
 export type PolicyResponse = {
     tailnet: string;
     hujson: string;
+    /**
+     * Identifies this policy text; send it as baseRevision when staging a draft edited from it.
+     */
+    revision: string;
 };
 
 export type PolicyMapResponse = {
@@ -216,6 +218,10 @@ export type PolicyStageRequest = {
     hujson: string;
     source?: string;
     summary?: string;
+    /**
+     * Revision of the policy the draft was edited from. Saving fails if the live policy changed since.
+     */
+    baseRevision?: string;
 };
 
 export type PolicySaveRequest = {
@@ -227,6 +233,7 @@ export type PolicySaveResponse = {
     saved: boolean;
     tailnet: string;
     hujson: string;
+    revision: string;
 };
 
 export type StagedDraft = {

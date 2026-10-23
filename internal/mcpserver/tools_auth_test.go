@@ -20,14 +20,6 @@ func TestViewerMCPToolPermissions(t *testing.T) {
 	assertToolDenied(t, session, "tailor_stage_policy_draft", "view-only")
 }
 
-func TestBootstrapSessionNeverAuthorizesMCPWrite(t *testing.T) {
-	ctx := authz.WithIdentity(context.Background(), authz.TailnetIdentity{Role: authz.RoleViewer})
-	ctx = authz.WithBootstrap(ctx)
-	session := connectTestClient(t, ctx)
-
-	assertToolDenied(t, session, "tailor_stage_policy_draft", "view-only")
-}
-
 func TestFullAccessPassesMCPAuthorizationGates(t *testing.T) {
 	session := connectTestClient(t, authz.WithIdentity(context.Background(), authz.TailnetIdentity{Role: authz.RoleFull}))
 

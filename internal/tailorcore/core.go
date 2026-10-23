@@ -27,6 +27,7 @@ type Service struct {
 	logger      *slog.Logger
 	localAPI    *localapi.Client
 	cloudAPI    *cloudapi.Client
+	cloudMeta   *cachedCloudMetadata
 	policyCache policy.Cache
 	warmups     atomic.Int32
 
@@ -86,6 +87,9 @@ func New(options Options) *Service {
 		cleanupDone:  make(chan struct{}),
 		cleanupStop:  make(chan struct{}),
 	}
+	service.cloudMeta = newCachedCloudMetadata(service.cloudAPI, func() string {
+		return service.cloudAPI.Status().Tailnet
+	})
 	go service.cleanupStagedDrafts()
 	return service
 }
@@ -109,20 +113,24 @@ func (s *Service) CloudPolicy(ctx context.Context) (string, error) {
 	return s.cloudAPI.Policy(ctx)
 }
 
-func (s *Service) RefreshCloudPolicy(ctx context.Context) (string, error) {
-	raw, err := s.cloudAPI.RefreshPolicy(ctx)
+// RefreshCloudPolicy reads the live policy (bypassing the session cache) with the
+// ETag to pass to SaveCloudPolicy.
+func (s *Service) RefreshCloudPolicy(ctx context.Context) (cloudapi.PolicyVersion, error) {
+	version, err := s.cloudAPI.RefreshPolicyVersion(ctx)
 	if err == nil {
 		s.policyCache.Invalidate()
 	}
-	return raw, err
+	return version, err
 }
 
 func (s *Service) ValidateCloudPolicy(ctx context.Context, draft string) error {
 	return s.cloudAPI.ValidatePolicy(ctx, draft)
 }
 
-func (s *Service) SaveCloudPolicy(ctx context.Context, draft string) (string, error) {
-	raw, err := s.cloudAPI.SavePolicy(ctx, draft)
+// SaveCloudPolicy writes draft only if the live policy still has etag (from
+// RefreshCloudPolicy); otherwise it returns cloudapi.ErrPolicyChanged.
+func (s *Service) SaveCloudPolicy(ctx context.Context, draft, etag string) (string, error) {
+	raw, err := s.cloudAPI.SavePolicyIfMatch(ctx, draft, etag)
 	if err == nil {
 		s.policyCache.Invalidate()
 	}
@@ -133,6 +141,7 @@ func (s *Service) AuthenticateCloud(ctx context.Context, request cloudapi.AuthRe
 	status, err := s.cloudAPI.Authenticate(ctx, request)
 	if err == nil {
 		s.policyCache.Invalidate()
+		s.cloudMeta.Invalidate()
 		s.warmups.Add(1)
 		go s.warmPolicyCache()
 	}
@@ -176,8 +185,9 @@ func (s *Service) Policy(ctx context.Context) (api.PolicyResponse, error) {
 		return api.PolicyResponse{}, err
 	}
 	return api.PolicyResponse{
-		Tailnet: s.cloudAPI.Status().Tailnet,
-		HuJSON:  rawPolicy,
+		Tailnet:  s.cloudAPI.Status().Tailnet,
+		HuJSON:   rawPolicy,
+		Revision: policyHash(rawPolicy),
 	}, nil
 }
 
@@ -282,7 +292,7 @@ func (s *Service) StagePolicyDraft(ctx context.Context, request api.PolicyStageR
 		ID:         newDraftID(),
 		Source:     stagedSource(request.Source),
 		Tailnet:    s.cloudAPI.Status().Tailnet,
-		BaseHash:   policyHash(current),
+		BaseHash:   baseRevision(request.BaseRevision, current),
 		DraftHash:  policyHash(request.HuJSON),
 		HuJSON:     request.HuJSON,
 		Valid:      true,
@@ -355,14 +365,20 @@ func (s *Service) SaveStagedPolicy(ctx context.Context, request api.PolicySaveRe
 	if err := policy.ValidateTailscaleConstraints(draft.HuJSON); err != nil {
 		return api.PolicySaveResponse{}, err
 	}
-	current, err := s.cloudAPI.Policy(ctx)
+	// Compare against the live policy, not the session cache: edits made in the admin
+	// console or via GitOps since the draft was staged must not be overwritten. The
+	// ETag makes Tailscale reject the write if the policy changes after this read.
+	current, err := s.cloudAPI.RefreshPolicyVersion(ctx)
 	if err != nil {
 		return api.PolicySaveResponse{}, PolicyFetchError{Err: err}
 	}
-	if policyHash(current) != draft.BaseHash {
+	if policyHash(current.HuJSON) != draft.BaseHash {
 		return api.PolicySaveResponse{}, ErrStagedDraftBaseMismatch
 	}
-	saved, err := s.cloudAPI.SavePolicy(ctx, draft.HuJSON)
+	saved, err := s.cloudAPI.SavePolicyIfMatch(ctx, draft.HuJSON, current.ETag)
+	if errors.Is(err, cloudapi.ErrPolicyChanged) {
+		return api.PolicySaveResponse{}, ErrStagedDraftBaseMismatch
+	}
 	if err != nil {
 		return api.PolicySaveResponse{}, err
 	}
@@ -371,9 +387,10 @@ func (s *Service) SaveStagedPolicy(ctx context.Context, request api.PolicySaveRe
 	delete(s.stagedDrafts, draft.ID)
 	s.mu.Unlock()
 	return api.PolicySaveResponse{
-		Saved:   true,
-		Tailnet: s.cloudAPI.Status().Tailnet,
-		HuJSON:  saved,
+		Saved:    true,
+		Tailnet:  s.cloudAPI.Status().Tailnet,
+		HuJSON:   saved,
+		Revision: policyHash(saved),
 	}, nil
 }
 
@@ -464,20 +481,20 @@ func (s *Service) enrichTopologyFromCloud(ctx context.Context, devices []api.Dev
 	if status := s.cloudAPI.Status(); !status.Authenticated || status.DevMode {
 		return s.enrichTopologyFromLocalServices(ctx, devices)
 	}
-	cloudDevices, err := s.cloudAPI.Devices(ctx)
+	cloudDevices, err := s.cloudMeta.Devices(ctx)
 	if err != nil {
 		s.logger.Debug("cloud device metadata unavailable", "error", err.Error())
 	} else {
 		enrichDevicesFromCloud(devices, cloudDevices)
-		users, err := s.cloudAPI.Users(ctx)
+		users, err := s.cloudMeta.Users(ctx)
 		if err != nil {
 			s.logger.Debug("cloud user metadata unavailable", "error", err.Error())
 		} else {
 			enrichDeviceRolesFromCloudUsers(devices, users)
 		}
-		enrichDevicePostureAttributes(ctx, s.cloudAPI, devices, cloudDevices, s.logger)
+		enrichDevicePostureAttributes(ctx, s.cloudMeta, devices, cloudDevices, s.logger)
 	}
-	services, err := s.cloudAPI.VIPServices(ctx)
+	services, err := s.cloudMeta.VIPServices(ctx)
 	if err != nil {
 		s.logger.Debug("vip services unavailable", "error", err.Error())
 		return s.enrichTopologyFromLocalServices(ctx, devices)
@@ -804,4 +821,15 @@ func nonNilStrings(values []string) []string {
 		return []string{}
 	}
 	return values
+}
+
+// baseRevision is the base a staged draft is checked against at save time: the
+// revision the editor started from when given, else the policy current now. Without
+// the editor's revision, a draft edited from an older policy would inherit the base
+// of a newer save and silently overwrite it.
+func baseRevision(requested, current string) string {
+	if requested = strings.TrimSpace(requested); requested != "" {
+		return requested
+	}
+	return policyHash(current)
 }

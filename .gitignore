@@ -1,5 +1,4 @@
-internal/frontend/dist/*
-!internal/frontend/dist/index.html
+internal/frontend/dist/app/
 docs/PRD.md
 /tailor
 web/playwright-report/

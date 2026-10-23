@@ -222,9 +222,9 @@ func spawnFromPlan(plan []spawnPlanEntry) ([]api.Device, error) {
 			OS:            entry.osName,
 			Online:        entry.online,
 			Owner:         entry.owner,
-			Tags:          entry.tags,
+			Tags:          nonNil(entry.tags),
 			SubnetRouter:  entry.subnetRouter,
-			RoutedSubnets: entry.routedSubnets,
+			RoutedSubnets: nonNil(entry.routedSubnets),
 		}
 		if !entry.online {
 			device.LastSeen = time.Now().Add(-30 * time.Minute).UTC().Format(time.RFC3339)
@@ -246,6 +246,14 @@ func newStore(devices []api.Device) *deviceStore {
 		devices:       cloneDevices(devices),
 		nextHostOctet: 100,
 	}
+}
+
+// nonNil keeps list fields as [] rather than null in JSON; the UI expects arrays.
+func nonNil(values []string) []string {
+	if values == nil {
+		return []string{}
+	}
+	return values
 }
 
 func cloneDevices(devices []api.Device) []api.Device {

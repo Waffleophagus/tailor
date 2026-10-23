@@ -1540,9 +1540,7 @@ func devicesForSelector(selector string, p Policy, devices []api.Device) []api.D
 	if host, ok := p.Hosts[selector]; ok {
 		return devicesForIPSelector(host, devices)
 	}
-	if strings.HasPrefix(selector, "user:") {
-		selector = strings.TrimPrefix(selector, "user:")
-	}
+	selector = strings.TrimPrefix(selector, "user:")
 	if strings.Contains(selector, "@") {
 		return devicesForUser(selector, devices)
 	}
@@ -1593,16 +1591,6 @@ func devicesWithOwner(devices []api.Device) []api.Device {
 	var out []api.Device
 	for _, d := range devices {
 		if d.Owner != "" {
-			out = append(out, d)
-		}
-	}
-	return out
-}
-
-func devicesWithOwnerUntagged(devices []api.Device) []api.Device {
-	var out []api.Device
-	for _, d := range devices {
-		if d.Owner != "" && len(d.Tags) == 0 {
 			out = append(out, d)
 		}
 	}

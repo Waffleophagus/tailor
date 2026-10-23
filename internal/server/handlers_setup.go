@@ -3,11 +3,12 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
-	"time"
 
 	"github.com/Waffleophagus/tailor/internal/api"
 	"github.com/Waffleophagus/tailor/internal/authz"
+	"github.com/Waffleophagus/tailor/internal/cloudapi"
 	"github.com/Waffleophagus/tailor/internal/policy"
 	"tailscale.com/ipn"
 )
@@ -41,7 +42,7 @@ func (s *Server) handleSetupGrantRecommendation(w http.ResponseWriter, r *http.R
 		AppCapability:         appCapability,
 		HasAppCapabilityGrant: false,
 		SetupGrantSnippet:     policy.FormatGrantSnippet(grant),
-		StatusMessage:         "Tailor should add an app capability grant so ACL editing access is controlled by your tailnet policy.",
+		StatusMessage:         "Optionally add an app capability grant to make Tailor access explicit in your tailnet policy and delegate it to other users or tagged devices.",
 	})
 }
 
@@ -49,11 +50,11 @@ func (s *Server) handleSetupGrantSave(w http.ResponseWriter, r *http.Request) {
 	if !s.requireCloudAuth(w, r, "cloud auth required for setup grant save") {
 		return
 	}
-	if s.auth.TailnetMode && !s.consumeSetupSession(r) {
-		writeError(w, http.StatusForbidden, "Re-enter the Cloud API key before applying the Tailor access grant.")
+	status := s.core.CloudStatus()
+	// The demo tailnet simulates the grant; everywhere else only editors may change policy.
+	if !status.DevMode && !s.requirePermission(w, r, authz.PermissionWritePolicy, "Only Tailor editors can add the access grant.") {
 		return
 	}
-	status := s.core.CloudStatus()
 	appCapability := s.auth.resolveAppCapability(r.Context(), s.logger)
 	if status.DevMode {
 		appCapability = "tailor.demo.tailor.ts.net/cap/admin"
@@ -89,12 +90,13 @@ func (s *Server) handleSetupGrantSave(w http.ResponseWriter, r *http.Request) {
 	// The recommendation may have been open while another editor changed the
 	// tailnet policy. Bypass the authenticated session's cached policy before
 	// appending so those changes are preserved.
-	raw, err := s.core.RefreshCloudPolicy(r.Context())
+	current, err := s.core.RefreshCloudPolicy(r.Context())
 	if err != nil {
 		logAPIError(s.logger, r, http.StatusBadGateway, err, "policy fetch failed for setup grant save")
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
+	raw := current.HuJSON
 	if policy.HasTailorAppCapabilityGrant(raw, appCapability) {
 		writeJSON(w, http.StatusOK, setupGrantResponse(r, s, appCapability, true))
 		return
@@ -125,11 +127,20 @@ func (s *Server) handleSetupGrantSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.core.ValidateCloudPolicy(r.Context(), updated); err != nil {
-		s.issueBootstrapFallback(w, r, grant)
+		logAPIError(s.logger, r, http.StatusBadRequest, err, "setup grant failed validation")
+		writeError(w, http.StatusBadRequest, "Tailscale rejected the access grant: "+err.Error())
 		return
 	}
-	if _, err := s.core.SaveCloudPolicy(r.Context(), updated); err != nil {
-		s.issueBootstrapFallback(w, r, grant)
+	// Conditional on the policy read above: an edit that lands while the grant is
+	// validated must not be silently overwritten.
+	if _, err := s.core.SaveCloudPolicy(r.Context(), updated, current.ETag); err != nil {
+		if errors.Is(err, cloudapi.ErrPolicyChanged) {
+			logAPIError(s.logger, r, http.StatusConflict, err, "setup grant raced a policy change")
+			writeError(w, http.StatusConflict, "The tailnet policy changed while the grant was being added. Try again.")
+			return
+		}
+		logAPIError(s.logger, r, http.StatusBadGateway, err, "setup grant save failed")
+		writeError(w, http.StatusBadGateway, "Tailor could not save the access grant: "+err.Error())
 		return
 	}
 	if err := s.activateServiceTag(r.Context()); err != nil {
@@ -140,23 +151,7 @@ func (s *Server) handleSetupGrantSave(w http.ResponseWriter, r *http.Request) {
 		)
 	}
 
-	// Policy propagation is asynchronous. Briefly re-check WhoIs so the common
-	// case unlocks immediately without requiring a browser refresh.
-	if identity, ok := s.waitForAdminCapability(r.Context(), r.RemoteAddr, appCapability); ok {
-		r = r.WithContext(authz.WithIdentity(r.Context(), identity))
-	}
 	writeJSON(w, http.StatusOK, setupGrantResponse(r, s, appCapability, true))
-}
-
-func (s *Server) consumeSetupSession(r *http.Request) bool {
-	if s.setup == nil {
-		return false
-	}
-	identity, ok := authz.IdentityFromContext(r.Context())
-	if !ok {
-		return false
-	}
-	return s.setup.Consume(setupTokenFromRequest(r), identity.LoginName, identity.NodeName)
 }
 
 func (s *Server) activateServiceTag(ctx context.Context) error {
@@ -181,63 +176,6 @@ func (s *Server) activateServiceTag(ctx context.Context) error {
 	return err
 }
 
-const (
-	setupCapabilityPollTimeout  = 3 * time.Second
-	setupCapabilityPollInterval = 200 * time.Millisecond
-)
-
-func (s *Server) waitForAdminCapability(ctx context.Context, remoteAddr, appCapability string) (authz.TailnetIdentity, bool) {
-	if !s.auth.TailnetMode || s.auth.WhoIsClient == nil {
-		return authz.TailnetIdentity{}, false
-	}
-	pollCtx, cancel := context.WithTimeout(ctx, setupCapabilityPollTimeout)
-	defer cancel()
-
-	var last authz.TailnetIdentity
-	for {
-		who, err := s.auth.WhoIsClient.WhoIs(pollCtx, remoteAddr)
-		if err == nil {
-			last = identityFromWhoIs(who, appCapability)
-			if last.Role == authz.RoleFull {
-				return last, true
-			}
-		}
-
-		select {
-		case <-pollCtx.Done():
-			return last, false
-		case <-time.After(setupCapabilityPollInterval):
-		}
-	}
-}
-
-func (s *Server) issueBootstrapFallback(w http.ResponseWriter, r *http.Request, grant api.GrantDraft) {
-	identity, ok := authz.IdentityFromContext(r.Context())
-	if !ok || s.bootstrap == nil {
-		writeError(w, http.StatusBadGateway, "Tailor could not apply the app capability grant automatically.")
-		return
-	}
-	token, expiresAt := s.bootstrap.Create(identity.LoginName, identity.NodeName)
-	setBootstrapCookie(w, r, token, expiresAt)
-	ctx := authz.WithBootstrap(r.Context())
-	response := cloudAuthStatusResponse(r.WithContext(ctx), s, s.core.CloudStatus())
-	response.BootstrapActive = true
-	response.BootstrapExpiresAt = expiresAt.Format(time.RFC3339)
-	response.CanEditPolicy = true
-	response.SetupGrantSnippet = policy.FormatGrantSnippet(grant)
-	response.StatusMessage = cloudStatusMessage(response)
-	writeJSON(w, http.StatusOK, api.SetupGrantResponse{
-		Tailnet:            response.Tailnet,
-		AppCapability:      response.AppCapability,
-		CallerRole:         response.CallerRole,
-		CanEditPolicy:      true,
-		BootstrapActive:    true,
-		BootstrapExpiresAt: response.BootstrapExpiresAt,
-		StatusMessage:      response.StatusMessage,
-		SetupGrantSnippet:  response.SetupGrantSnippet,
-	})
-}
-
 func setupGrantResponse(r *http.Request, s *Server, appCapability string, hasGrant bool) api.SetupGrantResponse {
 	cloud := cloudAuthStatusResponse(r, s, s.core.CloudStatus())
 	return api.SetupGrantResponse{
@@ -246,8 +184,6 @@ func setupGrantResponse(r *http.Request, s *Server, appCapability string, hasGra
 		HasAppCapabilityGrant: hasGrant,
 		CallerRole:            cloud.CallerRole,
 		CanEditPolicy:         cloud.CanEditPolicy,
-		BootstrapActive:       cloud.BootstrapActive,
-		BootstrapExpiresAt:    cloud.BootstrapExpiresAt,
 		StatusMessage:         cloud.StatusMessage,
 		SetupGrantSnippet:     cloud.SetupGrantSnippet,
 	}

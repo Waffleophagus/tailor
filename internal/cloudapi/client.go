@@ -24,6 +24,22 @@ const (
 
 var ErrNotAuthenticated = errors.New("cloud api is not authenticated")
 
+// ErrPolicyChanged reports that the tailnet policy changed after it was read, so a
+// conditional save (If-Match) was rejected by Tailscale.
+var ErrPolicyChanged = errors.New("tailnet policy changed since it was read")
+
+// ErrPolicyVersionUnavailable means Tailscale returned the policy without an ETag,
+// so a save could not be made conditional on it. Saving is refused rather than
+// risking an unconditional overwrite of a concurrent change.
+var ErrPolicyVersionUnavailable = errors.New("Tailscale returned the tailnet policy without a version (ETag); refusing to save without conflict protection")
+
+// PolicyVersion is a tailnet policy together with the ETag Tailscale returned for it.
+// ETag is empty in dev mode.
+type PolicyVersion struct {
+	HuJSON string
+	ETag   string
+}
+
 type Client struct {
 	httpClient *http.Client
 	baseURL    string
@@ -152,20 +168,60 @@ func WithLogger(logger *slog.Logger) Option {
 	}
 }
 
-func (c *Client) Authenticate(ctx context.Context, request AuthRequest) (AuthStatus, error) {
+func normalizeAuthRequest(request AuthRequest) (AuthRequest, error) {
 	request.Tailnet = strings.TrimSpace(request.Tailnet)
 	request.APIKey = strings.TrimSpace(request.APIKey)
 	if request.Tailnet == "" {
-		return AuthStatus{}, errors.New("tailnet is required")
+		return request, errors.New("tailnet is required")
 	}
 	if request.APIKey == "" {
-		return AuthStatus{}, errors.New("Tailscale API key is required")
+		return request, errors.New("Tailscale API key is required")
 	}
 	if !strings.HasPrefix(request.APIKey, "tskey-api-") {
-		return AuthStatus{}, errors.New("Tailscale API key must start with tskey-api-")
+		return request, errors.New("Tailscale API key must start with tskey-api-")
+	}
+	return request, nil
+}
+
+// IsDevCredential reports whether request uses the built-in demo tailnet key, which
+// only dev builds accept.
+func IsDevCredential(request AuthRequest) bool {
+	return devtailnet.Enabled && devtailnet.IsDevAPIKey(strings.TrimSpace(request.APIKey))
+}
+
+// CredentialInfo is what a candidate API key can see. It is used to vet a key
+// before Tailor stores it.
+type CredentialInfo struct {
+	Devices []Device
+	Users   []User
+}
+
+// InspectCredentials reads the devices and users visible to request's key without
+// storing the key or changing the current session.
+func (c *Client) InspectCredentials(ctx context.Context, request AuthRequest) (CredentialInfo, error) {
+	request, err := normalizeAuthRequest(request)
+	if err != nil {
+		return CredentialInfo{}, err
+	}
+	candidate := &Session{Tailnet: request.Tailnet, APIKey: request.APIKey}
+	var devices devicesResponse
+	if err := c.getJSON(ctx, candidate, "/devices", url.Values{"fields": []string{"all"}}, &devices); err != nil {
+		return CredentialInfo{}, err
+	}
+	users, err := c.fetchUsers(ctx, candidate)
+	if err != nil {
+		return CredentialInfo{}, err
+	}
+	return CredentialInfo{Devices: devices.Devices, Users: users}, nil
+}
+
+func (c *Client) Authenticate(ctx context.Context, request AuthRequest) (AuthStatus, error) {
+	request, err := normalizeAuthRequest(request)
+	if err != nil {
+		return AuthStatus{}, err
 	}
 
-	if devtailnet.Enabled && devtailnet.IsDevAPIKey(request.APIKey) {
+	if IsDevCredential(request) {
 		tailnet := request.Tailnet
 		if tailnet == "" || tailnet == "-" {
 			tailnet = devtailnet.Name
@@ -182,7 +238,7 @@ func (c *Client) Authenticate(ctx context.Context, request AuthRequest) (AuthSta
 		return status, nil
 	}
 
-	policy, err := c.fetchPolicy(ctx, request.Tailnet, request.APIKey)
+	policy, _, err := c.fetchPolicy(ctx, request.Tailnet, request.APIKey)
 	if err != nil {
 		return AuthStatus{}, err
 	}
@@ -212,36 +268,49 @@ func (c *Client) Policy(ctx context.Context) (string, error) {
 	if session.Policy != "" {
 		return session.Policy, nil
 	}
-	policy, err := c.fetchPolicy(ctx, session.Tailnet, session.APIKey)
+	policy, _, err := c.fetchPolicy(ctx, session.Tailnet, session.APIKey)
 	if err != nil {
 		return "", err
 	}
-	c.mu.Lock()
-	if c.session != nil {
-		c.session.Policy = policy
-	}
-	c.mu.Unlock()
+	c.cachePolicy(session, policy)
 	return policy, nil
 }
 
+// RefreshPolicy bypasses the session cache and returns the live tailnet policy.
 func (c *Client) RefreshPolicy(ctx context.Context) (string, error) {
+	version, err := c.RefreshPolicyVersion(ctx)
+	return version.HuJSON, err
+}
+
+// RefreshPolicyVersion returns the live tailnet policy and its ETag, for use with
+// SavePolicyIfMatch. Outside dev mode, a response without an ETag is an error.
+func (c *Client) RefreshPolicyVersion(ctx context.Context) (PolicyVersion, error) {
 	session, err := c.ensureSession(ctx)
 	if err != nil {
-		return "", err
+		return PolicyVersion{}, err
 	}
 	if session.DevMode {
-		return session.Policy, nil
+		return PolicyVersion{HuJSON: session.Policy}, nil
 	}
-	policy, err := c.fetchPolicy(ctx, session.Tailnet, session.APIKey)
+	policy, etag, err := c.fetchPolicy(ctx, session.Tailnet, session.APIKey)
 	if err != nil {
-		return "", err
+		return PolicyVersion{}, err
 	}
+	c.cachePolicy(session, policy)
+	if etag == "" {
+		return PolicyVersion{}, ErrPolicyVersionUnavailable
+	}
+	return PolicyVersion{HuJSON: policy, ETag: etag}, nil
+}
+
+// cachePolicy stores a fetched policy, unless the session was replaced (a different
+// tailnet or key) while the request was in flight.
+func (c *Client) cachePolicy(from *Session, policy string) {
 	c.mu.Lock()
-	if c.session != nil {
+	defer c.mu.Unlock()
+	if c.session != nil && c.session.Tailnet == from.Tailnet && c.session.APIKey == from.APIKey {
 		c.session.Policy = policy
 	}
-	c.mu.Unlock()
-	return policy, nil
 }
 
 func (c *Client) Devices(ctx context.Context) ([]Device, error) {
@@ -267,6 +336,10 @@ func (c *Client) Users(ctx context.Context) ([]User, error) {
 	if session.DevMode {
 		return nil, nil
 	}
+	return c.fetchUsers(ctx, session)
+}
+
+func (c *Client) fetchUsers(ctx context.Context, session *Session) ([]User, error) {
 	var out usersResponse
 	query := url.Values{
 		"type": []string{"all"},
@@ -332,10 +405,17 @@ func (c *Client) ValidatePolicy(ctx context.Context, draft string) error {
 		}
 		return nil
 	}
-	return c.sendPolicy(ctx, http.MethodPost, session.Tailnet, session.APIKey, "/validate", draft)
+	return c.sendPolicy(ctx, http.MethodPost, session.Tailnet, session.APIKey, "/validate", draft, "")
 }
 
 func (c *Client) SavePolicy(ctx context.Context, draft string) (string, error) {
+	return c.SavePolicyIfMatch(ctx, draft, "")
+}
+
+// SavePolicyIfMatch replaces the tailnet policy. When etag is non-empty, Tailscale
+// only accepts the write if the live policy still has that ETag; otherwise it
+// returns ErrPolicyChanged.
+func (c *Client) SavePolicyIfMatch(ctx context.Context, draft, etag string) (string, error) {
 	session, err := c.ensureSession(ctx)
 	if err != nil {
 		return "", err
@@ -347,26 +427,21 @@ func (c *Client) SavePolicy(ctx context.Context, draft string) (string, error) {
 		if _, err := policy.Parse(draft); err != nil {
 			return "", err
 		}
-		c.mu.Lock()
-		if c.session != nil {
-			c.session.Policy = draft
-		}
-		saved := c.session.Policy
-		c.mu.Unlock()
-		return saved, nil
+		c.cachePolicy(session, draft)
+		return draft, nil
 	}
-	if err := c.sendPolicy(ctx, http.MethodPost, session.Tailnet, session.APIKey, "", draft); err != nil {
+	if err := c.sendPolicy(ctx, http.MethodPost, session.Tailnet, session.APIKey, "", draft, etag); err != nil {
+		var apiErr *Error
+		if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusPreconditionFailed {
+			return "", fmt.Errorf("%w: %w", ErrPolicyChanged, err)
+		}
 		return "", err
 	}
-	policy, err := c.fetchPolicy(ctx, session.Tailnet, session.APIKey)
+	policy, _, err := c.fetchPolicy(ctx, session.Tailnet, session.APIKey)
 	if err != nil {
 		return "", err
 	}
-	c.mu.Lock()
-	if c.session != nil {
-		c.session.Policy = policy
-	}
-	c.mu.Unlock()
+	c.cachePolicy(session, policy)
 	return policy, nil
 }
 
@@ -395,11 +470,11 @@ func (c *Client) statusLocked() AuthStatus {
 	}
 }
 
-func (c *Client) fetchPolicy(ctx context.Context, tailnet, apiKey string) (string, error) {
+func (c *Client) fetchPolicy(ctx context.Context, tailnet, apiKey string) (policy, etag string, err error) {
 	endpoint := c.baseURL + "/api/v2/tailnet/" + url.PathEscape(tailnet) + "/acl"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	req.SetBasicAuth(apiKey, "")
 	req.Header.Set("Accept", "application/hujson, application/json, text/plain")
@@ -408,7 +483,7 @@ func (c *Client) fetchPolicy(ctx context.Context, tailnet, apiKey string) (strin
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		c.logCloudAPI(http.MethodGet, tailnet, "", 0, time.Since(start), err)
-		return "", fmt.Errorf("policy fetch failed: %w", err)
+		return "", "", fmt.Errorf("policy fetch failed: %w", err)
 	}
 	defer func() {
 		if err := resp.Body.Close(); err != nil {
@@ -419,15 +494,15 @@ func (c *Client) fetchPolicy(ctx context.Context, tailnet, apiKey string) (strin
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
 	if err != nil {
 		c.logCloudAPI(http.MethodGet, tailnet, "", resp.StatusCode, time.Since(start), err)
-		return "", err
+		return "", "", err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		apiErr := apiError(resp.StatusCode, body, "policy fetch failed")
 		c.logCloudAPI(http.MethodGet, tailnet, "", resp.StatusCode, time.Since(start), apiErr)
-		return "", apiErr
+		return "", "", apiErr
 	}
 	c.logCloudAPI(http.MethodGet, tailnet, "", resp.StatusCode, time.Since(start), nil)
-	return string(body), nil
+	return string(body), resp.Header.Get("ETag"), nil
 }
 
 func (c *Client) getJSON(ctx context.Context, session *Session, path string, query url.Values, target any) error {
@@ -471,7 +546,7 @@ func (c *Client) getJSONEndpoint(ctx context.Context, session *Session, endpoint
 	return nil
 }
 
-func (c *Client) sendPolicy(ctx context.Context, method, tailnet, apiKey, suffix, policy string) error {
+func (c *Client) sendPolicy(ctx context.Context, method, tailnet, apiKey, suffix, policy, ifMatch string) error {
 	endpoint := c.baseURL + "/api/v2/tailnet/" + url.PathEscape(tailnet) + "/acl" + suffix
 	req, err := http.NewRequestWithContext(ctx, method, endpoint, strings.NewReader(policy))
 	if err != nil {
@@ -480,6 +555,9 @@ func (c *Client) sendPolicy(ctx context.Context, method, tailnet, apiKey, suffix
 	req.SetBasicAuth(apiKey, "")
 	req.Header.Set("Content-Type", "application/hujson")
 	req.Header.Set("Accept", "application/hujson, application/json, text/plain")
+	if ifMatch != "" {
+		req.Header.Set("If-Match", ifMatch)
+	}
 
 	start := time.Now()
 	resp, err := c.httpClient.Do(req)

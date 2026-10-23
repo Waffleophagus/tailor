@@ -8,6 +8,23 @@ import {
 } from './schemas';
 
 describe('api schemas', () => {
+	test('device schema treats null or missing lists as empty instead of rejecting', () => {
+		const parsed = deviceSchema.parse({
+			id: 'n1',
+			name: 'spawned',
+			ip: '100.64.0.9',
+			tailscaleIps: null,
+			os: 'linux',
+			online: true,
+			owner: '',
+			tags: null,
+			subnetRouter: false
+		});
+		expect(parsed.tags).toEqual([]);
+		expect(parsed.tailscaleIps).toEqual([]);
+		expect(parsed.routedSubnets).toEqual([]);
+	});
+
 	test('device schema accepts metadata-backed topology fields', () => {
 		const parsed = deviceSchema.parse({
 			id: 'svc:web',
@@ -87,8 +104,6 @@ describe('api schemas', () => {
 			hasAppCapabilityGrant: false,
 			appCapability: 'tailor.example.ts.net/cap/admin',
 			needsSetupGrant: true,
-			bootstrapActive: true,
-			bootstrapExpiresAt: '2030-01-01T00:00:00Z',
 			statusMessage: 'setup required',
 			setupGrantSnippet: '{"grants":[]}'
 		});

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { fromAction } from 'svelte/attachments';
+	import { focusTrap } from '../ui/focus-trap';
 
 	type SubmitData = { tailnet: string; apiKey: string };
 
@@ -56,6 +57,7 @@
 			role="dialog"
 			aria-modal="true"
 			aria-labelledby="auth-title"
+			{@attach focusTrap(handleClose)}
 		>
 			<div class="flex items-center justify-between gap-4 border-b border-panel-strong p-4">
 				<div>
@@ -64,6 +66,7 @@
 				<button
 					type="button"
 					title="Close"
+					aria-label="Close"
 					onclick={handleClose}
 					class="grid h-8 w-8 cursor-pointer place-items-center rounded-md border border-panel-border bg-panel-weak text-xl leading-none text-primary transition-[background-color,border-color] duration-[160ms] ease-out hover:border-teal hover:bg-hover"
 					>×</button

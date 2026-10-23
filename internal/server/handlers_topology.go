@@ -5,10 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
 	"github.com/Waffleophagus/tailor/internal/api"
+	"github.com/Waffleophagus/tailor/internal/authz"
 	"github.com/Waffleophagus/tailor/internal/devtailnet"
 	"github.com/Waffleophagus/tailor/internal/localapi"
 	"github.com/coder/websocket"
@@ -73,9 +75,7 @@ func (s *Server) handleTopology(w http.ResponseWriter, r *http.Request) {
 	)
 	snapshot := s.core.TopologySnapshot(r.Context(), devices)
 	s.attachTopologySetup(&snapshot, true)
-	if s.core.CloudStatus().Authenticated {
-		snapshot.StagedDrafts = s.core.StagedDrafts().Drafts
-	}
+	s.attachStagedDrafts(r.Context(), &snapshot)
 	writeJSON(w, http.StatusOK, snapshot)
 }
 
@@ -105,7 +105,7 @@ func (s *Server) handleTopologySocket(w http.ResponseWriter, r *http.Request) {
 	conn.SetReadLimit(64 << 10)
 
 	var lastMessage []byte
-	if err := s.writeTopologySocketMessage(ctx, conn, &lastMessage); err != nil {
+	if err := s.writeTopologySocketMessage(ctx, conn, r.RemoteAddr, &lastMessage); err != nil {
 		s.logger.Warn("topology websocket write failed",
 			"error", err.Error(),
 			"request_id", RequestIDFromContext(r.Context()),
@@ -121,7 +121,7 @@ func (s *Server) handleTopologySocket(w http.ResponseWriter, r *http.Request) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if err := s.writeTopologySocketMessage(ctx, conn, &lastMessage); err != nil {
+			if err := s.writeTopologySocketMessage(ctx, conn, r.RemoteAddr, &lastMessage); err != nil {
 				s.logger.Warn("topology websocket write failed",
 					"error", err.Error(),
 					"request_id", RequestIDFromContext(r.Context()),
@@ -132,7 +132,14 @@ func (s *Server) handleTopologySocket(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Server) writeTopologySocketMessage(ctx context.Context, conn *websocket.Conn, lastMessage *[]byte) error {
+func (s *Server) writeTopologySocketMessage(ctx context.Context, conn *websocket.Conn, remoteAddr string, lastMessage *[]byte) error {
+	// The socket outlives the request that opened it; re-resolve the caller's role
+	// so revoked (or newly granted) access applies to what it receives next.
+	identity, err := s.auth.resolveIdentity(ctx, remoteAddr, s.logger)
+	if err != nil {
+		return fmt.Errorf("tailnet identity: %w", err)
+	}
+	ctx = authz.WithIdentity(ctx, identity)
 	message := s.topologySocketMessage(ctx)
 	encoded, err := json.Marshal(message)
 	if err != nil {
@@ -165,11 +172,18 @@ func (s *Server) topologySocketMessage(ctx context.Context) api.SocketMessage {
 
 	snapshot := s.core.TopologySnapshot(ctx, devices)
 	s.attachTopologySetup(&snapshot, true)
-	if s.core.CloudStatus().Authenticated {
-		snapshot.StagedDrafts = s.core.StagedDrafts().Drafts
-	}
+	s.attachStagedDrafts(ctx, &snapshot)
 	return api.SocketMessage{
 		Type:    api.SocketMessageTopologySnapshot,
 		Payload: snapshot,
 	}
+}
+
+// attachStagedDrafts includes staged drafts only for callers allowed to read them
+// through /api/policy/staged; viewers must not see pending policy changes.
+func (s *Server) attachStagedDrafts(ctx context.Context, snapshot *api.TopologyResponse) {
+	if !s.core.CloudStatus().Authenticated || !authz.Allowed(ctx, authz.PermissionReadPolicy) {
+		return
+	}
+	snapshot.StagedDrafts = s.core.StagedDrafts().Drafts
 }

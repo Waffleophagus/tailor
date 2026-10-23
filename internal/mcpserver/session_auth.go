@@ -1,0 +1,193 @@
+package mcpserver
+
+import (
+	"context"
+	"log/slog"
+	"net/http"
+	"sync"
+	"time"
+
+	"github.com/Waffleophagus/tailor/internal/authz"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+)
+
+// callerRoleHeader carries the caller's role, as resolved for the current HTTP
+// request, to tool handlers. The SDK runs tool calls with the context of the
+// session's initialize request, so without this a revoked admin would keep their
+// role for the life of the session. Client-supplied values are always discarded.
+const callerRoleHeader = "X-Tailor-Caller-Role"
+
+const sessionIDHeader = "Mcp-Session-Id"
+
+// allowed authorizes a tool call against the role of the request that carried it,
+// falling back to the session context for non-HTTP transports.
+func allowed(ctx context.Context, req *mcp.CallToolRequest, permission authz.Permission) bool {
+	if req != nil && req.Extra != nil && req.Extra.Header != nil {
+		if role := req.Extra.Header.Get(callerRoleHeader); role != "" {
+			identity, _ := authz.IdentityFromContext(ctx)
+			identity.Role = authz.Role(role)
+			ctx = authz.WithIdentity(ctx, identity)
+		}
+	}
+	return authz.Allowed(ctx, permission)
+}
+
+// sessionOwners binds MCP session IDs to the tailnet identity that created them,
+// so a leaked Mcp-Session-Id cannot be used from another user or device.
+type sessionOwners struct {
+	mu        sync.Mutex
+	owners    map[string]sessionOwner
+	ttl       time.Duration
+	lastPurge time.Time
+}
+
+type sessionOwner struct {
+	user     string
+	lastSeen time.Time // when the session was last idle-started (request finished)
+	active   int       // requests in flight; never expire while > 0
+}
+
+func newSessionOwners(ttl time.Duration) *sessionOwners {
+	return &sessionOwners{owners: map[string]sessionOwner{}, ttl: ttl}
+}
+
+// acquire reports whether user owns sessionID and, if so, marks a request in
+// flight until done is called. Every session is claimed when it is created, so an
+// unknown ID is never allowed.
+func (s *sessionOwners) acquire(sessionID, user string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.purgeLocked(time.Now())
+	owner, ok := s.owners[sessionID]
+	if !ok || owner.user != user {
+		return false
+	}
+	owner.active++
+	s.owners[sessionID] = owner
+	return true
+}
+
+// done ends a request started by acquire. Like the SDK, idle time counts from
+// when the last request finished, not when it began.
+func (s *sessionOwners) done(sessionID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	owner, ok := s.owners[sessionID]
+	if !ok {
+		return
+	}
+	owner.active--
+	owner.lastSeen = time.Now()
+	s.owners[sessionID] = owner
+}
+
+func (s *sessionOwners) claim(sessionID, user string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	// Clients may initialize sessions and never use them again; purge here too.
+	s.purgeLocked(time.Now())
+	if _, exists := s.owners[sessionID]; !exists {
+		s.owners[sessionID] = sessionOwner{user: user, lastSeen: time.Now()}
+	}
+}
+
+func (s *sessionOwners) release(sessionID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.owners, sessionID)
+}
+
+func (s *sessionOwners) purgeLocked(now time.Time) {
+	if now.Sub(s.lastPurge) < time.Minute {
+		return
+	}
+	for id, owner := range s.owners {
+		// Sessions idle past the SDK's timeout are gone; keep a margin.
+		if owner.active == 0 && now.Sub(owner.lastSeen) > s.ttl+time.Minute {
+			delete(s.owners, id)
+		}
+	}
+	s.lastPurge = now
+}
+
+func callerKey(ctx context.Context) string {
+	identity, _ := authz.IdentityFromContext(ctx)
+	return identity.LoginName + "|" + identity.NodeName
+}
+
+// bindSessions stamps the caller's current role onto each request and enforces
+// that a session is only used by the identity that initialized it.
+func bindSessions(owners *sessionOwners, logger *slog.Logger, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.Header.Del(callerRoleHeader)
+		if identity, ok := authz.IdentityFromContext(r.Context()); ok {
+			r.Header.Set(callerRoleHeader, string(identity.Role))
+		}
+
+		user := callerKey(r.Context())
+		sessionID := r.Header.Get(sessionIDHeader)
+		if sessionID != "" {
+			if !owners.acquire(sessionID, user) {
+				logger.Warn("mcp request rejected: unknown session or session of another identity")
+				http.Error(w, "This MCP session does not exist or belongs to another user or device.", http.StatusNotFound)
+				return
+			}
+			defer owners.done(sessionID)
+		}
+
+		writer := &sessionClaimWriter{ResponseWriter: w, owners: owners, user: user}
+		next.ServeHTTP(writer, r)
+
+		// Only forget the owner once the SDK actually ended the session.
+		if r.Method == http.MethodDelete && sessionID != "" && writer.status >= 200 && writer.status < 300 {
+			owners.release(sessionID)
+		}
+	})
+}
+
+// sessionClaimWriter records the owner of a newly issued session ID as soon as the
+// SDK writes the response headers (before any streamed body).
+type sessionClaimWriter struct {
+	http.ResponseWriter
+	owners  *sessionOwners
+	user    string
+	claimed bool
+	status  int
+}
+
+func (w *sessionClaimWriter) claim() {
+	if w.claimed {
+		return
+	}
+	w.claimed = true
+	if id := w.Header().Get(sessionIDHeader); id != "" {
+		w.owners.claim(id, w.user)
+	}
+}
+
+func (w *sessionClaimWriter) WriteHeader(status int) {
+	w.claim()
+	if w.status == 0 {
+		w.status = status
+	}
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *sessionClaimWriter) Write(b []byte) (int, error) {
+	w.claim()
+	if w.status == 0 {
+		w.status = http.StatusOK
+	}
+	return w.ResponseWriter.Write(b)
+}
+
+func (w *sessionClaimWriter) Flush() {
+	w.claim()
+	if flusher, ok := w.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
+func (w *sessionClaimWriter) Unwrap() http.ResponseWriter {
+	return w.ResponseWriter
+}

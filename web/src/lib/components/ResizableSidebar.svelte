@@ -73,6 +73,7 @@
 >
 	<div
 		class="content flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto p-4 opacity-100 transition-opacity delay-[40ms] duration-160 ease-out"
+		inert={!open}
 	>
 		{@render children()}
 	</div>
@@ -89,7 +90,7 @@
 
 	<div
 		class="icon-bar pointer-events-none absolute inset-0 flex flex-col items-center bg-sidebar px-1 py-2 opacity-0 transition-opacity duration-[140ms] ease-out"
-		aria-hidden={open}
+		inert={open}
 	>
 		<div class="flex flex-col items-center gap-[0.4rem]">
 			{@render collapsed()}

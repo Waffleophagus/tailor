@@ -519,22 +519,21 @@ components:
           type: string
         needsSetupGrant:
           type: boolean
-        bootstrapActive:
-          type: boolean
-        bootstrapExpiresAt:
-          type: string
         statusMessage:
           type: string
         setupGrantSnippet:
           type: string
     PolicyResponse:
       type: object
-      required: [tailnet, hujson]
+      required: [tailnet, hujson, revision]
       properties:
         tailnet:
           type: string
         hujson:
           type: string
+        revision:
+          type: string
+          description: Identifies this policy text; send it as baseRevision when staging a draft edited from it.
     PolicyMapResponse:
       type: object
       required: [tailnet, hujson, sections]
@@ -771,6 +770,9 @@ components:
           type: string
         summary:
           type: string
+        baseRevision:
+          type: string
+          description: Revision of the policy the draft was edited from. Saving fails if the live policy changed since.
     PolicySaveRequest:
       type: object
       required: [draftId, draftHash]
@@ -781,13 +783,15 @@ components:
           type: string
     PolicySaveResponse:
       type: object
-      required: [saved, tailnet, hujson]
+      required: [saved, tailnet, hujson, revision]
       properties:
         saved:
           type: boolean
         tailnet:
           type: string
         hujson:
+          type: string
+        revision:
           type: string
     StagedDraft:
       type: object
