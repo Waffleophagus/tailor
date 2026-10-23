@@ -24,7 +24,8 @@ Tailscale already has a notion of who may edit the policy file: Owners, Admins a
 4. **The app capability grant becomes optional.** Editors are offered the recommended grant to make access explicit in policy and to delegate it (to other users or `tag:tailor-acl-editor` devices); it also keeps access working if the Cloud API is unreachable. Grant failures are reported as errors.
 5. **Remove the bootstrap session and setup-session cookie.**
 6. **Bind MCP sessions to identity.** Each `Mcp-Session-Id` is bound to the login and node that initialized it, and each tool call is authorized with the role resolved for *that* HTTP request (the SDK otherwise reuses the initialize request's context for the life of the session).
-7. **Block DNS rebinding where there is no identity layer.** In local and external modes, requests whose `Host` is not an IP, `localhost`, a single-label or local-only name, `*.ts.net`, or listed in `TAILOR_ALLOWED_HOSTS` are rejected.
+7. **Never overwrite policy changes made elsewhere.** `GET /api/policy` (and the MCP `tailor_get_policy` tool) returns a `revision`; drafts are staged with the `baseRevision` they were edited from, and saves (including the setup-grant write) are conditional on the live policy's ETag. A draft started from an older policy fails with a conflict instead of erasing a newer save, whether that save came from another Tailor editor, the admin console or GitOps.
+8. **Block DNS rebinding where there is no identity layer.** In local and external modes, requests whose `Host` is not an IP, `localhost`, a single-label or local-only name, `*.ts.net`, or listed in `TAILOR_ALLOWED_HOSTS` are rejected.
 
 Local and external modes (no tsnet identity) keep treating every caller as `full`; giving them real identities is tracked separately.
 

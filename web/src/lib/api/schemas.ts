@@ -99,7 +99,8 @@ export const cloudAuthRequestSchema = z.object({
 
 export const policyResponseSchema = z.object({
 	tailnet: z.string(),
-	hujson: z.string()
+	hujson: z.string(),
+	revision: z.string()
 });
 
 export const policySectionEntrySchema = z.object({
@@ -196,7 +197,8 @@ export const policyValidateResponseSchema = z.object({
 export const policyStageRequestSchema = z.object({
 	hujson: z.string(),
 	source: z.string().optional(),
-	summary: z.string().optional()
+	summary: z.string().optional(),
+	baseRevision: z.string().optional()
 });
 
 export const policySaveRequestSchema = z.object({
@@ -247,7 +249,8 @@ export const topologyResponseSchema = z.object({
 export const policySaveResponseSchema = z.object({
 	saved: z.boolean(),
 	tailnet: z.string(),
-	hujson: z.string()
+	hujson: z.string(),
+	revision: z.string()
 });
 
 export const policyMutationSchema = z.object({

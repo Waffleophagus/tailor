@@ -5,7 +5,9 @@ package server
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -45,6 +47,13 @@ type cloudPolicyFixture struct {
 	saveCalls      int
 	// otherTailnet makes the key's device list omit Tailor's own node.
 	otherTailnet bool
+	// changeAfterGet replaces the policy right after the next GET: an edit landing
+	// between Tailor's read and its write.
+	changeAfterGet string
+}
+
+func (f *cloudPolicyFixture) etagLocked() string {
+	return fmt.Sprintf("%q", fmt.Sprintf("%x", sha256.Sum256([]byte(f.policy))))
 }
 
 func (f *cloudPolicyFixture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -71,6 +80,10 @@ func (f *cloudPolicyFixture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}})
 	case "/api/v2/tailnet/example.com/acl":
 		if r.Method == http.MethodPost {
+			if ifMatch := r.Header.Get("If-Match"); ifMatch != "" && ifMatch != f.etagLocked() {
+				http.Error(w, "precondition failed", http.StatusPreconditionFailed)
+				return
+			}
 			f.saveCalls++
 			if f.saveStatus != 0 {
 				http.Error(w, "save failed", f.saveStatus)
@@ -80,7 +93,11 @@ func (f *cloudPolicyFixture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			f.policy = string(body)
 			return
 		}
+		w.Header().Set("ETag", f.etagLocked())
 		_, _ = io.WriteString(w, f.policy)
+		if f.changeAfterGet != "" {
+			f.policy, f.changeAfterGet = f.changeAfterGet, ""
+		}
 	default:
 		http.NotFound(w, r)
 	}
@@ -447,4 +464,22 @@ func mustPost(t *testing.T, app setupApp, path string, body []byte) *http.Respon
 		t.Fatal(err)
 	}
 	return response
+}
+
+func TestSetupGrantDoesNotOverwriteConcurrentPolicyChange(t *testing.T) {
+	fixture := &cloudPolicyFixture{policy: `{"grants":[]}`}
+	app := newSetupIntegrationApp(t, fixture)
+	app.mustAuthenticate(t)
+
+	const concurrent = `{"grants":[],"groups":{"group:ops":["ops@example.com"]}}`
+	fixture.mu.Lock()
+	fixture.changeAfterGet = concurrent
+	fixture.mu.Unlock()
+
+	expectStatus(t, app.postSetupGrant(t), http.StatusConflict, "changed while the grant was being added")
+	fixture.mu.Lock()
+	defer fixture.mu.Unlock()
+	if fixture.policy != concurrent {
+		t.Fatalf("concurrent policy change was overwritten: %s", fixture.policy)
+	}
 }

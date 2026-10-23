@@ -3,10 +3,12 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"github.com/Waffleophagus/tailor/internal/api"
 	"github.com/Waffleophagus/tailor/internal/authz"
+	"github.com/Waffleophagus/tailor/internal/cloudapi"
 	"github.com/Waffleophagus/tailor/internal/policy"
 	"tailscale.com/ipn"
 )
@@ -88,12 +90,13 @@ func (s *Server) handleSetupGrantSave(w http.ResponseWriter, r *http.Request) {
 	// The recommendation may have been open while another editor changed the
 	// tailnet policy. Bypass the authenticated session's cached policy before
 	// appending so those changes are preserved.
-	raw, err := s.core.RefreshCloudPolicy(r.Context())
+	current, err := s.core.RefreshCloudPolicy(r.Context())
 	if err != nil {
 		logAPIError(s.logger, r, http.StatusBadGateway, err, "policy fetch failed for setup grant save")
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
+	raw := current.HuJSON
 	if policy.HasTailorAppCapabilityGrant(raw, appCapability) {
 		writeJSON(w, http.StatusOK, setupGrantResponse(r, s, appCapability, true))
 		return
@@ -128,7 +131,14 @@ func (s *Server) handleSetupGrantSave(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "Tailscale rejected the access grant: "+err.Error())
 		return
 	}
-	if _, err := s.core.SaveCloudPolicy(r.Context(), updated); err != nil {
+	// Conditional on the policy read above: an edit that lands while the grant is
+	// validated must not be silently overwritten.
+	if _, err := s.core.SaveCloudPolicy(r.Context(), updated, current.ETag); err != nil {
+		if errors.Is(err, cloudapi.ErrPolicyChanged) {
+			logAPIError(s.logger, r, http.StatusConflict, err, "setup grant raced a policy change")
+			writeError(w, http.StatusConflict, "The tailnet policy changed while the grant was being added. Try again.")
+			return
+		}
 		logAPIError(s.logger, r, http.StatusBadGateway, err, "setup grant save failed")
 		writeError(w, http.StatusBadGateway, "Tailor could not save the access grant: "+err.Error())
 		return

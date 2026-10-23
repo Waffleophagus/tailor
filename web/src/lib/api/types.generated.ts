@@ -270,6 +270,7 @@ interface PolicyRef {
 interface PolicyResponse {
     tailnet: string;
     hujson: string;
+    revision: string;
 }
 
 // From api/types.go
@@ -283,6 +284,7 @@ interface PolicySaveResponse {
     saved: boolean;
     tailnet: string;
     hujson: string;
+    revision: string;
 }
 
 // From api/types.go
@@ -311,6 +313,7 @@ interface PolicyStageRequest {
     hujson: string;
     source?: string;
     summary?: string;
+    baseRevision?: string;
 }
 
 // From api/types.go

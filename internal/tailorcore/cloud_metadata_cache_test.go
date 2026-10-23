@@ -155,3 +155,16 @@ func (s *slowFailingMetadata) Devices(context.Context) ([]cloudapi.Device, error
 	time.Sleep(s.delay)
 	return nil, errors.New("rate limited")
 }
+
+func TestCloudMetadataCachesUpstreamTimeouts(t *testing.T) {
+	// http.Client.Timeout surfaces as context.DeadlineExceeded although the
+	// caller's own context is still live; that is an upstream error to cache.
+	source := &countingCloudMetadata{deviceErr: context.DeadlineExceeded}
+	cache := newTestCloudMetadata(source)
+	for range 3 {
+		_, _ = cache.Devices(context.Background())
+	}
+	if got := source.deviceCalls.Load(); got != 1 {
+		t.Fatalf("upstream timeouts were not cached: %d fetches, want 1", got)
+	}
+}

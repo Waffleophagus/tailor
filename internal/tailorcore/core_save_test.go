@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 
@@ -175,5 +176,53 @@ func TestSaveStagedPolicyRejectsChangeBetweenReadAndWrite(t *testing.T) {
 	defer fake.mu.Unlock()
 	if fake.saveCalls != 0 {
 		t.Fatalf("draft overwrote a concurrent change (%d successful saves)", fake.saveCalls)
+	}
+}
+
+func TestStaleEditorDraftCannotOverwriteNewerSave(t *testing.T) {
+	ctx := context.Background()
+	fake := &fakeACLServer{policy: `{"acls":[{"action":"accept","src":["*"],"dst":["*:*"]}]}`}
+	cloud := httptest.NewServer(fake)
+	defer cloud.Close()
+	service := newTestService(t, cloud.URL)
+	if _, err := service.AuthenticateCloud(ctx, cloudapi.AuthRequest{Tailnet: "example.com", APIKey: "tskey-api-test"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Editors A and B both load policy P0.
+	p0, err := service.Policy(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p0.Revision == "" {
+		t.Fatal("policy response has no revision")
+	}
+
+	// A saves P1.
+	stagedA, err := service.StagePolicyDraft(ctx, api.PolicyStageRequest{
+		HuJSON: `{"acls":[{"action":"accept","src":["autogroup:admin"],"dst":["*:*"]}]}`, Source: "ui", BaseRevision: p0.Revision,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.SaveStagedPolicy(ctx, api.PolicySaveRequest{DraftID: stagedA.Draft.ID, DraftHash: stagedA.Draft.DraftHash}); err != nil {
+		t.Fatalf("editor A's save failed: %v", err)
+	}
+
+	// B, still editing from P0, stages and saves afterwards.
+	stagedB, err := service.StagePolicyDraft(ctx, api.PolicyStageRequest{
+		HuJSON: `{"acls":[{"action":"accept","src":["autogroup:member"],"dst":["*:*"]}]}`, Source: "ui", BaseRevision: p0.Revision,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = service.SaveStagedPolicy(ctx, api.PolicySaveRequest{DraftID: stagedB.Draft.ID, DraftHash: stagedB.Draft.DraftHash})
+	if !errors.Is(err, ErrStagedDraftBaseMismatch) {
+		t.Fatalf("editor B's stale save error = %v, want %v", err, ErrStagedDraftBaseMismatch)
+	}
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if !strings.Contains(fake.policy, "autogroup:admin") {
+		t.Fatalf("editor A's change was overwritten: %s", fake.policy)
 	}
 }

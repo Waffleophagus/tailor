@@ -28,8 +28,9 @@ type tailnetStateOutput struct {
 type getPolicyInput struct{}
 
 type getPolicyOutput struct {
-	Tailnet string `json:"tailnet"`
-	HuJSON  string `json:"hujson"`
+	Tailnet  string `json:"tailnet"`
+	HuJSON   string `json:"hujson"`
+	Revision string `json:"revision" jsonschema:"Revision of this policy; pass it as baseRevision when staging a draft edited from it."`
 }
 
 type getPolicyMapInput struct{}
@@ -50,8 +51,9 @@ type evaluatePolicyDraftInput struct {
 }
 
 type stagePolicyDraftInput struct {
-	HuJSON  string `json:"hujson" jsonschema:"Validated policy draft HuJSON to stage for human review in Tailor."`
-	Summary string `json:"summary,omitempty" jsonschema:"Short human-readable summary of the intended change."`
+	HuJSON       string `json:"hujson" jsonschema:"Validated policy draft HuJSON to stage for human review in Tailor."`
+	Summary      string `json:"summary,omitempty" jsonschema:"Short human-readable summary of the intended change."`
+	BaseRevision string `json:"baseRevision,omitempty" jsonschema:"Revision from tailor_get_policy that this draft was edited from, so saving it cannot overwrite newer policy changes."`
 }
 
 const policyCacheWarmingMessage = "Tailor is pre-calculating policy topology. Retry this request in 30 seconds"
@@ -98,7 +100,7 @@ func registerTools(server *mcp.Server, core *tailorcore.Service, cfg Config) {
 			}
 			return nil, getPolicyOutput{}, err
 		}
-		return nil, getPolicyOutput{Tailnet: response.Tailnet, HuJSON: response.HuJSON}, nil
+		return nil, getPolicyOutput{Tailnet: response.Tailnet, HuJSON: response.HuJSON, Revision: response.Revision}, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
@@ -177,9 +179,10 @@ func registerTools(server *mcp.Server, core *tailorcore.Service, cfg Config) {
 			return nil, api.PolicyStageResponse{}, errors.New("Tailor MCP write access is view-only for the current tailnet identity")
 		}
 		output, err := core.StagePolicyDraft(ctx, api.PolicyStageRequest{
-			HuJSON:  input.HuJSON,
-			Source:  "mcp",
-			Summary: input.Summary,
+			HuJSON:       input.HuJSON,
+			Source:       "mcp",
+			Summary:      input.Summary,
+			BaseRevision: input.BaseRevision,
 		})
 		return nil, output, err
 	})

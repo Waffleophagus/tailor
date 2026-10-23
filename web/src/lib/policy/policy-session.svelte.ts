@@ -281,7 +281,10 @@ export class PolicySession {
 			const staged = await stagePolicyDraft({
 				hujson: this.validatedHuJSON,
 				source: 'ui',
-				summary: 'Staged from policy editor'
+				summary: 'Staged from policy editor',
+				// The policy this edit started from: saving fails instead of
+				// overwriting it if someone else changed the policy meanwhile.
+				baseRevision: this.policy?.revision
 			});
 			await staged.match({
 				ok: async (value) => {
@@ -300,7 +303,7 @@ export class PolicySession {
 		await result.match({
 			ok: async (value) => {
 				const savedDraftID = this.selectedStagedDraft?.id;
-				this.policy = { tailnet: value.tailnet, hujson: value.hujson };
+				this.policy = { tailnet: value.tailnet, hujson: value.hujson, revision: value.revision };
 				this.#resetEditorFromPolicy();
 				if (savedDraftID) {
 					this.stagedDrafts = this.stagedDrafts.filter((draft) => draft.id !== savedDraftID);

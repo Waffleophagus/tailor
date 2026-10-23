@@ -143,13 +143,14 @@ func TestSessionOwnersRejectUnclaimedSessions(t *testing.T) {
 	// A live SDK session whose owner record is missing must not become usable by
 	// anyone; the SDK alone would accept it.
 	owners := newSessionOwners(time.Hour)
-	if owners.check("live-but-unclaimed", "bob|desktop") {
+	if owners.acquire("live-but-unclaimed", "bob|desktop") {
 		t.Fatal("an unclaimed session ID was allowed")
 	}
 	owners.claim("s1", "alice|laptop")
-	if !owners.check("s1", "alice|laptop") || owners.check("s1", "bob|desktop") {
+	if !owners.acquire("s1", "alice|laptop") || owners.acquire("s1", "bob|desktop") {
 		t.Fatal("ownership check is wrong for a claimed session")
 	}
+	owners.done("s1")
 }
 
 func TestSessionOwnersPurgeOnClaim(t *testing.T) {
@@ -194,4 +195,39 @@ func TestMCPClientCannotForgeItsRole(t *testing.T) {
 	session := connectHTTP(t, newHTTPMCP(t, who), forging)
 
 	assertToolDenied(t, session, "tailor_stage_policy_draft", "view-only")
+}
+
+func TestSessionOwnerOutlivesLongRequests(t *testing.T) {
+	// The SDK pauses its idle timer during a request and restarts it when the
+	// request finishes; ownership must not expire earlier than the SDK session.
+	owners := newSessionOwners(10 * time.Minute)
+	owners.claim("s1", "alice|laptop")
+	if !owners.acquire("s1", "alice|laptop") {
+		t.Fatal("owner could not use its session")
+	}
+
+	// A very long tool call: the request started long ago.
+	owners.mu.Lock()
+	owner := owners.owners["s1"]
+	owner.lastSeen = time.Now().Add(-2 * time.Hour)
+	owners.owners["s1"] = owner
+	owners.lastPurge = time.Time{}
+	owners.mu.Unlock()
+	owners.claim("other", "bob|desktop") // triggers a purge
+	owners.mu.Lock()
+	_, alive := owners.owners["s1"]
+	owners.mu.Unlock()
+	if !alive {
+		t.Fatal("a session with a request in flight was expired")
+	}
+
+	// When the request finishes, the idle clock restarts from now.
+	owners.done("s1")
+	owners.mu.Lock()
+	owners.lastPurge = time.Time{}
+	owners.mu.Unlock()
+	if !owners.acquire("s1", "alice|laptop") {
+		t.Fatal("session expired right after its long request finished")
+	}
+	owners.done("s1")
 }

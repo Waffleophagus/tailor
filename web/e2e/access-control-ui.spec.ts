@@ -138,7 +138,9 @@ test('editor who declines the optional grant still gets their policy loaded', as
 	let policyFetches = 0;
 	await page.route('**/api/policy', (route) => {
 		policyFetches++;
-		return route.fulfill({ json: { tailnet: 'example.ts.net', hujson: '{"grants":[]}' } });
+		return route.fulfill({
+			json: { tailnet: 'example.ts.net', hujson: '{"grants":[]}', revision: 'rev-1' }
+		});
 	});
 	await page.route('**/api/policy/**', (route) => route.fulfill({ json: { drafts: [] } }));
 

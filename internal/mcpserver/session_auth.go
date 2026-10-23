@@ -43,27 +43,42 @@ type sessionOwners struct {
 
 type sessionOwner struct {
 	user     string
-	lastSeen time.Time
+	lastSeen time.Time // when the session was last idle-started (request finished)
+	active   int       // requests in flight; never expire while > 0
 }
 
 func newSessionOwners(ttl time.Duration) *sessionOwners {
 	return &sessionOwners{owners: map[string]sessionOwner{}, ttl: ttl}
 }
 
-// check reports whether user owns sessionID, refreshing its lifetime. Every
-// session is claimed when it is created, so an unknown ID is never allowed.
-func (s *sessionOwners) check(sessionID, user string) bool {
+// acquire reports whether user owns sessionID and, if so, marks a request in
+// flight until done is called. Every session is claimed when it is created, so an
+// unknown ID is never allowed.
+func (s *sessionOwners) acquire(sessionID, user string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	now := time.Now()
-	s.purgeLocked(now)
+	s.purgeLocked(time.Now())
 	owner, ok := s.owners[sessionID]
 	if !ok || owner.user != user {
 		return false
 	}
-	owner.lastSeen = now
+	owner.active++
 	s.owners[sessionID] = owner
 	return true
+}
+
+// done ends a request started by acquire. Like the SDK, idle time counts from
+// when the last request finished, not when it began.
+func (s *sessionOwners) done(sessionID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	owner, ok := s.owners[sessionID]
+	if !ok {
+		return
+	}
+	owner.active--
+	owner.lastSeen = time.Now()
+	s.owners[sessionID] = owner
 }
 
 func (s *sessionOwners) claim(sessionID, user string) {
@@ -88,7 +103,7 @@ func (s *sessionOwners) purgeLocked(now time.Time) {
 	}
 	for id, owner := range s.owners {
 		// Sessions idle past the SDK's timeout are gone; keep a margin.
-		if now.Sub(owner.lastSeen) > s.ttl+time.Minute {
+		if owner.active == 0 && now.Sub(owner.lastSeen) > s.ttl+time.Minute {
 			delete(s.owners, id)
 		}
 	}
@@ -111,10 +126,13 @@ func bindSessions(owners *sessionOwners, logger *slog.Logger, next http.Handler)
 
 		user := callerKey(r.Context())
 		sessionID := r.Header.Get(sessionIDHeader)
-		if sessionID != "" && !owners.check(sessionID, user) {
-			logger.Warn("mcp request rejected: unknown session or session of another identity")
-			http.Error(w, "This MCP session does not exist or belongs to another user or device.", http.StatusNotFound)
-			return
+		if sessionID != "" {
+			if !owners.acquire(sessionID, user) {
+				logger.Warn("mcp request rejected: unknown session or session of another identity")
+				http.Error(w, "This MCP session does not exist or belongs to another user or device.", http.StatusNotFound)
+				return
+			}
+			defer owners.done(sessionID)
 		}
 
 		writer := &sessionClaimWriter{ResponseWriter: w, owners: owners, user: user}

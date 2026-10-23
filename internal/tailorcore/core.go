@@ -113,20 +113,24 @@ func (s *Service) CloudPolicy(ctx context.Context) (string, error) {
 	return s.cloudAPI.Policy(ctx)
 }
 
-func (s *Service) RefreshCloudPolicy(ctx context.Context) (string, error) {
-	raw, err := s.cloudAPI.RefreshPolicy(ctx)
+// RefreshCloudPolicy reads the live policy (bypassing the session cache) with the
+// ETag to pass to SaveCloudPolicy.
+func (s *Service) RefreshCloudPolicy(ctx context.Context) (cloudapi.PolicyVersion, error) {
+	version, err := s.cloudAPI.RefreshPolicyVersion(ctx)
 	if err == nil {
 		s.policyCache.Invalidate()
 	}
-	return raw, err
+	return version, err
 }
 
 func (s *Service) ValidateCloudPolicy(ctx context.Context, draft string) error {
 	return s.cloudAPI.ValidatePolicy(ctx, draft)
 }
 
-func (s *Service) SaveCloudPolicy(ctx context.Context, draft string) (string, error) {
-	raw, err := s.cloudAPI.SavePolicy(ctx, draft)
+// SaveCloudPolicy writes draft only if the live policy still has etag (from
+// RefreshCloudPolicy); otherwise it returns cloudapi.ErrPolicyChanged.
+func (s *Service) SaveCloudPolicy(ctx context.Context, draft, etag string) (string, error) {
+	raw, err := s.cloudAPI.SavePolicyIfMatch(ctx, draft, etag)
 	if err == nil {
 		s.policyCache.Invalidate()
 	}
@@ -181,8 +185,9 @@ func (s *Service) Policy(ctx context.Context) (api.PolicyResponse, error) {
 		return api.PolicyResponse{}, err
 	}
 	return api.PolicyResponse{
-		Tailnet: s.cloudAPI.Status().Tailnet,
-		HuJSON:  rawPolicy,
+		Tailnet:  s.cloudAPI.Status().Tailnet,
+		HuJSON:   rawPolicy,
+		Revision: policyHash(rawPolicy),
 	}, nil
 }
 
@@ -287,7 +292,7 @@ func (s *Service) StagePolicyDraft(ctx context.Context, request api.PolicyStageR
 		ID:         newDraftID(),
 		Source:     stagedSource(request.Source),
 		Tailnet:    s.cloudAPI.Status().Tailnet,
-		BaseHash:   policyHash(current),
+		BaseHash:   baseRevision(request.BaseRevision, current),
 		DraftHash:  policyHash(request.HuJSON),
 		HuJSON:     request.HuJSON,
 		Valid:      true,
@@ -382,9 +387,10 @@ func (s *Service) SaveStagedPolicy(ctx context.Context, request api.PolicySaveRe
 	delete(s.stagedDrafts, draft.ID)
 	s.mu.Unlock()
 	return api.PolicySaveResponse{
-		Saved:   true,
-		Tailnet: s.cloudAPI.Status().Tailnet,
-		HuJSON:  saved,
+		Saved:    true,
+		Tailnet:  s.cloudAPI.Status().Tailnet,
+		HuJSON:   saved,
+		Revision: policyHash(saved),
 	}, nil
 }
 
@@ -815,4 +821,15 @@ func nonNilStrings(values []string) []string {
 		return []string{}
 	}
 	return values
+}
+
+// baseRevision is the base a staged draft is checked against at save time: the
+// revision the editor started from when given, else the policy current now. Without
+// the editor's revision, a draft edited from an older policy would inherit the base
+// of a newer save and silently overwrite it.
+func baseRevision(requested, current string) string {
+	if requested = strings.TrimSpace(requested); requested != "" {
+		return requested
+	}
+	return policyHash(current)
 }

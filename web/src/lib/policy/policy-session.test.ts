@@ -30,7 +30,9 @@ function deferred<T>() {
 }
 
 async function loadedSession() {
-	api.fetchPolicy.mockResolvedValue(Result.ok({ tailnet: 'example.com', hujson: SAVED }) as never);
+	api.fetchPolicy.mockResolvedValue(
+		Result.ok({ tailnet: 'example.com', hujson: SAVED, revision: 'rev-0' }) as never
+	);
 	api.evaluatePolicyDraft.mockResolvedValue(Result.ok(evaluation('saved')) as never);
 	api.fetchStagedPolicyDrafts.mockResolvedValue(Result.ok({ drafts: [] }) as never);
 	const errors: string[] = [];
@@ -63,6 +65,20 @@ describe('PolicySession', () => {
 		await loading;
 		expect(session.policyEvaluation).toEqual(evaluation('saved'));
 		expect(session.stagedDrafts).toEqual([draft]);
+	});
+
+	it('stages edits against the revision the editor loaded', async () => {
+		const { session } = await loadedSession();
+		session.editorHuJSON = '{"acls":[{"action":"accept"}]}';
+		api.validatePolicyDraft.mockResolvedValue(Result.ok({ valid: true }) as never);
+		await session.validate();
+		api.stagePolicyDraft.mockResolvedValue(Result.err(new Error('stop here')) as never);
+
+		await session.save();
+
+		expect(api.stagePolicyDraft).toHaveBeenCalledWith(
+			expect.objectContaining({ baseRevision: 'rev-0' })
+		);
 	});
 
 	it('only marks the text that was submitted for validation as validated', async () => {

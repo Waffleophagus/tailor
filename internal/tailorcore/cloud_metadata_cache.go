@@ -2,7 +2,6 @@ package tailorcore
 
 import (
 	"context"
-	"errors"
 	"sync"
 	"time"
 
@@ -115,8 +114,10 @@ func (c *ttlCache[T]) get(ctx context.Context, key string, fetch func() (T, erro
 
 		entry.mu.Lock()
 		entry.inflight = nil
-		// A cancelled caller stores nothing, so the next caller fetches afresh.
-		if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+		// A caller that went away stores nothing, so the next caller fetches
+		// afresh. Ask its context: an upstream HTTP timeout also looks like
+		// context.DeadlineExceeded but must be cached like any other error.
+		if ctx.Err() == nil {
 			ttl := cloudMetadataTTL
 			if err != nil {
 				ttl = cloudMetadataErrorTTL
