@@ -45,9 +45,9 @@ type AuthOptions struct {
 	// tailnet policy (Owner, Admin, Network admin). Such users get full access
 	// without the app capability grant.
 	PolicyAdmin func(ctx context.Context, login string) bool
-	// SetupToken must accompany requests that may see the tsnet node's login link
-	// (printed in the logs as ?setup=<token>). Empty means the link is never shown.
-	SetupToken string
+	// SetupGate guards the tsnet node's login link on the setup page. Nil means
+	// the link is never shown in the browser (it is still logged).
+	SetupGate *SetupGate
 	// TailnetHTTPSPort is the port Tailor serves HTTPS on in the tailnet.
 	TailnetHTTPSPort string
 	// AllowedHosts extends the Host allow-list for unauthenticated setup responses.
@@ -158,7 +158,7 @@ func IdentityMiddleware(logger *slog.Logger, opts *AuthOptions, next http.Handle
 		// identity; show how to connect it instead.
 		node, nodeKnown := opts.node.get(r.Context(), opts.TailnetStatus)
 		if nodeKnown && !node.running() {
-			writeNodeLogin(w, r, node, opts.SetupToken, opts.AllowedHosts)
+			writeNodeLogin(w, r, node, opts.SetupGate, opts.AllowedHosts)
 			return
 		}
 		if opts.WhoIsClient == nil {

@@ -42,8 +42,8 @@ type Options struct {
 	TailnetStatus    TailnetStatusClient
 	TailnetMode      bool
 	AppCapability    string
-	// SetupToken gates the tsnet login link on the setup page (see AuthOptions).
-	SetupToken string
+	// SetupGate guards the tsnet login link on the setup page (see AuthOptions).
+	SetupGate *SetupGate
 	// TailnetHTTPSPort is the tailnet HTTPS port, used in links to Tailor.
 	TailnetHTTPSPort string
 	CloudAPIOptions  []cloudapi.Option
@@ -85,7 +85,7 @@ func New(options ...Options) http.Handler {
 			TailnetStatus:    opts.TailnetStatus,
 			AppCapability:    appCapability(opts.AppCapability),
 			PolicyAdmin:      core.IsTailnetPolicyAdmin,
-			SetupToken:       opts.SetupToken,
+			SetupGate:        opts.SetupGate,
 			TailnetHTTPSPort: opts.TailnetHTTPSPort,
 			AllowedHosts:     AllowedHostsFromEnv(),
 		},

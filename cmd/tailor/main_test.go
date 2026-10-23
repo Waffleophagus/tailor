@@ -93,10 +93,11 @@ func TestReportNodeLoginRecoversFromKeyExpiry(t *testing.T) {
 		{BackendState: "Running"},
 		{BackendState: "NeedsLogin"},
 	}}
+	gate := &fakeGate{}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
-		reportNodeLogin(ctx, client, "http://localhost:8080/?setup=x", slog.New(slog.DiscardHandler))
+		reportNodeLogin(ctx, client, gate, ":8080", slog.New(slog.DiscardHandler))
 		close(done)
 	}()
 	deadline := time.After(2 * time.Second)
@@ -122,10 +123,32 @@ func TestReportNodeLoginRecoversFromKeyExpiry(t *testing.T) {
 	if client.loginStart != 1 {
 		t.Fatalf("StartLoginInteractive called %d times, want 1 (retries are rate limited)", client.loginStart)
 	}
+	if gate.resets() != 1 {
+		t.Fatalf("setup token rotated %d times, want once when the node came up", gate.resets())
+	}
+}
+
+type fakeGate struct {
+	mu sync.Mutex
+	n  int
+}
+
+func (g *fakeGate) Token() string { return "tok" }
+
+func (g *fakeGate) Reset() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.n++
+}
+
+func (g *fakeGate) resets() int {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.n
 }
 
 func TestSetupPageURL(t *testing.T) {
-	if got := setupPageURL(":8080", "tok"); got != "http://localhost:8080/?setup=tok" {
+	if got := setupPageURL(":8080", "tok"); got != "http://localhost:8080/#setup=tok" {
 		t.Fatalf("setupPageURL = %q", got)
 	}
 }

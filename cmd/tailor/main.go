@@ -2,9 +2,7 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
 	"crypto/tls"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -77,9 +75,9 @@ func main() {
 	}
 
 	var tsnetLocalClient *local.Client
-	setupToken := ""
+	var setupGate *server.SetupGate
 	if shouldUseTsnet(deployEnv) {
-		setupToken = newSetupToken()
+		setupGate = server.NewSetupGate()
 		stateDir := tsnetStateDir(deployEnv)
 		hardenTSNetLogging(logger)
 		configureTSNetForceLogin(deployEnv, stateDir, logger)
@@ -90,7 +88,7 @@ func main() {
 			logger.Error("tsnet startup failed", "error", err, "state_dir", stateDir)
 			exit(1)
 		}
-		go reportNodeLogin(context.Background(), tsnetLocalClient, setupPageURL(addr, setupToken), logger)
+		go reportNodeLogin(context.Background(), tsnetLocalClient, setupGate, addr, logger)
 		localAPIEndpoint = "tsnet embedded"
 	}
 
@@ -101,7 +99,7 @@ func main() {
 		TailnetStatus:    tsnetLocalClient,
 		TailnetMode:      tsnetServer != nil,
 		AppCapability:    os.Getenv("TAILOR_APP_CAPABILITY"),
-		SetupToken:       setupToken,
+		SetupGate:        setupGate,
 		TailnetHTTPSPort: strings.TrimPrefix(listenPort(tsnetListenAddr()), ":"),
 		Logger:           logger,
 	})
@@ -307,11 +305,18 @@ var (
 	nodeLoginRetryWait = time.Minute
 )
 
+// setupTokens is the part of server.SetupGate reportNodeLogin uses.
+type setupTokens interface {
+	Token() string
+	Reset()
+}
+
 // reportNodeLogin runs for the life of the process: it logs the setup page (with
 // its token) and Tailscale login URL whenever the node needs login, starts a new
 // interactive login when the node needs one but has no URL (key expiry), and
-// warns about key expiry each time the node comes up.
-func reportNodeLogin(ctx context.Context, client nodeLoginClient, setupURL string, logger *slog.Logger) {
+// warns about key expiry each time the node comes up. Each time the node comes up
+// the setup token is rotated, so links from earlier logs stop working.
+func reportNodeLogin(ctx context.Context, client nodeLoginClient, gate setupTokens, addr string, logger *slog.Logger) {
 	lastState, lastURL := "", ""
 	var needsURLSince, lastLoginStart time.Time
 	ticker := time.NewTicker(nodeLoginPollInterval)
@@ -322,6 +327,7 @@ func reportNodeLogin(ctx context.Context, client nodeLoginClient, setupURL strin
 			switch {
 			case state == "Running":
 				if lastState != "Running" {
+					gate.Reset()
 					warnIfNodeKeyExpires(status, logger)
 				}
 				lastURL = ""
@@ -332,7 +338,7 @@ func reportNodeLogin(ctx context.Context, client nodeLoginClient, setupURL strin
 			case status.AuthURL != "":
 				if status.AuthURL != lastURL {
 					logger.Warn("tailor is not connected to a tailnet yet; open the setup page to log it in with your Tailscale account",
-						"setup_page", setupURL,
+						"setup_page", setupPageURL(addr, gate.Token()),
 						"login_url", status.AuthURL,
 					)
 					lastURL = status.AuthURL
@@ -364,18 +370,10 @@ func reportNodeLogin(ctx context.Context, client nodeLoginClient, setupURL strin
 	}
 }
 
-// newSetupToken returns the random token that unlocks the node login link on the
-// setup page. It is only ever printed to Tailor's own logs.
-func newSetupToken() string {
-	var buf [16]byte
-	if _, err := rand.Read(buf[:]); err != nil {
-		panic("setup token generation failed: " + err.Error())
-	}
-	return hex.EncodeToString(buf[:])
-}
-
+// setupPageURL is the setup link Tailor logs. The token is in the fragment, which
+// browsers never send to servers, so proxies and access logs never see it.
 func setupPageURL(addr, token string) string {
-	return "http://localhost" + listenPort(addr) + "/?setup=" + token
+	return "http://localhost" + listenPort(addr) + "/#setup=" + token
 }
 
 func warnIfNodeKeyExpires(status *ipnstate.Status, logger *slog.Logger) {

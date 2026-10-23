@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"crypto/subtle"
 	"html/template"
 	"net"
 	"net/http"
@@ -136,7 +135,7 @@ var nodeLoginPage = template.Must(template.New("login").Parse(`<!doctype html>
     {{else if .Hidden}}
     <div class="status">Not connected</div>
     <h1>Connect Tailor to your tailnet</h1>
-    <p>Tailor is waiting to be logged in to a tailnet. To keep the login link private, open the <strong>setup link printed in Tailor's logs</strong> (it looks like <code>http://localhost:8080/?setup=…</code>). The Tailscale login link is also printed there.</p>
+    <p>Tailor is waiting to be logged in to a tailnet. To keep the login link private, open the <strong>setup link printed in Tailor's logs</strong> (it looks like <code>http://localhost:8080/#setup=…</code>). The Tailscale login link is also printed there.</p>
     {{else if eq .State "NeedsLogin"}}
     <div class="status">Not connected</div>
     <h1>Requesting a login link…</h1>
@@ -147,40 +146,59 @@ var nodeLoginPage = template.Must(template.New("login").Parse(`<!doctype html>
     <p>Tailor is starting its Tailscale connection. This page refreshes on its own.</p>
     {{end}}
   </main>
+  <script nonce="{{.Nonce}}">
+    // The setup token arrives in the URL fragment, which browsers never send to
+    // servers or proxies. Drop it from the address bar and swap it for a cookie.
+    (function () {
+      var match = location.hash.match(/(?:^#|&)setup=([0-9a-f]+)/);
+      if (!match) return;
+      history.replaceState(null, "", location.pathname);
+      fetch("/setup/exchange", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: match[1] }),
+        credentials: "same-origin"
+      }).finally(function () { location.reload(); });
+    })();
+  </script>
 </body>
 </html>`))
 
-// setupAuthorized reports whether a request may see the node login link: it must
-// carry the setup token printed in Tailor's logs and come from a local or private
-// client. The token is what actually protects the link: anyone with it can already
-// read the logs, which contain the Tailscale login URL too. The address check alone
-// would let a reverse proxy expose the link to the internet.
-func setupAuthorized(r *http.Request, setupToken string) bool {
-	if setupToken == "" || !fromPrivateNetwork(r.RemoteAddr) {
+// setupAuthorized reports whether a request may see the node login link: it needs
+// a setup session cookie (obtained by exchanging the token from Tailor's logs)
+// and a local or private client. The token is what actually protects the link:
+// anyone with it can already read the logs, which contain the Tailscale login URL
+// too. The address check alone would let a reverse proxy expose the link.
+func setupAuthorized(r *http.Request, gate *SetupGate) bool {
+	if gate == nil || !fromPrivateNetwork(r.RemoteAddr) {
 		return false
 	}
-	given := r.URL.Query().Get("setup")
-	return subtle.ConstantTimeCompare([]byte(given), []byte(setupToken)) == 1
+	cookie, err := r.Cookie(setupCookieName)
+	return err == nil && gate.validSession(cookie.Value)
 }
 
 // writeNodeLogin answers requests while Tailor's own node is not on a tailnet yet:
 // an HTML login page for browsers, JSON for API clients.
-func writeNodeLogin(w http.ResponseWriter, r *http.Request, state nodeState, setupToken string, allowedHosts []string) {
+func writeNodeLogin(w http.ResponseWriter, r *http.Request, state nodeState, gate *SetupGate, allowedHosts []string) {
 	// Unauthenticated responses must not be readable through DNS rebinding.
 	if !hostAllowed(r.Host, allowedHosts) {
 		http.Error(w, "Host not allowed. Set TAILOR_ALLOWED_HOSTS to serve Tailor under this name.", http.StatusMisdirectedRequest)
 		return
 	}
+	w.Header().Set("Cache-Control", "no-store")
+	if r.URL.Path == "/setup/exchange" {
+		handleSetupExchange(w, r, gate)
+		return
+	}
 	authURL := ""
 	hidden := false
 	if state.authURL != "" {
-		if setupAuthorized(r, setupToken) {
+		if setupAuthorized(r, gate) {
 			authURL = state.authURL
 		} else {
 			hidden = true
 		}
 	}
-	w.Header().Set("Cache-Control", "no-store")
 	if strings.HasPrefix(r.URL.Path, "/api/") || r.URL.Path == "/mcp" {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{
 			"error":   "Tailor is not connected to a tailnet yet. Open Tailor in a browser to log it in.",
@@ -190,11 +208,13 @@ func writeNodeLogin(w http.ResponseWriter, r *http.Request, state nodeState, set
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'")
+	nonce := randomHex()
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-"+nonce+"'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
+	w.Header().Set("Referrer-Policy", "no-referrer")
 	// A normal page (it refreshes itself), so not an error status in the access log.
 	w.WriteHeader(http.StatusOK)
 	_ = nodeLoginPage.Execute(w, struct {
-		State, AuthURL, Hostname string
-		Hidden                   bool
-	}{state.backendState, authURL, state.hostname, hidden})
+		State, AuthURL, Hostname, Nonce string
+		Hidden                          bool
+	}{state.backendState, authURL, state.hostname, nonce, hidden})
 }
