@@ -498,6 +498,8 @@ Backend-only change:
 go test ./...
 ```
 
+Docs drift check (manual, network, not part of `go test ./...`): run `go run ./tools/check-policyref-drift` from the repo root; it compares each `sourceUrls` page's "Last validated" date with the `index.json` version and exits non-zero on drift or fetch errors.
+
 If generated API docs or frontend code is touched, also run from repo root:
 
 ```bash

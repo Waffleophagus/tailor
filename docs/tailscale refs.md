@@ -2,9 +2,11 @@
 
 > An LLM-friendly reference for understanding and editing Tailscale tailnet policy files.
 > Covers every field, selector, autogroup, edge case, and editing concern.
-> Sources: Tailscale docs (policy-file syntax, grants syntax, device posture, grant examples),
-> the JWCC specification by Nigel Tao, and the tailscale/hujson GitHub repo.
-> Last updated: 2026-06-04
+> Sources: Tailscale docs (policy-file syntax, grants syntax, targets and selectors, device posture,
+> IP sets, Tailscale SSH, declarative node sharing, grant examples), the JWCC specification by
+> Nigel Tao, and the tailscale/hujson GitHub repo. Canonical docs live under
+> `https://tailscale.com/docs/...`; append `.md` to a page URL for its Markdown copy.
+> Last updated: 2026-10-22
 
 ---
 
@@ -33,6 +35,7 @@
 21. [Worked Examples](#21-worked-examples)
 22. [Editing HuJSON: Practical Guide](#22-editing-hujson-practical-guide)
 23. [Edge Cases & Gotchas](#23-edge-cases--gotchas)
+24. [External Tailnets (Declarative Node Sharing, Alpha)](#24-external-tailnets-declarative-node-sharing-alpha)
 
 ---
 
@@ -80,7 +83,7 @@ Both C-style block comments and C++-style line comments are supported, anywhere 
 **Comment rules**:
 - `//` line comments: terminated by `\n`. A line comment at end of file may omit the final `\n`.
 - `/* */` block comments: can span multiple lines.
-- Comments are stripped during parsing; they are not preserved by the Tailscale policy engine.
+- Comments carry no policy meaning. The Tailscale API returns the policy file as HuJSON or as JSON depending on the `Accept` header; only the HuJSON form can carry comments.
 - `#` comments are **not** supported (JWCC is a valid JavaScript superset, and `#` is not).
 
 ### 1.3 What HuJSON Does NOT Add
@@ -152,8 +155,13 @@ The policy file is a single HuJSON object. All sections are optional. Order of s
 
   // Default posture (optional)
   "defaultSrcPosture": [...],
+
+  // Declarative node sharing (alpha)
+  "externalTailnets": {...},
 }
 ```
+
+The syntax reference's own section table lists only the access control, automation, attribute, target, and test sections. `defaultSrcPosture` is documented with device posture, the network policy options further down the syntax reference, and `externalTailnets` on the declarative node sharing page.
 
 | Section | Key | Type | Purpose |
 |---------|-----|------|---------|
@@ -170,6 +178,8 @@ The policy file is a single HuJSON object. All sections are optional. Order of s
 | Tests | `tests` | Tests | Assertions about ACL/grant policy |
 | SSH Tests | `sshTests` | Tests | Assertions about SSH policy |
 | Default Src Posture | `defaultSrcPosture` | Posture | Baseline posture for rules without explicit `srcPosture` |
+| Network options | `derpMap`, `disableIPv4`, `OneCGNATRoute`, `randomizeClientPort` | Network | Rarely needed network-wide settings (see Section 15) |
+| External tailnets | `externalTailnets` | Sharing (alpha) | Declarative node sharing with trusted tailnets (see Section 24) |
 
 ---
 
@@ -233,10 +243,12 @@ All `src` selectors are available, plus these destination-only selectors:
 | Selector | Description | Example |
 |----------|-------------|---------|
 | `autogroup:internet` | Access to internet through exit nodes | `autogroup:internet` |
-| `autogroup:self` | User's own devices (when src is `autogroup:<role>`, `group:<name>`, or individual user) | `autogroup:self` |
+| `autogroup:self` | User's own devices. The `src` must contain only individual users, groups, or role autogroups (`autogroup:member`, `autogroup:admin`, ...) | `autogroup:self` |
 | `svc:<name>` | A Tailscale Service (virtual IP) | `svc:web-server` |
 
-**Critical distinction**: `autogroup:self` only applies to **user-owned** devices. It does NOT apply to tagged devices. You cannot use `autogroup:self` with `autogroup:tagged`.
+**Critical distinction**: `autogroup:self` only applies to **user-owned** devices. It does NOT apply to tagged devices. You cannot use `autogroup:self` with `autogroup:tagged`, and a `src` of tags or `*` cannot be paired with it.
+
+**Exit nodes**: only sources with access to `autogroup:internet` can use exit nodes. `autoApprovers.exitNode` only approves exit node *advertisements* (Section 6).
 
 **CIDR in grants**: Grants allowing a CIDR (e.g. `192.168.0.0/16`) control which traffic is **permitted**, not which routes are **injected**. Routes are injected only when a subnet router advertises them and an admin approves them.
 
@@ -254,6 +266,8 @@ Protocol aliases (see [Section 17](#17-all-protocol-aliases) for full table):
 `igmp` (2), `ipv4`/`ip-in-ip` (4), `tcp` (6), `egp` (8), `igp` (9), `udp` (17), `gre` (47), `esp` (50), `ah` (51), `sctp` (132).
 
 You can also use raw IANA protocol numbers 1–255 as strings: `"16"`.
+
+**Only the four forms above are documented.** A bare protocol name such as `"icmp"` is not one of them; write `"icmp:*"`. Note that `icmp` is not in the official alias table even though the docs use it in `icmp:*` and in tests (`"proto": "icmp"`).
 
 **Port rules**:
 - If traffic is allowed for a given pair of IPs, ICMP is also allowed automatically.
@@ -281,21 +295,27 @@ The `app` field maps **capability identifiers** to arrays of parameter objects:
 }
 ```
 
+(Illustrative only: in practice each capability goes in a grant whose `src`/`dst` fit that application.)
+
 **Naming convention**: `<domainName>/<capabilityName>` (e.g. `tailscale.com/cap/tailsql`).
 
 **Reserved domains**: `tailscale.com` and `tailscale.io` are reserved for Tailscale products. Use a domain you control for custom capabilities.
 
 **Opaque parameters**: The policy engine treats `app` parameters as opaque JSON. It compiles and distributes them but does **not** validate against any schema. Clients use these parameters for local authorization decisions.
 
-**Known Tailscale capabilities**:
+**Restrictions**: with `autogroup:self` as `dst`, the `src` must be users, groups, or role autogroups. App grants cannot use `autogroup:shared`, `autogroup:danger-all`, `autogroup:internet`, or admin autogroups such as `autogroup:admin` as destinations.
+
+**Known Tailscale capabilities** (from the app capabilities page and feature docs):
 
 | Capability | Application | Parameters |
 |------------|-------------|------------|
-| `tailscale.com/cap/tailsql` | TailSQL (SQL playground) | `dataSrc` (array of data source names or `*`) |
-| `tailscale.com/cap/kubernetes` | Kubernetes auth proxy | `impersonate.groups` (array of K8s groups) |
+| `tailscale.com/cap/drive` | Taildrive | `shares` (share names or `*`), `access` (`ro` or `rw`). `tailscale.com/cap/drive-sharer` is added to the source automatically |
+| `tailscale.com/cap/kubernetes` | Kubernetes operator | `impersonate` (e.g. `impersonate.groups`), `recorders` (one recorder tag per rule), `enforceRecorder` |
+| `tailscale.com/cap/pam` | Tailscale PAM | `version`, `permissions`; `dst` is a PAM service such as `svc:production-database` |
+| `tailscale.com/cap/secrets` | setec (secrets manager) | `action` (array: `get`, `put`, `info`, `activate`, `delete`), `secret` (array of path patterns) |
+| `tailscale.com/cap/tailsql` | TailSQL (SQL playground) | Data sources. **Docs conflict**: the grants syntax page uses `dataSrc`, the app capabilities page uses `src` |
 | `tailscale.com/cap/golink` | Golink (short links) | `admin` (boolean) |
-| `tailscale.com/cap/secrets` | Setec (secrets manager) | `action` (array: `get`, `put`, `activate`, `info`), `secret` (array of glob patterns) |
-| `tailscale.com/cap/relay` | Peer Relays | (empty array — presence of the capability enables relay) |
+| `tailscale.com/cap/relay` | Peer relays | Empty array `[]`, no parameters. `src` = devices to reach through the relay, `dst` = relay devices |
 
 ### 3.7 Device Posture Requirements (`srcPosture`)
 
@@ -325,7 +345,6 @@ The `via` field forces traffic through specific exit nodes, subnet routers, or a
 **Rules**:
 - Only **tags** are allowed in `via` (no groups, users, or IPs).
 - Omitting `via` (or `[]` or `null`) allows access through any routing device.
-- If a specified routing device is unavailable, users in that group **cannot** access the destination until it returns or the policy is updated.
 - Only accessible routers are candidates (depends on applicable access policies).
 
 ### 3.9 Grant Evaluation Semantics
@@ -431,7 +450,7 @@ Tailscale SSH rules define who can SSH to what devices and as which users. Both 
 
 ### 5.3 SSH `src`
 
-Same as general `src` selectors. **Cannot** use `*`, other users (than self), IP addresses, or hostnames as `dst`.
+A user, group, tag, `user:*@<domain>`, or autogroup. **Cannot** be `*`. IP addresses and hosts are not allowed in SSH rules. (The syntax reference's `src` paragraph mistakenly talks about `dst`; the SSH feature page and targets page give the list above.)
 
 ### 5.4 SSH `dst`
 
@@ -443,6 +462,8 @@ Same as general `src` selectors. **Cannot** use `*`, other users (than self), IP
 - **Cannot** use `*`
 
 **Why**: Tailscale prevents one user from SSHing into another user's personal device. Only user-to-own-device, user-to-tagged-device, or tagged-to-tagged connections are allowed.
+
+**Docs note**: the SSH feature page says `dst` "can be a user, tag, or autogroup", and the targets page marks plain users as not allowed in SSH `dst`. The rules above follow the syntax reference.
 
 ### 5.5 SSH `users`
 
@@ -457,7 +478,7 @@ Same as general `src` selectors. **Cannot** use `*`, other users (than self), IP
 
 ### 5.6 SSH `checkPeriod`
 
-Format: `<number><unit>` where unit is `m` (minutes) or `h` (hours). Min 1m, max 168h (1 week). Special value: `"always"` (check every connection — can cause issues with automation like Ansible).
+Only with `action: "check"`; Premium and Enterprise plans. Specify minutes or hours (e.g. `"5m"`, `"20h"`). Min 1m, max 168h (1 week), default 12h. Special value: `"always"` (check every connection — can cause issues with automation like Ansible).
 
 ### 5.7 SSH `acceptEnv`
 
@@ -488,11 +509,32 @@ The only SSH connections Tailscale permits:
 3. Tagged device → tagged device (cannot be check mode)
 4. User → tagged device shared with them (if ACL allows SSH)
 
+Tagged devices therefore **cannot** SSH into user-owned devices.
+
+### 5.10 SSH Session Recording (`recorder`, `enforceRecorder`)
+
+```json
+{
+  "action": "accept",
+  "src": ["group:sre"],
+  "dst": ["tag:prod"],
+  "users": ["root"],
+  "recorder": ["tag:session-recorder"],
+  "enforceRecorder": false
+}
+```
+
+- `recorder`: tags of recorder nodes. Sessions allowed by the rule are streamed to recorders with that tag. No `recorder` means no recording.
+- `enforceRecorder` (default `false`, "fail open"): when `true`, sessions that should be recorded are refused, and active ones terminated, if no recorder is reachable ("fail closed").
+- If two matching rules disagree on `enforceRecorder`, the rule listed first in the policy file wins.
+- Tailscale automatically permits traffic from SSH servers to recorders (port 80); no extra access rule is needed. Restrict access to the recorder web UI (port 443) yourself.
+- **Deprecation**: Tailscale no longer offers session recording through `tsrecorder`. Support for existing users is scheduled to end in August 2027; Tailscale recommends Tailscale PAM instead.
+
 ---
 
 ## 6. Auto Approvers
 
-Auto approvers bypass the admin console approval for subnet routers, exit nodes, and app connectors.
+Auto approvers bypass admin console approval for advertised subnet routes, exit node advertisements, app connector routes (through `routes`), and Tailscale Service hosts.
 
 ### 6.1 Structure
 
@@ -503,12 +545,15 @@ Auto approvers bypass the admin console approval for subnet routers, exit nodes,
       "<CIDR>": ["<approvers>"]
     },
     "exitNode": ["<approvers>"],
-    "appConnectors": {
-      "<app>": ["<approvers>"]
+    "services": {
+      "svc:<service-name>": ["<approvers>"],
+      "tag:<service-tag>": ["<approvers>"]
     }
   }
 }
 ```
+
+There is no `appConnectors` key. (An earlier version of this document showed one; it does not appear in Tailscale's docs.)
 
 ### 6.2 Routes
 
@@ -527,9 +572,35 @@ Auto-approver of a route can also advertise a **subnet** of that route.
 "exitNode": ["tag:bar"]
 ```
 
+This auto-approves devices that **advertise** themselves as exit nodes. It does not let anyone **use** an exit node: exit node use requires a grant or ACL with `autogroup:internet` as the destination.
+
+### 6.3a Tailscale Services
+
+```json
+"services": {
+  "svc:web-server": ["tag:server"],
+  "tag:prod-service": ["tag:prod-infra"]
+}
+```
+
+Keys are a `svc:<name>` or a tag assigned to Services. Devices matching the approvers can advertise themselves as hosts for those Services and are approved automatically.
+
+### 6.3b App Connectors
+
+App connector routes are approved through `routes`, with the connector tag as the approver. The setup guide approves all routes for the connector tag:
+
+```json
+"routes": {
+  "0.0.0.0/0": ["tag:github-app-connector"],
+  "::/0": ["tag:github-app-connector"]
+}
+```
+
+Custom apps always need this. Preset apps usually don't, but routes they learn through DNS do.
+
 ### 6.4 Approvers
 
-Each approver can be: user email, `group:<name>`, `autogroup:<role>`, or `tag:<name>`.
+Each approver can be: user email, `group:<name>`, an autogroup, or `tag:<name>` (syntax reference). **Docs conflict**: the targets page marks plain users as not allowed in auto approvers, while the syntax reference's example uses `alice@example.com`.
 
 **Important**: Use tags as auto-approvers to avoid routes stopping when the user who advertised them is re-authenticated by someone else, suspended, or deleted.
 
@@ -566,7 +637,7 @@ Each approver can be: user email, `group:<name>`, `autogroup:<role>`, or `tag:<n
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `target` | Array of selectors | Devices the attributes apply to. Can be: `tag:<name>`, `<user>@<domain>`, `group:<name>`, `*`, `autogroup:<role>` |
+| `target` | Array of selectors | Devices the attributes apply to. The syntax reference lists `tag:<name>`, `<user>@<domain>`, `group:<name>`, and `*`; the targets page also allows role autogroups, `autogroup:tagged`, synced groups, IPs, and host aliases, but marks users as not allowed (a docs conflict) |
 | `attr` | Array of strings | Flag attributes to apply |
 | `app` | Object | Application layer capabilities (same structure as grant `app`) |
 
@@ -581,6 +652,8 @@ Each approver can be: user email, `group:<name>`, `autogroup:<role>`, or `tag:<n
 | `disable-ipv4` | Stops assigning Tailscale IPv4 addresses (use instead of top-level `disableIPv4`) |
 
 ### 7.4 App Connectors via nodeAttrs
+
+Optional keys include `routes`; preset apps use `presetAppID` instead of `domains`. Wildcard domains such as `*.example.com` do not include the parent domain. If GitOps or Terraform manages the policy, admin console edits to app connectors are overwritten on the next sync.
 
 ```json
 {
@@ -610,27 +683,47 @@ Postures define sets of device posture assertions that can be referenced in `src
 
 ### 8.1 Structure
 
+**Object syntax (recommended)**:
+
 ```json
 {
   "postures": {
-    "posture:latestMac": [
-      "node:os == 'macos'",
-      "node:tsReleaseTrack == 'stable'",
-      "node:tsVersion >= '1.40'"
-    ],
-    "posture:anyMac": [
-      "node:os == 'macos'",
-      "node:tsReleaseTrack == 'stable'"
-    ],
-    "posture:trusted": [
-      "node:os == 'windows'",
-      "custom:edrScore >= 70"
-    ]
+    "posture:latestMac": {
+      "assertions": [
+        "node:os IN ['macos']",
+        "node:tsReleaseTrack == 'stable'",
+        "node:tsVersion >= '1.40'"
+      ],
+      "onFailure": {
+        "showAlerts": ["warn-in-client"],
+        "endUserMessage": "You need to update your Mac. Contact IT helpdesk for detailed instructions."
+      }
+    },
+    "posture:anyMac": {
+      "assertions": ["node:os == 'macos'", "node:tsReleaseTrack == 'stable'"]
+    }
   }
 }
 ```
 
-Each posture name must start with `posture:`. Each posture is a list of **assertion strings**. All assertions within a posture must be true (AND logic).
+- Each posture name must start with `posture:`.
+- `assertions`: list of assertion strings. All assertions within a posture must be true (AND logic).
+- `onFailure` (optional): how admins and users are told a device fails the posture. Without it, nobody is alerted.
+  - `showAlerts`: any of `badge-in-console` (badge in the admin console Machines view), `warn-in-client` (warning on the Tailscale client icon; the user opens the app to read the message), `notify-in-client` (push notification).
+  - `endUserMessage`: message shown to the user of the failing device.
+  - Console badges and client warnings/notifications are beta. The Windows client does not display them. Messages are only sent when the failing posture affects the device's connectivity.
+
+**Legacy array syntax**:
+
+```json
+"posture:latestMac": [
+  "node:os IN ['macos']",
+  "node:tsReleaseTrack == 'stable'",
+  "node:tsVersion >= '1.40'"
+]
+```
+
+The array syntax keeps working indefinitely but gets **no new features** (including alerts). Both syntaxes can appear in the same `postures` block. Prefer the object syntax for new postures.
 
 ### 8.2 Operators
 
@@ -638,15 +731,15 @@ Each posture name must start with `posture:`. Each posture is a list of **assert
 |----------|-----------|---------|
 | `==` | All types | `node:os == 'macos'` |
 | `!=` | All types | `node:os != 'linux'` |
-| `IN` | Strings | `node:os IN ['macos', 'linux', 'windows']` |
-| `NOT IN` | Strings | `node:os NOT IN ['ios', 'android']` |
-| `IS SET` | Custom attributes | `custom:tier IS SET` |
-| `NOT SET` | Custom attributes | `custom:tier NOT SET` |
-| `>=`, `>`, `<=`, `<` | Numbers, versions | `node:tsVersion >= '1.40'`, `custom:edrScore >= 70` |
+| `IN` | Lists of values (and IPs/CIDRs/IP sets for `ip:publicAddress`) | `node:os IN ['macos', 'linux', 'windows']` |
+| `NOT IN` | Same as `IN` | `node:os NOT IN ['ios', 'android']` |
+| `IS SET` | Any attribute (the docs list it without restriction) | `custom:tier IS SET` |
+| `NOT SET` | Any attribute | `custom:tier NOT SET` |
+| `>=`, `>`, `<=`, `<` | Numbers and the version attributes `node:osVersion`, `node:tsVersion` only | `node:tsVersion >= '1.40'`, `custom:edrScore >= 70` |
 
 **Version comparison**: `node:osVersion` and `node:tsVersion` use a comparator that handles mixed numeric/non-numeric version strings.
 
-**Unset attributes**: If a posture attribute is unset for a device, the posture will **not** match that device, regardless of the operator — even negative operators like `!=` or `NOT SET` won't match for truly unset attributes that are referenced in the posture.
+**Unset attributes**: If an attribute referenced in a posture is unset for a device, the posture will **not** match that device, "irrespective of the operator used" — even a negative condition like `custom:tier != 'prod'` fails. The docs do not spell out how this interacts with `NOT SET`; test with `srcPostureAttrs` before relying on it.
 
 ### 8.3 Posture Attributes (Built-In)
 
@@ -658,21 +751,24 @@ Each posture name must start with `posture:`. Each posture is a list of **assert
 | `node:tsReleaseTrack` | node | Release track | `stable`, `unstable` |
 | `node:tsStateEncrypted` | node | Client state encrypted at rest | `true`, `false` |
 | `node:tsVersion` | node | Tailscale version | Quoted version string |
-| `ip:country` | ip | Country of public IP | ISO 3166-1 two-letter code (uppercase) |
+| `ip:country` | ip | Country of public IP (Standard, Premium, Enterprise) | ISO 3166-1 two-letter code (uppercase) |
+| `ip:publicAddress` | ip | Public IP used to reach the control plane (beta; Standard, Premium, Enterprise) | IPv4/IPv6 address, CIDR, or IP set; only `IN`, `NOT IN`, `==`, `!=` |
 
 **Note**: `node:tsAutoUpdate` is only `true` when Tailscale's built-in auto-update is enabled. External mechanisms (App Store, Google Play) result in `false`.
 
+**Note**: the docs' examples quote booleans inconsistently (`node:tsAutoUpdate == true` vs `node:tsStateEncrypted == 'true'`). Evaluate a draft to confirm.
+
 ### 8.4 Posture Attributes (Custom)
 
-- Set via the Posture Attributes API (Premium/Enterprise).
+- Set via the Posture Attributes API, or assigned during device provisioning with OAuth apps (Premium/Enterprise).
 - Third-party integrations (CrowdStrike Falcon, etc.): Standard/Premium/Enterprise.
 - Namespace `custom:` for user-defined attributes.
 - Integration-specific namespaces (e.g. `falcon:ztaScore`).
 
 ```json
-"posture:crowdstrike-trusted": [
-  "falcon:ztaScore >= 70"
-]
+"posture:crowdstrike-trusted": {
+  "assertions": ["falcon:ztaScore >= 70"]
+}
 ```
 
 ### 8.5 Using Postures in Access Rules
@@ -725,12 +821,12 @@ This can be used to create rules **more permissive** than the default (by specif
 
 ### 8.7 Tailscale SSH + Posture
 
-SSH Console connections use `node:os == 'js'`. To allow these through posture checks, include that assertion:
+Tailscale SSH Console connections are subject to posture conditions and report `node:os == 'js'`. To allow these through posture checks, include that value:
 
 ```json
-"posture:allow-ssh-console": [
-  "node:os IN ['macos', 'linux', 'js']"
-]
+"posture:allow-ssh-console": {
+  "assertions": ["node:os IN ['macos', 'linux', 'js']"]
+}
 ```
 
 ---
@@ -753,7 +849,7 @@ Defines which users/groups can assign each tag.
 **Rules**:
 - Tag names must start with `tag:`.
 - Owners can be: user email, `group:<name>`, `autogroup:<role>`, or `tag:<name>`.
-- **Shorthand**: `[]` (empty array) is equivalent to `["autogroup:admin"]`. Both `autogroup:admin` and `autogroup:network-admin` can assign all tags, so `[]` implicitly lets only these two roles assign tags.
+- **Shorthand**: `[]` (empty array) is equivalent to `["autogroup:admin"]`. It does not mean "nobody": Owners, Admins, and Network admins can apply any tag, even ones they don't own, so `[]` effectively limits the tag to those roles.
 - You must define a tag in `tagOwners` before using it in access rules.
 
 ---
@@ -766,8 +862,7 @@ Named groups of users for use in access rules.
 {
   "groups": {
     "group:engineering": ["dave@example.com", "laura@example.com"],
-    "group:sales": ["brad@example.com", "alice@example.com"],
-    "group:security-team@example.com": ["bob@example.com"]
+    "group:sales": ["brad@example.com", "alice@example.com"]
   }
 }
 ```
@@ -776,8 +871,7 @@ Named groups of users for use in access rules.
 - Group names must start with `group:`.
 - Members are specified by full email/GitHub/Passkey.
 - Groups **cannot** contain other groups (to avoid obfuscating membership).
-- SCIM-synced groups can be referenced but not edited in the policy file.
-- Synced groups use the format `group:<name>@<domain>`.
+- Groups synced from an identity provider (SCIM) are referenced as `group:<name>@<domain>` (e.g. `group:security-team@example.com`). You can use them in rules and `tagOwners` but cannot define or edit them in the `groups` section.
 
 ---
 
@@ -794,7 +888,9 @@ Human-friendly aliases for IP addresses or CIDR ranges.
 }
 ```
 
-**Rule**: Hostnames cannot include the `@` character.
+**Rules**:
+- Hostnames cannot include the `@` character.
+- Reference a host by its bare name in grants and ACLs, and as `host:<name>` inside `ipsets`. Hosts are policy aliases, not MagicDNS names.
 
 ---
 
@@ -825,18 +921,32 @@ IP sets define named collections of network segments. They support **composition
 
 | Operation | Description |
 |-----------|-------------|
-| `add <target>` | Include all IPs from the target (can be `autogroup:internet`, another `ipset:`, or a CIDR/IP) |
+| `add <target>` | Include all IPs from the target |
 | `remove <target>` | Exclude all IPs from the target |
 
-IP sets can reference:
-- `autogroup:internet`
-- Other `ipset:<name>` definitions
-- Individual IP addresses
-- CIDR ranges
+Operations are processed in order. Every entry needs an `add` or `remove` prefix unless the IP set only adds, in which case the prefix may be omitted (`"ipset:prod": ["192.0.2.0/24"]`). Tailscale converts each IP set to a list of IP address ranges.
+
+**Targets**:
+
+| Target | Syntax | Example |
+|--------|--------|---------|
+| CIDR | `<cidr>` | `192.0.2.0/24`, `2001:db8::/32` |
+| IP address | `<ip>` | `192.0.2.33`, `2001:db8::` |
+| IP address range | `<start>-<end>` | `192.0.2.50-192.0.2.100` |
+| Host | `host:<name>` (from `hosts`, not MagicDNS) | `host:sql-server-1` |
+| Autogroup | `autogroup:internet` only | `autogroup:internet` |
+| IP set | `ipset:<name>` | `ipset:prod` |
+
+**Limitations**:
+- No tags, users, or groups (including synced groups) in IP sets.
+- `autogroup:internet` is the only supported autogroup.
+- No circular references between IP sets.
 
 ### 12.3 Using IP Sets
 
-In grants/ACLs, reference with `ipset:<name>`:
+`ipset:<name>` can be used in grant `src`/`dst`, ACL `src`/`dst` (with a port, e.g. `"ipset:prod:*"`), inside other IP sets, and as a value for the beta `ip:publicAddress` posture attribute.
+
+Example grant:
 
 ```json
 {
@@ -881,7 +991,7 @@ Tests are assertions about your access policies that run on every policy file ch
 
 | Field | Description |
 |-------|-------------|
-| `src` | User identity: email, `group:<name>`, `tag:<name>`, or host alias. Test runs from this device's perspective. |
+| `src` | A single identity string (not a list): email, `group:<name>`, `tag:<name>`, or host alias. Test runs from this device's perspective. |
 | `srcPostureAttrs` | Key-value pairs of posture attributes to simulate. Only needed if access rules use posture conditions. |
 | `proto` | IP protocol to test. Omitted = TCP or UDP. `"icmp"` for ICMP (use port `0`). |
 | `accept` | Destinations that should be allowed. Format: `<host>:<port>` (single numeric port). |
@@ -976,9 +1086,9 @@ Assertions about Tailscale SSH access rules. Same rejection-on-failure behavior 
 | Field | Description |
 |-------|-------------|
 | `src` | User identity attempting SSH |
-| `dst` | Destination device(s) — email, group, tag, or host alias |
-| `accept` | SSH usernames that should be accepted without re-check |
-| `check` | SSH usernames that should require re-authentication |
+| `dst` | List of one or more destinations — email, group, tag, or host alias |
+| `accept` | SSH usernames that should be accepted without re-check (the syntax reference's wording says "disallow", which reads as a typo) |
+| `check` | SSH usernames that should require re-authentication (same wording issue) |
 | `deny` | SSH usernames that should be denied under all circumstances |
 | `srcPostureAttrs` | Simulated posture attributes |
 
@@ -994,7 +1104,7 @@ Add custom DERP servers or disable Tailscale-provided DERP servers.
 
 ### 15.2 `disableIPv4`
 
-**Deprecated** — use the `disable-ipv4` node attribute instead (set in `nodeAttrs`).
+**Not recommended** — Tailscale recommends the `disable-ipv4` node attribute (set in `nodeAttrs`) instead of this field.
 
 Stops assigning Tailscale IPv4 addresses. All devices receive IPv6 only. Devices without IPv6 support become unreachable.
 
@@ -1004,8 +1114,9 @@ Controls how Tailscale clients generate routes:
 
 | Value | Behavior |
 |-------|----------|
-| `""` or omitted | Default heuristics (fine-grained `/32` routes on most platforms; one `100.64/10` route on macOS v1.28+) |
-| Other | Override default |
+| `""` or omitted | Default heuristics (fine-grained `/32` routes on most platforms; one `100.64/10` route on macOS v1.28+ unless other interfaces route that range) |
+| `"mac-always"` | macOS clients always add one `100.64/10` route |
+| `"mac-never"` | macOS clients always add fine-grained `/32` routes |
 
 ### 15.4 `randomizeClientPort`
 
@@ -1019,21 +1130,21 @@ Makes devices use a random port for WireGuard traffic instead of the default sta
 
 | Autogroup | Allowed In | Description | Plan |
 |-----------|-----------|-------------|------|
-| `autogroup:internet` | `dst` only | Internet through exit nodes | All |
-| `autogroup:self` | `dst` only | User's own devices. NOT for tagged devices. | All |
+| `autogroup:internet` | `dst` only; inside `ipsets` | Public IPs (`0.0.0.0/0` and `2000::/3` minus private, CGNAT, link-local); access through exit nodes | All |
+| `autogroup:self` | `dst` only (grants/ACLs, SSH) | User's own devices. NOT for tagged devices. `src` must be users, groups, or role autogroups | All |
 | `autogroup:owner` | `src`, `dst`, `tagOwner`, `autoApprover` | Tailnet Owner | All |
 | `autogroup:admin` | `src`, `dst`, `tagOwner`, `autoApprover` | Admin role | All |
 | `autogroup:member` | `src`, `dst`, `tagOwner`, `autoApprover` | Direct tailnet members (incl. invited). NOT shared users. | All |
-| `autogroup:tagged` | `src`, `dst`, `tagOwner`, `autoApprover` | Any tagged device | All |
+| `autogroup:tagged` | `src`, `dst`, `tagOwner`, `autoApprover`, `nodeAttrs`; SSH `dst` | Any tagged device | All |
 | `autogroup:shared` | `src` only | Users who accepted a sharing invitation | All |
-| `autogroup:danger-all` | `src` only | All sources including outside tailnet | All |
+| `autogroup:danger-all` | grant/ACL `src` only | All sources including outside tailnet. Kept for backward compatibility; avoid | All |
 | `autogroup:auditor` | `src`, `dst`, `tagOwner`, `autoApprover` | Auditor role | Standard+ |
 | `autogroup:billing-admin` | `src`, `dst`, `tagOwner`, `autoApprover` | Billing admin role | Standard+ |
 | `autogroup:it-admin` | `src`, `dst`, `tagOwner`, `autoApprover` | IT admin role | Standard+ |
 | `autogroup:network-admin` | `src`, `dst`, `tagOwner`, `autoApprover` | Network admin role | Standard+ |
 | `autogroup:nonroot` | SSH `users` only | Any non-root user | All |
-| `user:*@<domain>` | `src`, `dst`, `tagOwner`, `autoApprover` | All members with login in domain | All |
-| `localpart:*@<domain>` | SSH `users` only | Map email local-part to SSH user | Premium+ |
+| `user:*@<domain>` | `src`, `dst` (also SSH `src`) | All direct members with login in domain | All |
+| `localpart:*@<domain>` | SSH `users` | Map email local-part to SSH user. The targets page says "SSH source"; the syntax reference and SSH docs put it in `users` | Premium+ |
 | `autogroup:members` | (legacy) | Same as `autogroup:member` (use `member` instead) | All |
 
 **Key restrictions**:
@@ -1043,6 +1154,7 @@ Makes devices use a random port for WireGuard traffic instead of the default sta
 - Domain wildcards (`*`) only match the entire local-part — `user:b*b@example.com` will NOT match `bob@example.com`.
 - Domain-based autogroups only include direct tailnet members, not external invited users.
 - If a tailnet uses domain aliases, you must specify each alias explicitly.
+- `autogroup:member` and the role autogroups are only allowed in SSH `src` with restrictions; role autogroups are not allowed in SSH `dst`.
 
 ---
 
@@ -1064,6 +1176,7 @@ Makes devices use a random port for WireGuard traffic instead of the default sta
 You can also use raw IANA numbers 1–255 as strings (e.g. `"16"`).
 
 **Notes**:
+- `icmp` is **not** in this official alias table, but the docs use it in grants (`icmp:*`) and tests (`"proto": "icmp"`). Use it only in those documented forms.
 - Requires Tailscale v1.18.2+ for the `proto` field.
 - ICMP is automatically allowed when traffic is allowed for a given IP pair.
 - Only TCP, UDP, and SCTP support port specification. Others only support `*` for the port.
@@ -1083,11 +1196,12 @@ You can also use raw IANA numbers 1–255 as strings (e.g. `"16"`).
 | `node:tsStateEncrypted` | Boolean | Client state encrypted at rest | `true`, `false` |
 | `node:tsVersion` | String (version) | Tailscale client version | `'1.42.2'` |
 
-### Control Plane (All Plans)
+### Geolocation (Standard+)
 
 | Key | Type | Description | Example Values |
 |-----|------|-------------|----------------|
 | `ip:country` | String | Country of public IP | `'CA'`, `'US'`, `'GB'`, `'NL'` |
+| `ip:publicAddress` | IP (beta) | Public IP used to reach the control plane | `ip:publicAddress IN ['203.0.113.0/24']` |
 
 ### Third-Party Integration (Standard+)
 
@@ -1112,13 +1226,18 @@ You can also use raw IANA numbers 1–255 as strings (e.g. `"16"`).
 | `<user>@<domain>` | Email login | `alice@example.com` |
 | `<user>@github` | GitHub login | `alice@github` |
 | `<user>@passkey` | Passkey login | `alice@passkey` |
+| `user:*@<domain>` | All direct members with a login in the domain | `user:*@example.com` |
 
 ### Prefix Summary
 
 | Prefix | Section | Example |
 |--------|---------|---------|
-| `group:` | Groups | `group:engineering` |
+| `group:` | Groups (synced groups: `group:<name>@<domain>`) | `group:engineering` |
 | `tag:` | Tags | `tag:production` |
+| `host:` | Host alias, inside `ipsets` only | `host:sql-server-1` |
+| `localpart:` | SSH `users` | `localpart:*@example.com` |
+| `group://` | External tailnet group (alpha, grant `src`) | `group://partner/eng` |
+| `tag://` | External tailnet tag (alpha, grant `src`) | `tag://partner/ci` |
 | `autogroup:` | Autogroups | `autogroup:admin` |
 | `ipset:` | IP sets | `ipset:prod-infra` |
 | `svc:` | Services | `svc:web-server` |
@@ -1159,12 +1278,14 @@ You can also use raw IANA numbers 1–255 as strings (e.g. `"16"`).
   "grants": [{
     "src": ["group:prod"],
     "dst": ["tag:server"],
-    "ip": ["tcp:22"]
+    "ip": ["22"]
   }]
 }
 ```
 
-**SSH will eventually unify into grants** — Tailscale has announced this intent but has not yet completed it.
+- If the ACL has no `proto`, keep the grant port bare (`"22"`); an ACL without `proto` covers TCP and UDP. If the ACL has `"proto": "tcp"`, use `"tcp:22"`.
+- If one ACL gives different ports to different hosts (e.g. `tag:web:80` and `tag:dev:22`), write one grant per host.
+- **SSH rules stay in the separate `ssh` section.** Keep them in their original format during migration.
 
 ---
 
@@ -1260,16 +1381,21 @@ You can also use raw IANA numbers 1–255 as strings (e.g. `"16"`).
 ```json
 {
   "postures": {
-    "posture:latestMac": [
-      "node:os == 'macos'",
-      "node:osVersion == '13.4.0'",
-      "node:tsReleaseTrack == 'stable'"
-    ],
-    "posture:trustedWindows": [
-      "node:os == 'windows'",
-      "node:tsVersion >= '1.40'"
-    ]
+    "posture:latestMac": {
+      "assertions": [
+        "node:os == 'macos'",
+        "node:osVersion == '13.4.0'",
+        "node:tsReleaseTrack == 'stable'"
+      ]
+    },
+    "posture:trustedWindows": {
+      "assertions": [
+        "node:os == 'windows'",
+        "node:tsVersion >= '1.40'"
+      ]
+    }
   },
+  // A device matching either posture satisfies the default.
   "defaultSrcPosture": ["posture:latestMac", "posture:trustedWindows"],
   "grants": [
     {
@@ -1369,6 +1495,8 @@ You can also use raw IANA numbers 1–255 as strings (e.g. `"16"`).
 
 ### 21.9 App Connectors via nodeAttrs
 
+The full setup also needs a `tagOwners` entry for the connector tag, `autoApprovers.routes` for that tag (Section 6.3b), and minimal access to the connector tag for DNS discovery (`"ip": ["tcp:53", "udp:53"]`).
+
 ```json
 {
   "nodeAttrs": [
@@ -1432,10 +1560,12 @@ You can also use raw IANA numbers 1–255 as strings (e.g. `"16"`).
     "tag:monitoring": ["autogroup:admin"]
   },
   "postures": {
-    "posture:stable": [
-      "node:tsReleaseTrack == 'stable'",
-      "node:tsVersion >= '1.40'"
-    ]
+    "posture:stable": {
+      "assertions": [
+        "node:tsReleaseTrack == 'stable'",
+        "node:tsVersion >= '1.40'"
+      ]
+    }
   },
   "grants": [
     {
@@ -1578,16 +1708,18 @@ Remove the object and its preceding comma (or the following comma if it's the fi
 ```json
 // Before
 "postures": {
-  "posture:stable": ["node:tsReleaseTrack == 'stable'"]
+  "posture:stable": {"assertions": ["node:tsReleaseTrack == 'stable'"]}
 }
 
-// After
+// After (use the object syntax for new postures; legacy array postures can stay as they are)
 "postures": {
-  "posture:stable": ["node:tsReleaseTrack == 'stable'"],
-  "posture:macos-latest": [
-    "node:os == 'macos'",
-    "node:tsVersion >= '1.40'"
-  ],
+  "posture:stable": {"assertions": ["node:tsReleaseTrack == 'stable'"]},
+  "posture:macos-latest": {
+    "assertions": [
+      "node:os == 'macos'",
+      "node:tsVersion >= '1.40'"
+    ]
+  },
 }
 ```
 
@@ -1625,17 +1757,18 @@ Remove the object and its preceding comma (or the following comma if it's the fi
   { "action": "accept", "src": ["group:eng"], "dst": ["tag:server:22"] }
 ]
 
-// After (Grant) — remove action, split dst, add ip
+// After (Grant) — remove action, split dst, move the port to ip
+// (no proto in the ACL, so the port stays bare)
 "grants": [
-  { "src": ["group:eng"], "dst": ["tag:server"], "ip": ["tcp:22"] }
+  { "src": ["group:eng"], "dst": ["tag:server"], "ip": ["22"] }
 ]
 ```
 
 ### 22.9 Handling Comments When Editing Programmatically
 
-Comments are not preserved by the Tailscale API — when you submit a policy file through the API, comments are stripped. If you need to preserve comments, you must manage the raw file yourself and only submit the processed version.
+The Tailscale API accepts the policy file as HuJSON or JSON, and returns it as HuJSON or JSON depending on the `Accept` header. Only the HuJSON form can carry comments; a JSON round trip drops them. The docs do not promise byte-for-byte preservation of formatting, so don't rely on it.
 
-For MCP servers: consider reading the raw policy file, parsing with a HuJSON-aware parser, making edits, and re-serializing with comments intact where possible.
+For MCP servers: read the raw HuJSON, parse it with a HuJSON-aware parser, make minimal edits, and re-serialize with comments intact where possible.
 
 ---
 
@@ -1651,7 +1784,7 @@ If you change SSH `dst` from `autogroup:self` to a tag, reconsider `autogroup:no
 
 ### 23.3 Posture Unset Attributes
 
-If a posture attribute is unset for a device, the posture will not match, **even with negative operators** like `!=` or `NOT SET`. This is counterintuitive — `custom:tier != 'prod'` won't match a device that has no `custom:tier` attribute at all.
+If a posture attribute is unset for a device, the posture will not match, **even with negative operators** like `!=`. This is counterintuitive — `custom:tier != 'prod'` won't match a device that has no `custom:tier` attribute at all. The docs say this holds "irrespective of the operator" but don't spell out `NOT SET`; test it.
 
 ### 23.4 `defaultSrcPosture` is Replacing, Not Additive
 
@@ -1714,7 +1847,7 @@ Groups cannot contain other groups. This prevents membership obfuscation but mea
 
 ### 23.18 `disableIPv4` vs `disable-ipv4` Node Attribute
 
-The top-level `disableIPv4` field is deprecated. Use the `disable-ipv4` attribute in `nodeAttrs` instead for per-device control.
+Tailscale recommends the `disable-ipv4` attribute in `nodeAttrs` instead of the top-level `disableIPv4` field.
 
 ### 23.19 IPv6 Address Format in ACLs
 
@@ -1724,6 +1857,85 @@ IPv6 addresses in `dst` must follow the format `[1:2:3::4]:80` (bracketed).
 
 In `tests`, you cannot use `192.168.1.0/24:22` — you must specify individual IPs or host aliases.
 
+### 23.21 `autogroup:self` Source Restrictions
+
+`autogroup:self` as a destination requires the `src` to be individual users, groups, or role autogroups (`autogroup:member`, `autogroup:admin`, ...). It cannot be paired with tags or `*`.
+
+### 23.22 `autoApprovers.exitNode` Approves Advertising, Not Use
+
+`exitNode` auto-approves devices that advertise as exit nodes. Using an exit node requires access to `autogroup:internet` in a grant or ACL.
+
+### 23.23 SSH Needs Two Rules, and Tags Are Limited
+
+A Tailscale SSH connection needs an `ssh` rule plus network access to port 22. Tagged sources can only SSH to other tagged devices and cannot use `check`.
+
+### 23.24 No Bare Protocols in Grant `ip`
+
+Grant `ip` entries are `*`, `<port>`, `<proto>:*`, or `<proto>:<port>`. Write `"icmp:*"`, not `"icmp"`. A bare port like `"443"` covers TCP, UDP, and ICMP.
+
+### 23.25 Multiple Postures Are OR
+
+`srcPosture` and `defaultSrcPosture` pass if the device matches **any** listed posture. Assertions inside a single posture are AND.
+
+### 23.26 ACL-to-Grant Protocol Narrowing
+
+An ACL without `proto` covers TCP and UDP. Converting `tag:web:443` to `"tcp:443"` silently drops UDP; use `"443"`.
+
 ---
 
-*End of reference. This document was synthesized from the Tailscale tailnet policy file syntax reference, grants syntax reference, device posture management docs, grant examples, the JWCC specification by Nigel Tao, and the tailscale/hujson GitHub repository.*
+## 24. External Tailnets (Declarative Node Sharing, Alpha)
+
+Declarative node sharing gives users and tagged devices in other trusted tailnets access to resources in your tailnet, configured in policy. It is in **alpha**: enable it under General settings > Feature previews > Declarative Node Sharing > **Manage in policy**. It assumes, but does not establish, trust between the two tailnets' administrators. To share one machine with one outside user, use link-based node sharing instead.
+
+It is double opt-in: access only takes effect once both tailnets' policy files are configured.
+
+**Receiving tailnet** (whose users or devices get access):
+
+```json
+{
+  "externalTailnets": {
+    "<tailnet-alias>": {
+      "externalID": "<sharing-tailnet-id>",
+      "allowIncomingConnections": false,
+      "allowExternalReferencesTo": ["group:<group-name>"]
+    }
+  },
+  "groups": {
+    "group:<group-name>": ["<user-1>", "<user-2>"]
+  }
+}
+```
+
+`allowExternalReferencesTo` lists the local groups or tags the other tailnet may reference. They must be defined in the policy file; synced groups (SCIM, Google) are not supported.
+
+**Sharing tailnet** (which owns the resource):
+
+```json
+{
+  "externalTailnets": {
+    "<tailnet-alias>": {
+      "externalID": "<receiving-tailnet-id>",
+      "allowIncomingConnections": true
+    }
+  },
+  "grants": [
+    {
+      "src": ["group://<tailnet-alias>/<group-name>"],
+      "dst": ["<resource>"],
+      "ip": ["*"]
+    }
+  ]
+}
+```
+
+- `allowIncomingConnections` must be `true` on the sharing side.
+- External selectors: `group://<tailnet-alias>/<group-name>` and `tag://<tailnet-alias>/<tag-name>`, used as the grant `src`.
+- A grant that references a group or tag the receiving tailnet did not list in `allowExternalReferencesTo` is ignored.
+- `externalID` is the other tailnet's ID (General settings > Unique IDs).
+- Connect with the resource's Tailscale IP or fully qualified MagicDNS name (e.g. `machine.example.ts.net`); short names don't work across tailnets. There is no invitation or acceptance step.
+
+**Limitations**: Tailscale Services and exit nodes cannot be shared, and subnet routes are not advertised to the other tailnet. Alpha limits: at most three entries in `externalTailnets`; sharing grants are dropped if either tailnet has more than 500 nodes.
+
+---
+
+*End of reference. This document was synthesized from the Tailscale tailnet policy file syntax reference, grants syntax reference, targets and selectors reference, device posture management docs, IP sets docs, Tailscale SSH and session recording docs, app connector and Tailscale Services docs, declarative node sharing docs, grant examples, the JWCC specification by Nigel Tao, and the tailscale/hujson GitHub repository.*

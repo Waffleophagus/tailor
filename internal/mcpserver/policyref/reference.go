@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 )
 
 //go:embed data/index.json data/topics/*.md
@@ -20,10 +21,11 @@ type Index struct {
 }
 
 type TopicEntry struct {
-	ID      string   `json:"id"`
-	Title   string   `json:"title"`
-	UseWhen []string `json:"useWhen"`
-	Related []string `json:"related"`
+	ID         string   `json:"id"`
+	Title      string   `json:"title"`
+	UseWhen    []string `json:"useWhen"`
+	Related    []string `json:"related"`
+	SourceURLs []string `json:"sourceUrls"`
 }
 
 type Topic struct {
@@ -45,7 +47,9 @@ type SearchMatch struct {
 	Snippets []string `json:"snippets"`
 }
 
-const lastValidated = "2026-06-04"
+// liveMarkdownPrefix starts the line in each topic that points at the live
+// Markdown copy of the topic's main official page.
+const liveMarkdownPrefix = "Live Markdown: "
 
 var searchTokenPattern = regexp.MustCompile(`[a-z0-9:_-]+`)
 
@@ -78,8 +82,8 @@ func ReferenceTopic(id string) (Topic, error) {
 	return Topic{
 		ID:              entry.ID,
 		Title:           entry.Title,
-		LastValidated:   lastValidated,
-		SourceURLs:      sourceURLs(string(raw)),
+		LastValidated:   index.Version,
+		SourceURLs:      slices.Clone(entry.SourceURLs),
 		ContentMarkdown: string(raw),
 	}, nil
 }
@@ -139,6 +143,9 @@ func Validate() error {
 	if err != nil {
 		return err
 	}
+	if _, err := time.Parse(time.DateOnly, index.Version); err != nil {
+		return fmt.Errorf("index version %q is not a YYYY-MM-DD validation date: %w", index.Version, err)
+	}
 	seen := map[string]bool{}
 	for _, topic := range index.Topics {
 		if topic.ID == "" {
@@ -151,7 +158,11 @@ func Validate() error {
 		if topic.Title == "" {
 			return fmt.Errorf("topic %q has empty title", topic.ID)
 		}
-		if _, err := ReferenceTopic(topic.ID); err != nil {
+		loaded, err := ReferenceTopic(topic.ID)
+		if err != nil {
+			return err
+		}
+		if err := validateTopicSources(topic, loaded.ContentMarkdown); err != nil {
 			return err
 		}
 	}
@@ -184,6 +195,41 @@ func findTopic(index Index, id string) (TopicEntry, bool) {
 		}
 	}
 	return TopicEntry{}, false
+}
+
+// validateTopicSources checks that the index and the topic's Sources list
+// agree, and that the topic points at the live Markdown copy of one of its
+// official sources.
+func validateTopicSources(entry TopicEntry, markdown string) error {
+	if len(entry.SourceURLs) == 0 {
+		return fmt.Errorf("topic %q has no sourceUrls in index", entry.ID)
+	}
+	if listed := sourceURLs(markdown); !slices.Equal(listed, entry.SourceURLs) {
+		return fmt.Errorf("topic %q sources in markdown %v do not match index sourceUrls %v", entry.ID, listed, entry.SourceURLs)
+	}
+	live, ok := liveMarkdownURL(markdown)
+	if !ok {
+		return fmt.Errorf("topic %q has no %q line", entry.ID, strings.TrimSpace(liveMarkdownPrefix))
+	}
+	if !strings.HasPrefix(live, "https://tailscale.com/docs/") || !strings.HasSuffix(live, ".md") {
+		return fmt.Errorf("topic %q live Markdown URL %q is not a tailscale.com/docs .md URL", entry.ID, live)
+	}
+	if !slices.Contains(entry.SourceURLs, strings.TrimSuffix(live, ".md")) {
+		return fmt.Errorf("topic %q live Markdown URL %q is not the .md form of one of its sources", entry.ID, live)
+	}
+	return nil
+}
+
+func liveMarkdownURL(markdown string) (string, bool) {
+	for _, line := range strings.Split(markdown, "\n") {
+		rest, ok := strings.CutPrefix(strings.TrimSpace(line), liveMarkdownPrefix)
+		if !ok {
+			continue
+		}
+		url, _, _ := strings.Cut(rest, " ")
+		return url, url != ""
+	}
+	return "", false
 }
 
 func sourceURLs(markdown string) []string {

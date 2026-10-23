@@ -31,8 +31,18 @@ func TestReferenceTopicIncludesSourcesAndContent(t *testing.T) {
 	if _, err := time.Parse("2006-01-02", topic.LastValidated); err != nil {
 		t.Fatalf("LastValidated = %q, want ISO date: %v", topic.LastValidated, err)
 	}
+	index, err := ReferenceIndex()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if topic.LastValidated != index.Version {
+		t.Fatalf("LastValidated = %q, want index version %q", topic.LastValidated, index.Version)
+	}
 	if len(topic.SourceURLs) == 0 {
 		t.Fatal("topic has no source URLs")
+	}
+	if topic.SourceURLs[0] != "https://tailscale.com/docs/reference/syntax/grants" {
+		t.Fatalf("first source = %q, want the grants syntax reference", topic.SourceURLs[0])
 	}
 	if !strings.Contains(topic.ContentMarkdown, "# Grants") {
 		t.Fatalf("topic markdown missing heading:\n%s", topic.ContentMarkdown)
@@ -49,6 +59,11 @@ func TestSearchFindsCommonQueries(t *testing.T) {
 		{query: "ssh nonroot", want: "ssh"},
 		{query: "posture unset", want: "posture"},
 		{query: "ipset remove", want: "definitions"},
+		{query: "ipset remove", want: "ip_sets"},
+		{query: "externalTailnets", want: "external_tailnets"},
+		{query: "exitNode advertise", want: "automation"},
+		{query: "recorder enforceRecorder", want: "ssh"},
+		{query: "icmp", want: "grants"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.query, func(t *testing.T) {
@@ -79,5 +94,82 @@ func TestSearchReturnsTopFiveMatches(t *testing.T) {
 	}
 	if len(response.Matches) > 5 {
 		t.Fatalf("matches = %d, want at most 5", len(response.Matches))
+	}
+}
+
+// maxTopicBytes keeps each topic small enough to hand to a model directly.
+const maxTopicBytes = 5000
+
+func TestTopicsStayWithinSizeBudget(t *testing.T) {
+	index, err := ReferenceIndex()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range index.Topics {
+		topic, err := ReferenceTopic(entry.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if size := len(topic.ContentMarkdown); size > maxTopicBytes {
+			t.Errorf("topic %q is %d bytes, budget is %d; split it or trim it", entry.ID, size, maxTopicBytes)
+		}
+	}
+}
+
+func TestEveryTopicLinksLiveMarkdown(t *testing.T) {
+	index, err := ReferenceIndex()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range index.Topics {
+		topic, err := ReferenceTopic(entry.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		live, ok := liveMarkdownURL(topic.ContentMarkdown)
+		if !ok || !strings.HasSuffix(live, ".md") {
+			t.Errorf("topic %q live Markdown URL = %q, %v", entry.ID, live, ok)
+		}
+	}
+}
+
+func TestValidateTopicSourcesRejectsDrift(t *testing.T) {
+	const source = "https://tailscale.com/docs/reference/syntax/grants"
+	entry := TopicEntry{ID: "grants", SourceURLs: []string{source}}
+	good := "# Grants\n\nLive Markdown: " + source + ".md (note)\n\nSources:\n- " + source + "\n"
+	if err := validateTopicSources(entry, good); err != nil {
+		t.Fatalf("valid topic rejected: %v", err)
+	}
+	cases := map[string]struct {
+		entry    TopicEntry
+		markdown string
+	}{
+		"no index sources": {
+			entry:    TopicEntry{ID: "grants"},
+			markdown: good,
+		},
+		"markdown source missing from index": {
+			entry:    entry,
+			markdown: good + "- https://tailscale.com/docs/reference/targets-and-selectors\n",
+		},
+		"no live markdown line": {
+			entry:    entry,
+			markdown: "# Grants\n\nSources:\n- " + source + "\n",
+		},
+		"live markdown not a docs .md URL": {
+			entry:    entry,
+			markdown: "# Grants\n\nLive Markdown: " + source + "\n\nSources:\n- " + source + "\n",
+		},
+		"live markdown for another page": {
+			entry:    entry,
+			markdown: "# Grants\n\nLive Markdown: https://tailscale.com/docs/features/tags.md\n\nSources:\n- " + source + "\n",
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			if err := validateTopicSources(tc.entry, tc.markdown); err == nil {
+				t.Fatal("validateTopicSources returned nil error")
+			}
+		})
 	}
 }

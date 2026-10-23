@@ -19,7 +19,10 @@ Practical edits:
 - Prefer appending a new rule over rewriting an entire section.
 - Run policy evaluation before staging.
 
+Live Markdown: https://tailscale.com/docs/features/tailnet-policy-file.md (compare its "Last validated" line with this card's lastValidated; this card is the offline answer).
+
 Sources:
-- https://tailscale.com/kb/1018/acls
+- https://tailscale.com/docs/features/tailnet-policy-file
+- https://tailscale.com/docs/reference/syntax/policy-file
 - https://github.com/tailscale/hujson
 - https://nigeltao.github.io/blog/2021/json-with-commas-comments.html
