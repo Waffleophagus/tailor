@@ -2,7 +2,7 @@ FROM node:24-alpine AS web-build
 
 WORKDIR /src
 
-RUN corepack enable && corepack prepare pnpm@11.2.2 --activate
+RUN corepack enable && corepack prepare pnpm@11.28.6 --activate
 
 COPY web/package.json web/pnpm-lock.yaml web/pnpm-workspace.yaml ./web/
 WORKDIR /src/web
@@ -13,7 +13,7 @@ COPY web ./web
 COPY internal/frontend ./internal/frontend
 RUN pnpm --dir web build
 
-FROM golang:1.26.3-alpine AS go-build
+FROM golang:1.27.3-alpine AS go-build
 
 WORKDIR /src
 
@@ -29,7 +29,7 @@ COPY --from=web-build /src/internal/frontend/dist ./internal/frontend/dist
 
 RUN CGO_ENABLED=0 GOOS=linux go build -o /out/tailor ./cmd/tailor
 
-FROM alpine:3.22
+FROM alpine:3.24
 
 RUN apk add --no-cache ca-certificates
 
