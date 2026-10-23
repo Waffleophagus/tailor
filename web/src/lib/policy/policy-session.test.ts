@@ -81,6 +81,34 @@ describe('PolicySession', () => {
 		);
 	});
 
+	it('keeps the original base of a staged draft when it is edited and saved', async () => {
+		const { session } = await loadedSession(); // the browser loaded rev-0...
+		api.fetchPolicy.mockResolvedValue(
+			Result.ok({ tailnet: 'example.com', hujson: SAVED, revision: 'rev-1' }) as never
+		);
+		await session.loadPolicy(); // ...and now the newer rev-1
+		const draft = {
+			id: 'draft-1',
+			source: 'mcp',
+			valid: true,
+			baseHash: 'rev-0', // staged by an agent against the older policy
+			hujson: '{"acls":[{"action":"accept"}]}',
+			evaluation: evaluation('draft preview')
+		} as unknown as StagedDraft;
+		api.fetchStagedPolicyDraft.mockResolvedValue(Result.ok({ draft }) as never);
+		await session.loadStagedDraft(draft);
+
+		session.editorHuJSON = '{"acls":[{"action":"accept"}]} // small edit';
+		api.validatePolicyDraft.mockResolvedValue(Result.ok({ valid: true }) as never);
+		await session.validate();
+		api.stagePolicyDraft.mockResolvedValue(Result.err(new Error('stop here')) as never);
+		await session.save();
+
+		expect(api.stagePolicyDraft).toHaveBeenCalledWith(
+			expect.objectContaining({ baseRevision: 'rev-0' })
+		);
+	});
+
 	it('only marks the text that was submitted for validation as validated', async () => {
 		const { session } = await loadedSession();
 		session.editorHuJSON = '{"acls":[{"action":"accept"}]}';

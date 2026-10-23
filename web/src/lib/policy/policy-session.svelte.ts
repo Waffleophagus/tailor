@@ -37,6 +37,12 @@ export class PolicySession {
 	stagedDrafts = $state<StagedDraft[]>([]);
 	selectedStagedDraft = $state<StagedDraft | undefined>();
 	stagedBusy = $state(false);
+	/**
+	 * Revision of the policy the editor's text was derived from: the loaded policy,
+	 * or a staged draft's own base. Staging sends it so saving cannot overwrite
+	 * policy changes made after that base.
+	 */
+	editorBaseRevision = $state<string | undefined>();
 
 	editorDirty = $derived(Boolean(this.policy && this.editorHuJSON !== this.policy.hujson));
 	validationStale = $derived(
@@ -128,6 +134,7 @@ export class PolicySession {
 	#resetEditorFromPolicy() {
 		if (!this.policy) return;
 		this.editorHuJSON = this.policy.hujson;
+		this.editorBaseRevision = this.policy.revision;
 		this.validatedHuJSON = '';
 		this.editorValid = null;
 		this.editorStatus = '';
@@ -237,6 +244,8 @@ export class PolicySession {
 		result.match({
 			ok: (value) => {
 				this.selectedStagedDraft = value.draft;
+				// Edits to this draft still derive from the policy it was staged against.
+				this.editorBaseRevision = value.draft.baseHash;
 				this.editorHuJSON = value.draft.hujson ?? '';
 				this.validatedHuJSON = value.draft.hujson ?? '';
 				this.editorValid = value.draft.valid;
@@ -284,7 +293,7 @@ export class PolicySession {
 				summary: 'Staged from policy editor',
 				// The policy this edit started from: saving fails instead of
 				// overwriting it if someone else changed the policy meanwhile.
-				baseRevision: this.policy?.revision
+				baseRevision: this.editorBaseRevision
 			});
 			await staged.match({
 				ok: async (value) => {
