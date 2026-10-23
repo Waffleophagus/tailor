@@ -114,6 +114,12 @@ func TestSpawnDevicesAppendsToStore(t *testing.T) {
 	if len(after) != before+4 {
 		t.Fatalf("device count = %d, want %d", len(after), before+4)
 	}
+	// Lists must encode as [] not null: the UI rejects null and drops the whole snapshot.
+	for _, device := range spawned {
+		if device.RoutedSubnets == nil || device.Tags == nil {
+			t.Fatalf("spawned device %q has nil list fields: %#v", device.Name, device)
+		}
+	}
 }
 
 func TestSpawnDevicesUsesExplicitNames(t *testing.T) {

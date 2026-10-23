@@ -186,7 +186,8 @@ test('dev spawn endpoint adds devices to the demo tailnet', async ({ request }) 
 	const initialCount = initial.devices?.length ?? 0;
 
 	const spawn = await request.post(`${baseURL}/api/dev/spawn-devices`, {
-		data: { count: 4, prefix: 'playwright' }
+		// Unique per run: the demo tailnet keeps spawned devices, and names must not repeat.
+		data: { count: 4, prefix: `playwright-${Date.now()}` }
 	});
 	expect(spawn.ok()).toBeTruthy();
 	const body = (await spawn.json()) as { spawned?: unknown[]; devices?: unknown[] };
