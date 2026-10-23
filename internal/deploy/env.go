@@ -62,7 +62,8 @@ func wantsHostSocket(mode string) bool {
 	if mode == "embedded" {
 		return false
 	}
-	return strings.TrimSpace(os.Getenv("TAILOR_LOCALAPI_SOCKET")) != ""
+	return strings.TrimSpace(os.Getenv("TAILOR_LOCALAPI_SOCKET")) != "" ||
+		strings.TrimSpace(os.Getenv("TAILOR_LOCALAPI_ENDPOINT")) != ""
 }
 
 func inContainer() bool {
@@ -124,8 +125,9 @@ func (e Environment) hints(localAPIAvailable bool) []SetupHint {
 	if !e.HasAuthKey {
 		hints = append(hints, SetupHint{
 			ID: "auth-key",
-			Message: "Set TAILSCALE_AUTHKEY or TS_AUTHKEY to a tskey-auth-... key so Tailor joins your tailnet as its own node. " +
-				"Optional: TAILSCALE_HOSTNAME=tailor. Tailor then serves HTTPS directly at https://tailor.<your-tailnet>.ts.net/.",
+			Message: "Remove TAILOR_TAILSCALE_MODE=external and the LocalAPI socket settings so Tailor joins your tailnet as its own machine; " +
+				"you then log it in from its setup page, no key needed (TAILSCALE_AUTHKEY still works for unattended installs). " +
+				"Tailor then serves HTTPS directly at https://tailor.<your-tailnet>.ts.net/.",
 		})
 	}
 

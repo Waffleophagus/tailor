@@ -1,25 +1,23 @@
 services:
   tailor:
     build: .
-    # Tailor is reachable on the tailnet when its embedded tsnet node is enrolled.
-    # TAILSCALE_AUTHKEY or TS_AUTHKEY can enroll it on first startup; node state is
-    # persisted in ./tailor-state for later restarts.
+    # Tailor joins your tailnet as its own machine. On first start, open the setup
+    # link from the logs (http://localhost:8080/#setup=..., swap in this host's
+    # address if needed) and click "Log in to Tailscale". Node state is persisted
+    # in ./tailor-state for later restarts.
     ports:
       - "8080:8080"
     environment:
       TAILOR_ADDR: ":8080"
       TAILOR_LOG_DIR: /var/log/tailor
 
-      # auto chooses embedded tsnet mode unless you provide an external LocalAPI socket.
-      # Use "embedded" to force Tailor to join the tailnet directly, or
-      # "external" to force Tailor to use a mounted host socket.
+      # auto joins the tailnet as Tailor's own machine unless you provide a host
+      # LocalAPI socket. "external" forces using a mounted host socket instead.
       TAILOR_TAILSCALE_MODE: "auto"
 
-      # Embedded mode (required on Docker Desktop — the UI will prompt if the
-      # node has not already been enrolled):
-      # Set an auth key to enroll this container as its own Tailscale node.
-      # Create one in the Tailscale admin console. With the state volume below,
-      # the key is normally only needed for initial enrollment.
+      # Embedded mode (default; required on Docker Desktop):
+      # Optional for unattended installs: enroll with an auth key instead of the
+      # login page. With the state volume below it is only needed once.
       # TAILSCALE_AUTHKEY: "tskey-auth-..."
       # TS_AUTHKEY: "tskey-auth-..."
       # TAILSCALE_HOSTNAME: "tailor"

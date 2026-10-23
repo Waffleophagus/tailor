@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"html"
 	"io"
 	"log/slog"
 	"net"
@@ -44,9 +45,17 @@ type AuthOptions struct {
 	// tailnet policy (Owner, Admin, Network admin). Such users get full access
 	// without the app capability grant.
 	PolicyAdmin func(ctx context.Context, login string) bool
+	// SetupGate guards the tsnet node's login link on the setup page. Nil means
+	// the link is never shown in the browser (it is still logged).
+	SetupGate *SetupGate
+	// TailnetHTTPSPort is the port Tailor serves HTTPS on in the tailnet.
+	TailnetHTTPSPort string
+	// AllowedHosts extends the Host allow-list for unauthenticated setup responses.
+	AllowedHosts []string
 
 	mu                 sync.Mutex
 	resolvedCapability string
+	node               nodeStateCache
 }
 
 func newRequestID() string {
@@ -145,9 +154,16 @@ func IdentityMiddleware(logger *slog.Logger, opts *AuthOptions, next http.Handle
 			next.ServeHTTP(w, r.WithContext(ctx))
 			return
 		}
+		// Until Tailor's own node is logged in, nothing can arrive with a tailnet
+		// identity; show how to connect it instead.
+		node, nodeKnown := opts.node.get(r.Context(), opts.TailnetStatus)
+		if nodeKnown && !node.running() {
+			writeNodeLogin(w, r, node, opts.SetupGate, opts.AllowedHosts)
+			return
+		}
 		if opts.WhoIsClient == nil {
 			logger.Error("tailnet identity lookup unavailable", "path", r.URL.Path)
-			writeTailnetIdentityRequired(w, r)
+			writeTailnetIdentityRequired(w, r, node.tailorURL(opts.TailnetHTTPSPort))
 			return
 		}
 
@@ -159,7 +175,7 @@ func IdentityMiddleware(logger *slog.Logger, opts *AuthOptions, next http.Handle
 				"error", err.Error(),
 				"request_id", RequestIDFromContext(r.Context()),
 			)
-			writeTailnetIdentityRequired(w, r)
+			writeTailnetIdentityRequired(w, r, node.tailorURL(opts.TailnetHTTPSPort))
 			return
 		}
 		logger.Debug("tailnet identity attached",
@@ -234,7 +250,9 @@ func (opts *AuthOptions) resolveAppCapability(ctx context.Context, logger *slog.
 	return capability
 }
 
-func writeTailnetIdentityRequired(w http.ResponseWriter, r *http.Request) {
+// writeTailnetIdentityRequired rejects a request without tailnet identity. tailorURL,
+// when known, is where Tailor is reachable on the tailnet.
+func writeTailnetIdentityRequired(w http.ResponseWriter, r *http.Request, tailorURL string) {
 	w.Header().Set("Cache-Control", "no-store")
 	if strings.HasPrefix(r.URL.Path, "/api/") || r.URL.Path == "/mcp" {
 		http.Error(w, "Tailnet identity is required. Open Tailor from a device connected to its tailnet.", http.StatusForbidden)
@@ -244,7 +262,14 @@ func writeTailnetIdentityRequired(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'")
 	w.WriteHeader(http.StatusForbidden)
-	_, _ = io.WriteString(w, `<!doctype html>
+	link := `<a href="/">Try again</a>`
+	if tailorURL != "" {
+		link = `<a href="` + html.EscapeString(tailorURL) + `">Open Tailor on your tailnet</a>`
+	}
+	_, _ = io.WriteString(w, strings.Replace(identityRequiredPage, "{{link}}", link, 1))
+}
+
+const identityRequiredPage = `<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
@@ -283,11 +308,10 @@ func writeTailnetIdentityRequired(w http.ResponseWriter, r *http.Request) {
       <li>Confirm you are using the correct tailnet.</li>
       <li>Open Tailor using its MagicDNS address.</li>
     </ol>
-    <a href="/">Try again</a>
+    {{link}}
   </main>
 </body>
-</html>`)
-}
+</html>`
 
 func identityFromWhoIs(who *apitype.WhoIsResponse, appCapability string) authz.TailnetIdentity {
 	identity := authz.TailnetIdentity{Role: authz.RoleViewer}
