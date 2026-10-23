@@ -87,8 +87,6 @@ describe('api schemas', () => {
 			hasAppCapabilityGrant: false,
 			appCapability: 'tailor.example.ts.net/cap/admin',
 			needsSetupGrant: true,
-			bootstrapActive: true,
-			bootstrapExpiresAt: '2030-01-01T00:00:00Z',
 			statusMessage: 'setup required',
 			setupGrantSnippet: '{"grants":[]}'
 		});

@@ -519,10 +519,6 @@ components:
           type: string
         needsSetupGrant:
           type: boolean
-        bootstrapActive:
-          type: boolean
-        bootstrapExpiresAt:
-          type: string
         statusMessage:
           type: string
         setupGrantSnippet:

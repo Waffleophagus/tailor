@@ -76,7 +76,7 @@ export function filterEdgesForGraph(
 	focusDeviceID: string | undefined
 ): RenderEdge[] {
 	const filtered = rendered.filter(
-		(edge) => visibleDeviceIDs.has(edge.from) || visibleDeviceIDs.has(edge.to)
+		(edge) => visibleDeviceIDs.has(edge.from) && visibleDeviceIDs.has(edge.to)
 	);
 	if (graphMode === 'all') {
 		return filtered;

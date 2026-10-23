@@ -46,8 +46,6 @@ interface CloudAuthStatusResponse {
     hasAppCapabilityGrant?: boolean;
     appCapability?: string;
     needsSetupGrant?: boolean;
-    bootstrapActive?: boolean;
-    bootstrapExpiresAt?: string;
     statusMessage?: string;
     setupGrantSnippet?: string;
 }
@@ -243,7 +241,7 @@ interface PolicyMutation {
     posture?: string[];
     members?: string[];
     owners?: string[];
-    // this is likely an enum in an external package "encoding/json.RawMessage"
+    // this is likely an enum in an external package "encoding/json/jsontext.Value"
     value?: string;
 }
 
@@ -354,8 +352,6 @@ interface SetupGrantResponse {
     hasAppCapabilityGrant: boolean;
     callerRole?: string;
     canEditPolicy: boolean;
-    bootstrapActive?: boolean;
-    bootstrapExpiresAt?: string;
     statusMessage?: string;
     setupGrantSnippet?: string;
 }

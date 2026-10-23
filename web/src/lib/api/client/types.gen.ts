@@ -96,8 +96,6 @@ export type CloudAuthStatusResponse = {
     hasAppCapabilityGrant?: boolean;
     appCapability?: string;
     needsSetupGrant?: boolean;
-    bootstrapActive?: boolean;
-    bootstrapExpiresAt?: string;
     statusMessage?: string;
     setupGrantSnippet?: string;
 };

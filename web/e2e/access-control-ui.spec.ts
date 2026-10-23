@@ -34,6 +34,28 @@ test('viewer sees explicit view-only state and no editing control', async ({ pag
 	await expect(page.getByRole('button', { name: 'Edit policy' })).toBeHidden();
 });
 
+test('auth dialog is a keyboard-accessible modal', async ({ page }) => {
+	await mockCommonAPI(page, { authenticated: false, canEditPolicy: false, callerRole: 'full' });
+
+	await page.goto('/');
+	const opener = page.getByRole('button', { name: 'Enable ACL Editing' });
+	await opener.click();
+	const dialog = page.getByRole('dialog', { name: 'Enable ACL Editing' });
+	await expect(dialog).toBeVisible();
+
+	// Focus moves into the dialog and Tab never escapes it.
+	await expect(dialog.locator(':focus')).toHaveCount(1);
+	for (let i = 0; i < 8; i++) {
+		await page.keyboard.press('Tab');
+		await expect(dialog.locator(':focus')).toHaveCount(1);
+	}
+
+	// Escape closes it and returns focus to the button that opened it.
+	await page.keyboard.press('Escape');
+	await expect(dialog).toBeHidden();
+	await expect(opener).toBeFocused();
+});
+
 test('setup recommendation supports cancel, recommended, and edited grants', async ({ page }) => {
 	await mockCommonAPI(page, { authenticated: false, canEditPolicy: false, callerRole: 'full' });
 	await page.route('**/api/cloud/auth', (route) =>
@@ -93,28 +115,26 @@ test('setup recommendation supports cancel, recommended, and edited grants', asy
 	expect(setupBody).toEqual({ grant: JSON.parse(edited) });
 });
 
-test('bootstrap fallback shows temporary access warning and grant', async ({ page }) => {
-	await mockCommonAPI(page, {
-		authenticated: true,
-		tailnet: 'example.ts.net',
-		hasPolicy: true,
-		callerRole: 'viewer',
-		canEditPolicy: true,
-		bootstrapActive: true,
-		bootstrapExpiresAt: '2030-01-01T00:00:00Z',
-		setupGrantSnippet: snippet,
-		statusMessage:
-			'Tailor could not apply the app capability grant automatically. ACL editing is temporarily available in this browser session.'
-	});
-	await page.route('**/api/policy', (route) =>
-		route.fulfill({ json: { tailnet: 'example.ts.net', hujson: '{"grants":[]}' } })
+test('non-admin API key submission is refused with the reason', async ({ page }) => {
+	await mockCommonAPI(page, { authenticated: false, canEditPolicy: false, callerRole: 'viewer' });
+	await page.route('**/api/cloud/auth', (route) =>
+		route.fulfill({
+			status: 403,
+			json: {
+				error:
+					'Only tailnet Owners, Admins and Network admins can connect Tailor to the Tailscale API.'
+			}
+		})
 	);
-	await page.route('**/api/policy/**', (route) => route.fulfill({ json: { drafts: [] } }));
 
 	await page.goto('/');
-	await expect(page.getByRole('status')).toContainText('temporarily available');
-	await expect(page.getByText(capability)).toBeVisible();
-	await expect(page.getByRole('button', { name: 'Edit policy' })).toBeVisible();
+	await page.getByRole('button', { name: 'Enable ACL Editing' }).click();
+	const dialog = page.getByRole('dialog', { name: 'Enable ACL Editing' });
+	await dialog.getByLabel('Tailscale API Key').fill('tskey-api-test');
+	await dialog.getByRole('button', { name: 'Fetch Policy' }).click();
+
+	await expect(dialog).toContainText('Owners, Admins and Network admins');
+	await expect(page.getByRole('button', { name: 'Edit policy' })).toBeHidden();
 });
 
 async function openSetupDialog(page: Page) {

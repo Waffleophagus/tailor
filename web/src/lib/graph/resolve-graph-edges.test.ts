@@ -243,4 +243,16 @@ describe('filterEdgesForGraph', () => {
 
 		expect(filtered.map((edge) => edge.id)).toEqual(['shared-policy']);
 	});
+
+	it('drops edges with a hidden endpoint so the graph never references missing nodes', () => {
+		const rendered = [
+			sampleEdge({ id: 'both-visible', from: 'laptop', to: 'prod' }),
+			sampleEdge({ id: 'to-hidden', from: 'laptop', to: 'offline-db' }),
+			sampleEdge({ id: 'from-hidden', from: 'offline-db', to: 'prod' })
+		].map((edge) => ({ ...edge }));
+
+		const filtered = filterEdgesForGraph(rendered, new Set(['laptop', 'prod']), 'all', undefined);
+
+		expect(filtered.map((edge) => edge.id)).toEqual(['both-visible']);
+	});
 });

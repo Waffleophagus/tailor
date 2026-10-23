@@ -58,6 +58,9 @@
 	let graphEl = $state<HTMLDivElement | undefined>(undefined);
 	let engine = $state<ReturnType<typeof createEngine> | undefined>(undefined);
 	let libsLoaded = $state(false);
+	// Plain flags: the init effect can re-run while the cytoscape chunk is still loading.
+	let initializing = false;
+	let destroyed = false;
 
 	const graphContainer: Attachment<HTMLDivElement> = (element) => {
 		graphEl = element;
@@ -67,9 +70,14 @@
 	};
 
 	$effect(() => {
-		if (!graphEl || devices.length === 0 || libsLoaded) return;
+		if (!graphEl || devices.length === 0 || libsLoaded || initializing) return;
+		initializing = true;
 		void (async () => {
 			await loadLibs();
+			if (destroyed || !graphEl) {
+				initializing = false;
+				return;
+			}
 			libsLoaded = true;
 			engine = createEngine({
 				container: graphEl!,
@@ -135,6 +143,7 @@
 	});
 
 	onDestroy(() => {
+		destroyed = true;
 		engine?.destroy();
 	});
 </script>

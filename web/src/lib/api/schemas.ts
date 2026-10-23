@@ -72,8 +72,6 @@ export const cloudAuthStatusResponseSchema = z.object({
 	hasAppCapabilityGrant: z.boolean().optional(),
 	appCapability: z.string().optional(),
 	needsSetupGrant: z.boolean().optional(),
-	bootstrapActive: z.boolean().optional(),
-	bootstrapExpiresAt: z.string().optional(),
 	statusMessage: z.string().optional(),
 	setupGrantSnippet: z.string().optional()
 });
@@ -84,8 +82,6 @@ export const setupGrantResponseSchema = z.object({
 	hasAppCapabilityGrant: z.boolean(),
 	callerRole: z.enum(['full', 'viewer']).optional(),
 	canEditPolicy: z.boolean().default(false),
-	bootstrapActive: z.boolean().optional(),
-	bootstrapExpiresAt: z.string().optional(),
 	statusMessage: z.string().optional(),
 	setupGrantSnippet: z.string().optional()
 });

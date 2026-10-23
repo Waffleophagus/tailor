@@ -10,7 +10,7 @@ export default defineConfig({
 		include: ['src/**/*.test.ts']
 	},
 	build: {
-		outDir: '../internal/frontend/dist',
+		outDir: '../internal/frontend/dist/app',
 		emptyOutDir: true
 	},
 	server: {
