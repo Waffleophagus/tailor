@@ -49,19 +49,21 @@ services:
       # Choose one of the two modes below:
 ```
 
-**Embedded mode** (recommended — container joins your tailnet as its own node):
+**Embedded mode** (recommended and the default — the container joins your tailnet as its own machine). No auth key is needed: on first start, open `http://<host>:8080` and click **Log in to Tailscale** to add Tailor with your normal Tailscale login (the link is also printed in the logs).
 
 ```yaml
-      TAILSCALE_AUTHKEY: "tskey-auth-..."
-      # TS_AUTHKEY also works.
       TAILSCALE_HOSTNAME: "tailor"
+      # Optional, for unattended installs: enroll with an auth key instead of logging in.
+      # TAILSCALE_AUTHKEY: "tskey-auth-..."   # TS_AUTHKEY also works
       # Optional: advertise tags
       # TS_ADVERTISE_TAGS: "tag:tailor-acl-service"
 ```
 
-Once the node joins your tailnet, Tailor serves HTTPS directly, so you can open **`https://tailor.<your-tailnet>.ts.net/`** — no `:8080` required. Port `8080` is only needed for local (non-tailnet) access.
+Once the node joins your tailnet, Tailor serves HTTPS directly, so you can open **`https://tailor.<your-tailnet>.ts.net/`** — no `:8080` required. After that, port `8080` only shows a link to that address. The login link on the setup page is only shown to this machine and private networks.
 
-**External mode** (use your host's already-running `tailscaled` — Linux only):
+> **Key expiry:** a machine added by logging in belongs to you and inherits your key expiry (180 days by default). Tag it (for example `tag:tailor-acl-service`, which Tailor applies when it adds its access grant) or disable key expiry for it in the admin console. Tailor logs a warning when this applies.
+
+**External mode** (use your host's already-running `tailscaled` instead — Linux only; supported, but embedded mode is preferred):
 
 ```yaml
       TAILOR_TAILSCALE_MODE: "external"
@@ -100,11 +102,13 @@ chmod +x tailor
 ./tailor
 ```
 
-The binary is fully self-contained. By default it listens on `:8080` and reads your local `tailscaled` socket.
+The binary is fully self-contained. By default it listens on `:8080` and joins your tailnet as its own machine: open [http://localhost:8080](http://localhost:8080) and click **Log in to Tailscale** on first run. Its node state is kept in your user config directory (for example `~/.config/tailor/tsnet`).
+
+To use this computer's existing Tailscale connection instead of adding a machine, run with `TAILOR_TAILSCALE_MODE=external` (the LocalAPI socket is auto-detected; set `TAILOR_LOCALAPI_SOCKET` or, on Windows, `TAILOR_LOCALAPI_ENDPOINT` if needed). This mode is still supported, but embedded mode is the focus going forward.
 
 ### Build from source
 
-Requires [Go](https://go.dev) 1.26+, [Node.js](https://nodejs.org) 24+, and [pnpm](https://pnpm.io).
+Requires [Go](https://go.dev) 1.27+, [Node.js](https://nodejs.org) 24+, and [pnpm](https://pnpm.io).
 
 ```sh
 # Install frontend dependencies and build the UI
@@ -120,7 +124,7 @@ go build -o tailor ./cmd/tailor
 
 ## Access Control
 
-When Tailor is deployed as a Tailscale node, every browser and MCP request is authenticated through Tailscale, and Tailor decides what each caller may do from their Tailscale identity. See [ADR 007](docs/adr/007-identity-based-editing-access.md) for the design.
+When Tailor is deployed as a Tailscale node, every browser and MCP request is authenticated through Tailscale, and Tailor decides what each caller may do from their Tailscale identity. See [ADR 007](docs/adr/007-identity-based-editing-access.md) for the design, and [ADR 008](docs/adr/008-embedded-node-by-default.md) for how Tailor joins the tailnet.
 
 ### What this means for you
 
@@ -237,13 +241,13 @@ In `tailnet` mode each MCP session is bound to the tailnet user and device that 
 | `TAILOR_ADDR` | HTTP listen address | `:8080` |
 | `TAILOR_LOCALAPI_SOCKET` | Path to `tailscaled.sock` (Linux) | auto-detected |
 | `TAILOR_LOCALAPI_ENDPOINT` | TCP endpoint for LocalAPI (Windows) | — |
-| `TAILOR_TAILSCALE_MODE` | `auto`, `embedded`, or `external` | `auto` |
-| `TAILSCALE_AUTHKEY` | Tailscale auth key for embedded mode | — |
+| `TAILOR_TAILSCALE_MODE` | `auto`/`embedded`: join the tailnet as Tailor's own machine; `external`: use the host's `tailscaled`. `auto` uses `external` only when `TAILOR_LOCALAPI_SOCKET` or `TAILOR_LOCALAPI_ENDPOINT` is set. | `auto` |
+| `TAILSCALE_AUTHKEY` | Optional auth key to enroll the embedded node without the login page (unattended installs) | — |
 | `TS_AUTHKEY` | Tailscale auth key alias | — |
 | `TAILSCALE_HOSTNAME` | Hostname when joining tailnet | `tailor` |
 | `TS_HOSTNAME` | Hostname alias | `tailor` |
-| `TS_STATE_DIR` | State directory when Tailor joins your tailnet as a node | `/var/lib/tailor-tsnet` |
-| `TAILSCALE_STATE_DIR` | State directory alias | `/var/lib/tailor-tsnet` |
+| `TS_STATE_DIR` | State directory when Tailor joins your tailnet as a node | `/var/lib/tailor-tsnet` in containers, otherwise `<user config dir>/tailor/tsnet` |
+| `TAILSCALE_STATE_DIR` | State directory alias | same as above |
 | `TS_ADVERTISE_TAGS` | Comma-separated tags advertised by the Tailor node | — |
 | `TAILSCALE_ADVERTISE_TAGS` | Advertise tags alias | — |
 | `TAILOR_TSNET_PORT` | HTTPS listen port when Tailor joins your tailnet | `443` |

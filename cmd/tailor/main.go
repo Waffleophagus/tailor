@@ -23,6 +23,9 @@ import (
 	"github.com/Waffleophagus/tailor/internal/server"
 	"github.com/Waffleophagus/tailor/internal/tailserve"
 	"tailscale.com/client/local"
+	"tailscale.com/envknob"
+	"tailscale.com/ipn/ipnstate"
+	"tailscale.com/logtail"
 	"tailscale.com/tsnet"
 )
 
@@ -73,14 +76,17 @@ func main() {
 
 	var tsnetLocalClient *local.Client
 	if shouldUseTsnet(deployEnv) {
-		configureTSNetForceLogin(deployEnv, tsnetStateDir(), logger)
-		tsnetServer = newTSNetServer(logger)
+		stateDir := tsnetStateDir(deployEnv)
+		hardenTSNetLogging(logger)
+		configureTSNetForceLogin(deployEnv, stateDir, logger)
+		tsnetServer = newTSNetServer(logger, stateDir)
 		var err error
 		tsnetLocalClient, err = tsnetServer.LocalClient()
 		if err != nil {
-			logger.Error("tsnet startup failed", "error", err)
+			logger.Error("tsnet startup failed", "error", err, "state_dir", stateDir)
 			exit(1)
 		}
+		go reportNodeLogin(context.Background(), tsnetLocalClient, addr, logger)
 		localAPIEndpoint = "tsnet embedded"
 	}
 
@@ -188,13 +194,9 @@ func main() {
 const shutdownTimeout = 10 * time.Second
 
 func shouldUseTsnet(env deploy.Environment) bool {
-	if env.TailscaleMode == "external" || env.WantsHostSocket {
-		return false
-	}
-	if env.TailscaleMode == "embedded" {
-		return true
-	}
-	return env.HasAuthKey || strings.TrimSpace(os.Getenv("TS_AUTHKEY")) != ""
+	// Tailor joins the tailnet as its own machine unless told to use the host's
+	// tailscaled. Without an auth key, it is logged in from the setup page.
+	return env.TailscaleMode != "external" && !env.WantsHostSocket
 }
 
 func configureTSNetForceLogin(env deploy.Environment, stateDir string, logger *slog.Logger) {
@@ -228,7 +230,7 @@ func hasTSNetMachineState(stateDir string) bool {
 	return len(machineKey) > 0 && string(machineKey) != "null"
 }
 
-func newTSNetServer(logger *slog.Logger) *tsnet.Server {
+func newTSNetServer(logger *slog.Logger, stateDir string) *tsnet.Server {
 	hostname := strings.TrimSpace(os.Getenv("TS_HOSTNAME"))
 	if hostname == "" {
 		hostname = strings.TrimSpace(os.Getenv("TAILSCALE_HOSTNAME"))
@@ -242,7 +244,7 @@ func newTSNetServer(logger *slog.Logger) *tsnet.Server {
 	}
 
 	return &tsnet.Server{
-		Dir:           tsnetStateDir(),
+		Dir:           stateDir,
 		Hostname:      hostname,
 		AuthKey:       authKey,
 		AdvertiseTags: advertiseTags(),
@@ -252,15 +254,88 @@ func newTSNetServer(logger *slog.Logger) *tsnet.Server {
 	}
 }
 
-func tsnetStateDir() string {
-	stateDir := strings.TrimSpace(os.Getenv("TS_STATE_DIR"))
-	if stateDir == "" {
-		stateDir = strings.TrimSpace(os.Getenv("TAILSCALE_STATE_DIR"))
+// containerStateDir is the tsnet state directory in containers (a volume in compose).
+const containerStateDir = "/var/lib/tailor-tsnet"
+
+// tsnetStateDir returns where the embedded node keeps its identity: TS_STATE_DIR or
+// TAILSCALE_STATE_DIR, else /var/lib/tailor-tsnet in containers (or wherever a node
+// already lives there), else the user's config directory for desktop binaries.
+func tsnetStateDir(env deploy.Environment) string {
+	for _, name := range []string{"TS_STATE_DIR", "TAILSCALE_STATE_DIR"} {
+		if dir := strings.TrimSpace(os.Getenv(name)); dir != "" {
+			return dir
+		}
 	}
-	if stateDir == "" {
-		stateDir = "/var/lib/tailor-tsnet"
+	if env.InContainer || hasTSNetMachineState(containerStateDir) {
+		return containerStateDir
 	}
-	return stateDir
+	if configDir, err := os.UserConfigDir(); err == nil && configDir != "" {
+		return filepath.Join(configDir, "tailor", "tsnet")
+	}
+	return containerStateDir
+}
+
+// hardenTSNetLogging must run before the tsnet server starts. tsnet otherwise
+// uploads its backend logs to log.tailscale.com, and TS_DEBUG_REGISTER would log
+// registration requests that include the auth key.
+func hardenTSNetLogging(logger *slog.Logger) {
+	logtail.Disable()
+	if os.Getenv("TS_DEBUG_REGISTER") != "" {
+		logger.Warn("ignoring TS_DEBUG_REGISTER; it would log registration requests including the auth key")
+		envknob.Setenv("TS_DEBUG_REGISTER", "")
+	}
+}
+
+// reportNodeLogin logs where to log the embedded node in while it needs login, and
+// warns once it is running if its key will expire.
+func reportNodeLogin(ctx context.Context, client *local.Client, addr string, logger *slog.Logger) {
+	setupURL := "http://localhost" + listenPort(addr) + "/"
+	lastURL := ""
+	ticker := time.NewTicker(3 * time.Second)
+	defer ticker.Stop()
+	for {
+		status, err := client.StatusWithoutPeers(ctx)
+		if err == nil && status != nil {
+			switch {
+			case status.BackendState == "Running":
+				warnIfNodeKeyExpires(status, logger)
+				return
+			case status.BackendState == "NeedsMachineAuth":
+				if lastURL != "approval" {
+					logger.Warn("tailor is logged in but waiting for device approval in the Tailscale admin console")
+					lastURL = "approval"
+				}
+			case status.AuthURL != "" && status.AuthURL != lastURL:
+				logger.Warn("tailor is not connected to a tailnet yet; log it in with your Tailscale account",
+					"login_url", status.AuthURL,
+					"setup_page", setupURL,
+				)
+				lastURL = status.AuthURL
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
+func warnIfNodeKeyExpires(status *ipnstate.Status, logger *slog.Logger) {
+	self := status.Self
+	if self == nil || self.KeyExpiry == nil || (self.Tags != nil && self.Tags.Len() > 0) {
+		return
+	}
+	logger.Warn("tailor's node key expires; tag the node (e.g. tag:tailor-acl-service) or disable key expiry for it in the Tailscale admin console",
+		"expires", self.KeyExpiry.Format(time.RFC3339),
+	)
+}
+
+func listenPort(addr string) string {
+	if _, port, err := net.SplitHostPort(addr); err == nil && port != "" {
+		return ":" + port
+	}
+	return ""
 }
 
 func prepareTSNetHTTPS(ctx context.Context, server *tsnet.Server, client *local.Client, logger *slog.Logger) (string, error) {

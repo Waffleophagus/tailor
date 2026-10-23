@@ -16,6 +16,12 @@ func TestWantsHostSocket(t *testing.T) {
 	if wantsHostSocket("auto") != true {
 		t.Fatal("auto with socket env should want host socket")
 	}
+
+	t.Setenv("TAILOR_LOCALAPI_SOCKET", "")
+	t.Setenv("TAILOR_LOCALAPI_ENDPOINT", "127.0.0.1:41112")
+	if wantsHostSocket("auto") != true {
+		t.Fatal("auto with a LocalAPI endpoint (Windows) should use the host daemon")
+	}
 }
 
 func TestDetectAuthKeyEnvAliases(t *testing.T) {

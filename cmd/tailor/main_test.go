@@ -20,9 +20,8 @@ func TestShouldUseTsnet(t *testing.T) {
 		t.Fatal("explicit embedded mode should use tsnet")
 	}
 
-	t.Setenv("TS_AUTHKEY", "tskey-auth-test")
 	if !shouldUseTsnet(deploy.Environment{TailscaleMode: "auto"}) {
-		t.Fatal("TS_AUTHKEY should use tsnet")
+		t.Fatal("auto without an auth key should join the tailnet via interactive login")
 	}
 
 	if shouldUseTsnet(deploy.Environment{TailscaleMode: "external", HasAuthKey: true}) {
@@ -30,6 +29,38 @@ func TestShouldUseTsnet(t *testing.T) {
 	}
 	if shouldUseTsnet(deploy.Environment{TailscaleMode: "auto", WantsHostSocket: true, HasAuthKey: true}) {
 		t.Fatal("host socket mode should not use tsnet")
+	}
+}
+
+func TestTSNetStateDir(t *testing.T) {
+	t.Setenv("TS_STATE_DIR", "")
+	t.Setenv("TAILSCALE_STATE_DIR", "")
+
+	if got := tsnetStateDir(deploy.Environment{InContainer: true}); got != containerStateDir {
+		t.Fatalf("container state dir = %q, want %q", got, containerStateDir)
+	}
+	configDir, err := os.UserConfigDir()
+	if err != nil {
+		t.Skip("no user config dir:", err)
+	}
+	if !hasTSNetMachineState(containerStateDir) {
+		want := filepath.Join(configDir, "tailor", "tsnet")
+		if got := tsnetStateDir(deploy.Environment{}); got != want {
+			t.Fatalf("desktop state dir = %q, want %q", got, want)
+		}
+	}
+
+	t.Setenv("TAILSCALE_STATE_DIR", "/srv/tailor")
+	if got := tsnetStateDir(deploy.Environment{InContainer: true}); got != "/srv/tailor" {
+		t.Fatalf("explicit state dir ignored: %q", got)
+	}
+}
+
+func TestListenPort(t *testing.T) {
+	for addr, want := range map[string]string{":8080": ":8080", "127.0.0.1:9000": ":9000", "": ""} {
+		if got := listenPort(addr); got != want {
+			t.Errorf("listenPort(%q) = %q, want %q", addr, got, want)
+		}
 	}
 }
 

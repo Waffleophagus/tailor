@@ -128,7 +128,7 @@ func (w *switchableWhoIs) WhoIs(context.Context, string) (*apitype.WhoIsResponse
 type selfStatus struct{}
 
 func (selfStatus) StatusWithoutPeers(context.Context) (*ipnstate.Status, error) {
-	return &ipnstate.Status{Self: &ipnstate.PeerStatus{
+	return &ipnstate.Status{BackendState: "Running", Self: &ipnstate.PeerStatus{
 		ID:           tailcfg.StableNodeID(selfNodeID),
 		TailscaleIPs: []netip.Addr{netip.MustParseAddr(selfNodeIP)},
 	}}, nil
