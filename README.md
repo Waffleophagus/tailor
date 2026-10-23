@@ -21,7 +21,7 @@ Tailor is a single Go binary with an embedded Svelte frontend and an optional MC
 1. **LocalAPI** — Reads your local `tailscaled` daemon (via Unix socket or TCP) for the live device list. No credentials required.
 2. **Cloud API** *(optional)* — With a Tailscale API key, Tailor fetches your tailnet's ACL policy, resolves effective access into graph edges, and enables editing with validation.
 
-When Tailor joins your tailnet as its own node (the recommended Docker deployment), it serves HTTPS directly and every request is authenticated through Tailscale. Access is governed by your tailnet policy via a Tailscale **app capability** — basically a permission you grant in your ACL policy. Tailor recommends granting full access to `autogroup:owner` and `autogroup:admin`. Advanced setups can also grant access to devices tagged `tag:tailor-acl-editor`. Everyone else can view the topology but cannot edit policy. The first time you supply a Cloud API key, Tailor can suggest and automatically append the required permission to your tailnet policy.
+When Tailor joins your tailnet as its own node (the recommended Docker deployment), it serves HTTPS directly and every request is authenticated through Tailscale. Editing follows your tailnet's own roles: Owners, Admins and Network admins (the people Tailscale lets edit the policy file) can edit through Tailor, and everyone else can view the topology. You can also delegate access to other users or tagged devices with a Tailscale **app capability** — a permission you grant in your ACL policy — which Tailor offers to add for you.
 
 The same Go backend serves both the web UI and the MCP endpoint, so agents see the same live topology and policy data you do in the browser.
 
@@ -120,23 +120,24 @@ go build -o tailor ./cmd/tailor
 
 ## Access Control
 
-When Tailor is deployed as a Tailscale node, every browser and MCP request is authenticated through Tailscale. Tailor uses an **app capability** in your tailnet policy to decide who can edit ACLs and who can only view the topology.
+When Tailor is deployed as a Tailscale node, every browser and MCP request is authenticated through Tailscale, and Tailor decides what each caller may do from their Tailscale identity. See [ADR 007](docs/adr/007-identity-based-editing-access.md) for the design.
 
 ### What this means for you
 
 1. **View-only by default.** Anyone who can reach the Tailor node can open it and see the live topology graph, but they cannot read or edit policy.
-2. **Admin enters a Cloud API key.** A tailnet admin with policy read/write access enters their Tailscale API key into Tailor.
-3. **Tailor checks for permission.** Tailor looks in your tailnet policy for a grant that gives Tailor itself an `admin` action. The permission name is automatically derived from Tailor's MagicDNS address and looks something like:
-   ```text
-   tailor.<your-tailnet>.ts.net/cap/admin
-   ```
-   You can override this with `TAILOR_APP_CAPABILITY` if needed.
-4. **One-time setup prompt.** If the grant is missing, Tailor shows a recommended policy snippet and offers to append it to your tailnet policy automatically. If automatic application fails, Tailor falls back to a short 15-minute browser-only session so you can fix the policy manually.
-5. **Full access unlocked.** Once the grant exists and Tailscale reports the `admin` action for a caller, that person or device receives **full access**:
+2. **A tailnet admin connects the Tailscale API.** Only an Owner, Admin or Network admin, on a personal (untagged) device, can enter the Tailscale API key. Tailor checks two things before storing it: that the key belongs to the tailnet Tailor runs in, and that the person entering it holds one of those roles there. Once a key is set, only editors can replace it.
+3. **Tailnet admins can edit.** Owners, Admins and Network admins — the roles Tailscale itself allows to edit the policy file — get **full access** from their personal devices:
    - View topology and status
    - Read and edit ACL policy through the UI and API
    - Use MCP write tools (stage drafts)
-6. **View-only stays view-only.** Callers without the capability remain **view-only**:
+
+   Role changes in Tailscale take effect in Tailor within about 30 seconds.
+4. **Optional: delegate with an app capability.** To give editing to other users or to tagged devices (for example MCP runners), grant Tailor's app capability with the `admin` action. Tailor offers to append a recommended grant for you. The capability name is derived from Tailor's MagicDNS address and looks like:
+   ```text
+   tailor.<your-tailnet>.ts.net/cap/admin
+   ```
+   You can override this with `TAILOR_APP_CAPABILITY` if needed. Callers with the capability get full access even if the Tailscale API is unreachable.
+5. **View-only stays view-only.** Everyone else is **view-only**:
    - View the UI and topology
    - Use read-only MCP tools (inspect topology, read ACL reference docs)
    - Cannot read raw policy HuJSON, edit policy, or stage drafts
@@ -221,9 +222,11 @@ Tailor can expose an MCP (Model Context Protocol) server so compatible agents �
 | Setting | Exposure | Authorization |
 |---|---|---|
 | `localhost` | Only `127.0.0.1` / `::1` | None required |
-| `tailnet` | Any tailnet client | Tailnet identity + app capability (`admin` action) |
+| `tailnet` | Any tailnet client | Tailnet identity: tailnet admin role or app capability (`admin` action) |
 
 Set `TAILOR_MCP_READONLY=true` to prevent agents from staging drafts — useful for observability-only setups.
+
+In `tailnet` mode each MCP session is bound to the tailnet user and device that opened it, and permissions are re-checked on every tool call, so revoking someone's access takes effect immediately even for open sessions.
 
 **Reverse proxies:** `localhost` mode only allows connections from the same machine. If Tailor sits behind a reverse proxy or load balancer, the proxy appears as a remote client and requests will be rejected. In that case, use `tailnet` mode so Tailor can verify the caller's Tailscale identity and app capability.
 
@@ -248,6 +251,7 @@ Set `TAILOR_MCP_READONLY=true` to prevent agents from staging drafts — useful 
 | `TAILOR_TAILSCALE_SERVE` | Legacy non-tsnet Tailscale Serve auto-configuration: `auto`, `on`, or `off` | `auto` |
 | `TAILOR_TAILSCALE_SERVE_PORT` | HTTPS port for legacy Tailscale Serve auto-configuration | `443` |
 | `TAILOR_MCP` | MCP server exposure: `off`, `localhost`, or `tailnet` | `off` |
+| `TAILOR_ALLOWED_HOSTS` | When Tailor is not its own tailnet node: extra hostnames it may be served under, comma-separated (a leading `.` allows a whole domain, e.g. `.example.com`). IP addresses, `localhost`, single-label names, local-only domains (`.lan`, `.local`, `.home.arpa`, …) and `*.ts.net` are always allowed; other names are rejected to block DNS rebinding. | — |
 | `TAILOR_MCP_PATH` | MCP endpoint path | `/mcp` |
 | `TAILOR_MCP_READONLY` | Disallow staging from MCP (`true`/`false`) | `false` |
 | `TAILOR_LOG_LEVEL` | Log level: `debug`, `info`, `warn`, `error` | `info` |

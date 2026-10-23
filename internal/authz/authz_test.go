@@ -56,7 +56,6 @@ func TestRoleForCapabilityRequiresAdminAction(t *testing.T) {
 func TestPermissionMatrix(t *testing.T) {
 	viewer := WithIdentity(context.Background(), TailnetIdentity{Role: RoleViewer})
 	full := WithIdentity(context.Background(), TailnetIdentity{Role: RoleFull})
-	bootstrap := WithBootstrap(viewer)
 	anonymous := context.Background()
 
 	tests := []struct {
@@ -72,9 +71,6 @@ func TestPermissionMatrix(t *testing.T) {
 		{"full policy read", full, PermissionReadPolicy, true},
 		{"full policy write", full, PermissionWritePolicy, true},
 		{"full MCP write", full, PermissionUseMCPWrite, true},
-		{"bootstrap policy read", bootstrap, PermissionReadPolicy, true},
-		{"bootstrap policy write", bootstrap, PermissionWritePolicy, true},
-		{"bootstrap MCP write", bootstrap, PermissionUseMCPWrite, false},
 		{"anonymous topology", anonymous, PermissionViewTopology, true},
 		{"anonymous policy read", anonymous, PermissionReadPolicy, false},
 		{"anonymous policy write", anonymous, PermissionWritePolicy, false},

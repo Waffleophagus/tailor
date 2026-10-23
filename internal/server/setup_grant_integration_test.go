@@ -8,8 +8,8 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"net/http/cookiejar"
 	"net/http/httptest"
+	"net/netip"
 	"strings"
 	"sync"
 	"testing"
@@ -17,11 +17,20 @@ import (
 	"github.com/Waffleophagus/tailor/internal/api"
 	"github.com/Waffleophagus/tailor/internal/cloudapi"
 	"tailscale.com/client/tailscale/apitype"
+	"tailscale.com/ipn/ipnstate"
 	"tailscale.com/tailcfg"
 )
 
-const integrationCapability = "tailor.example.ts.net/cap/admin"
+const (
+	integrationCapability = "tailor.example.ts.net/cap/admin"
+	selfNodeID            = "nSelfTailor"
+	selfNodeIP            = "100.64.0.10"
+	adminLogin            = "admin@example.com"
+	memberLogin           = "member@example.com"
+)
 
+// cloudPolicyFixture fakes the parts of the Tailscale API Tailor uses for setup:
+// the policy file, its validation, and the device and user lists used to vet keys.
 type cloudPolicyFixture struct {
 	mu             sync.Mutex
 	policy         string
@@ -29,52 +38,78 @@ type cloudPolicyFixture struct {
 	saveStatus     int
 	validateCalls  int
 	saveCalls      int
+	// otherTailnet makes the key's device list omit Tailor's own node.
+	otherTailnet bool
 }
 
 func (f *cloudPolicyFixture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if r.URL.Path == "/api/v2/tailnet/example.com/acl/validate" {
+	switch r.URL.Path {
+	case "/api/v2/tailnet/example.com/acl/validate":
 		f.validateCalls++
 		if f.validateStatus != 0 {
 			http.Error(w, "validation failed", f.validateStatus)
 		}
-		return
-	}
-	if r.URL.Path != "/api/v2/tailnet/example.com/acl" {
-		http.NotFound(w, r)
-		return
-	}
-	if r.Method == http.MethodPost {
-		f.saveCalls++
-		if f.saveStatus != 0 {
-			http.Error(w, "save failed", f.saveStatus)
+	case "/api/v2/tailnet/example.com/devices":
+		nodeID, address := selfNodeID, selfNodeIP
+		if f.otherTailnet {
+			nodeID, address = "nSomeoneElse", "100.100.1.1"
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"devices": []map[string]any{
+			{"id": "1", "nodeId": nodeID, "addresses": []string{address}},
+		}})
+	case "/api/v2/tailnet/example.com/users":
+		_ = json.NewEncoder(w).Encode(map[string]any{"users": []map[string]any{
+			{"loginName": adminLogin, "role": "admin", "status": "active"},
+			{"loginName": memberLogin, "role": "member", "status": "active"},
+		}})
+	case "/api/v2/tailnet/example.com/acl":
+		if r.Method == http.MethodPost {
+			f.saveCalls++
+			if f.saveStatus != 0 {
+				http.Error(w, "save failed", f.saveStatus)
+				return
+			}
+			body, _ := io.ReadAll(r.Body)
+			f.policy = string(body)
 			return
 		}
-		body, _ := io.ReadAll(r.Body)
-		f.policy = string(body)
-		return
+		_, _ = io.WriteString(w, f.policy)
+	default:
+		http.NotFound(w, r)
 	}
-	_, _ = io.WriteString(w, f.policy)
 }
 
-type propagatingWhoIs struct {
-	mu        sync.Mutex
-	calls     int
-	fullAfter int
+// switchableWhoIs identifies every request as the current login, from an untagged
+// device without the Tailor app capability.
+type switchableWhoIs struct {
+	mu    sync.Mutex
+	login string
+	tags  []string
 }
 
-func (w *propagatingWhoIs) WhoIs(_ context.Context, _ string) (*apitype.WhoIsResponse, error) {
+func (w *switchableWhoIs) set(login string, tags ...string) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	w.calls++
-	response := viewerWhoIs("admin@example.com", "workstation.example.ts.net.")
-	if w.fullAfter > 0 && w.calls >= w.fullAfter {
-		response.CapMap = tailcfg.PeerCapMap{
-			tailcfg.PeerCapability(integrationCapability): []tailcfg.RawMessage{`{"actions":["admin"]}`},
-		}
-	}
+	w.login, w.tags = login, tags
+}
+
+func (w *switchableWhoIs) WhoIs(context.Context, string) (*apitype.WhoIsResponse, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	response := viewerWhoIs(w.login, "workstation.example.ts.net.")
+	response.Node.Tags = w.tags
 	return response, nil
+}
+
+type selfStatus struct{}
+
+func (selfStatus) StatusWithoutPeers(context.Context) (*ipnstate.Status, error) {
+	return &ipnstate.Status{Self: &ipnstate.PeerStatus{
+		ID:           tailcfg.StableNodeID(selfNodeID),
+		TailscaleIPs: []netip.Addr{netip.MustParseAddr(selfNodeIP)},
+	}}, nil
 }
 
 func viewerWhoIs(login, node string) *apitype.WhoIsResponse {
@@ -84,103 +119,41 @@ func viewerWhoIs(login, node string) *apitype.WhoIsResponse {
 	}
 }
 
-func TestSetupGrantFailuresCreateBrowserBootstrapAccess(t *testing.T) {
-	tests := []struct {
-		name           string
-		validateStatus int
-		saveStatus     int
-	}{
-		{name: "validation failure", validateStatus: http.StatusBadRequest},
-		{name: "save failure", saveStatus: http.StatusInternalServerError},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			fixture := &cloudPolicyFixture{policy: `{"grants":[]}`, validateStatus: tt.validateStatus, saveStatus: tt.saveStatus}
-			app, cloud, client := newSetupIntegrationApp(t, fixture, &propagatingWhoIs{})
-			defer app.Close()
-			defer cloud.Close()
-
-			authenticateSetupClient(t, client, app.URL)
-			response := postSetupGrant(t, client, app.URL)
-			defer closeResponseBody(t, response)
-			var setup api.SetupGrantResponse
-			if err := json.NewDecoder(response.Body).Decode(&setup); err != nil {
-				t.Fatal(err)
-			}
-			if response.StatusCode != http.StatusOK || !setup.BootstrapActive || !setup.CanEditPolicy {
-				t.Fatalf("status=%d setup=%+v", response.StatusCode, setup)
-			}
-			if setup.SetupGrantSnippet == "" || !strings.Contains(setup.StatusMessage, "temporarily available") {
-				t.Fatalf("bootstrap instructions missing: %+v", setup)
-			}
-
-			assertBootstrapPolicyRoutesAreAuthorized(t, client, app.URL)
-		})
-	}
+type setupApp struct {
+	url    string
+	who    *switchableWhoIs
+	client *http.Client
 }
 
-func TestSuccessfulSetupGrantUnlocksOnlyAfterWhoIsPropagation(t *testing.T) {
-	fixture := &cloudPolicyFixture{policy: `{"grants":[]}`}
-	who := &propagatingWhoIs{fullAfter: 3}
-	app, cloud, client := newSetupIntegrationApp(t, fixture, who)
-	defer app.Close()
-	defer cloud.Close()
-
-	authenticateSetupClient(t, client, app.URL)
-	response := postSetupGrant(t, client, app.URL)
-	defer closeResponseBody(t, response)
-	var setup api.SetupGrantResponse
-	if err := json.NewDecoder(response.Body).Decode(&setup); err != nil {
-		t.Fatal(err)
-	}
-	if !setup.HasAppCapabilityGrant || !setup.CanEditPolicy || setup.CallerRole != "full" || setup.BootstrapActive {
-		t.Fatalf("setup did not unlock through propagated WhoIs capability: %+v", setup)
-	}
-	if fixture.validateCalls != 1 || fixture.saveCalls != 1 {
-		t.Fatalf("validate calls=%d save calls=%d, want 1 each", fixture.validateCalls, fixture.saveCalls)
-	}
-}
-
-func TestExistingSetupGrantIsNotWrittenAgain(t *testing.T) {
-	fixture := &cloudPolicyFixture{policy: `{"grants":[{"src":["autogroup:admin"],"dst":["tag:tailor-acl-service"],"ip":["tcp:443"],"app":{"tailor.example.ts.net/cap/admin":[{"actions":["admin"]}]}}]}`}
-	app, cloud, client := newSetupIntegrationApp(t, fixture, &propagatingWhoIs{})
-	defer app.Close()
-	defer cloud.Close()
-
-	authenticateSetupClient(t, client, app.URL)
-	response := postSetupGrant(t, client, app.URL)
-	closeResponseBody(t, response)
-	if response.StatusCode != http.StatusOK {
-		t.Fatalf("status=%d", response.StatusCode)
-	}
-	if fixture.validateCalls != 0 || fixture.saveCalls != 0 {
-		t.Fatalf("existing grant triggered validate=%d save=%d", fixture.validateCalls, fixture.saveCalls)
-	}
-}
-
-func newSetupIntegrationApp(t *testing.T, fixture *cloudPolicyFixture, who WhoIsClient) (*httptest.Server, *httptest.Server, *http.Client) {
+func newSetupIntegrationApp(t *testing.T, fixture *cloudPolicyFixture) setupApp {
 	t.Helper()
 	cloud := httptest.NewServer(fixture)
+	t.Cleanup(cloud.Close)
+	who := &switchableWhoIs{login: adminLogin}
 	app := httptest.NewServer(New(Options{
 		TailnetMode:     true,
 		WhoIsClient:     who,
+		TailnetStatus:   selfStatus{},
 		AppCapability:   integrationCapability,
 		CloudAPIOptions: []cloudapi.Option{cloudapi.WithBaseURL(cloud.URL)},
 	}))
-	jar, err := cookiejar.New(nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return app, cloud, &http.Client{Jar: jar}
+	t.Cleanup(app.Close)
+	return setupApp{url: app.URL, who: who, client: &http.Client{}}
 }
 
-func authenticateSetupClient(t *testing.T, client *http.Client, appURL string) {
+func (a setupApp) authenticate(t *testing.T) *http.Response {
 	t.Helper()
 	body, _ := json.Marshal(api.CloudAuthRequest{Tailnet: "example.com", APIKey: "tskey-api-test"})
-	response, err := postJSON(context.Background(), client, appURL+"/api/cloud/auth", body)
+	response, err := postJSON(context.Background(), a.client, a.url+"/api/cloud/auth", body)
 	if err != nil {
 		t.Fatal(err)
 	}
+	return response
+}
+
+func (a setupApp) mustAuthenticate(t *testing.T) {
+	t.Helper()
+	response := a.authenticate(t)
 	defer closeResponseBody(t, response)
 	if response.StatusCode != http.StatusOK {
 		data, _ := io.ReadAll(response.Body)
@@ -188,13 +161,167 @@ func authenticateSetupClient(t *testing.T, client *http.Client, appURL string) {
 	}
 }
 
-func postSetupGrant(t *testing.T, client *http.Client, appURL string) *http.Response {
+func (a setupApp) cloudStatus(t *testing.T) api.CloudAuthStatusResponse {
 	t.Helper()
-	response, err := postJSON(context.Background(), client, appURL+"/api/cloud/setup-grant", []byte(`{}`))
+	response, err := a.client.Get(a.url + "/api/cloud/status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeResponseBody(t, response)
+	var status api.CloudAuthStatusResponse
+	if err := json.NewDecoder(response.Body).Decode(&status); err != nil {
+		t.Fatal(err)
+	}
+	return status
+}
+
+func (a setupApp) postSetupGrant(t *testing.T) *http.Response {
+	t.Helper()
+	response, err := postJSON(context.Background(), a.client, a.url+"/api/cloud/setup-grant", []byte(`{}`))
 	if err != nil {
 		t.Fatal(err)
 	}
 	return response
+}
+
+func expectStatus(t *testing.T, response *http.Response, want int, bodyContains string) {
+	t.Helper()
+	defer closeResponseBody(t, response)
+	data, _ := io.ReadAll(response.Body)
+	if response.StatusCode != want || !strings.Contains(string(data), bodyContains) {
+		t.Fatalf("status=%d body=%s, want %d containing %q", response.StatusCode, data, want, bodyContains)
+	}
+}
+
+func TestTailnetAdminConnectsCloudAPIAndCanEditWithoutGrant(t *testing.T) {
+	app := newSetupIntegrationApp(t, &cloudPolicyFixture{policy: `{"grants":[]}`})
+
+	response := app.authenticate(t)
+	defer closeResponseBody(t, response)
+	var authStatus api.CloudAuthStatusResponse
+	if err := json.NewDecoder(response.Body).Decode(&authStatus); err != nil {
+		t.Fatal(err)
+	}
+	// The UI uses this response directly, so it must already reflect admin access.
+	if response.StatusCode != http.StatusOK || !authStatus.CanEditPolicy {
+		t.Fatalf("auth response status=%d body=%+v, want editable", response.StatusCode, authStatus)
+	}
+
+	status := app.cloudStatus(t)
+	if !status.CanEditPolicy || status.CallerRole != "full" {
+		t.Fatalf("tailnet admin should edit without a grant: %+v", status)
+	}
+	if !status.NeedsSetupGrant || status.SetupGrantSnippet == "" {
+		t.Fatalf("editors should be offered the optional grant: %+v", status)
+	}
+	assertPolicyRoutesAreAuthorized(t, app.client, app.url)
+}
+
+func TestNonAdminCannotConnectCloudAPI(t *testing.T) {
+	app := newSetupIntegrationApp(t, &cloudPolicyFixture{policy: `{"grants":[]}`})
+	app.who.set(memberLogin)
+
+	expectStatus(t, app.authenticate(t), http.StatusForbidden, "Owners, Admins and Network admins")
+	if app.cloudStatus(t).Authenticated {
+		t.Fatal("a rejected key was stored")
+	}
+}
+
+func TestTaggedDeviceCannotConnectCloudAPI(t *testing.T) {
+	app := newSetupIntegrationApp(t, &cloudPolicyFixture{policy: `{"grants":[]}`})
+	app.who.set(adminLogin, "tag:server")
+
+	expectStatus(t, app.authenticate(t), http.StatusForbidden, "tagged")
+}
+
+func TestCloudAPIKeyForAnotherTailnetIsRejected(t *testing.T) {
+	app := newSetupIntegrationApp(t, &cloudPolicyFixture{policy: `{"grants":[]}`, otherTailnet: true})
+
+	expectStatus(t, app.authenticate(t), http.StatusForbidden, "different tailnet")
+	if app.cloudStatus(t).Authenticated {
+		t.Fatal("a key for another tailnet was stored")
+	}
+}
+
+func TestViewerCannotReplaceConfiguredCloudKey(t *testing.T) {
+	app := newSetupIntegrationApp(t, &cloudPolicyFixture{policy: `{"grants":[]}`})
+	app.mustAuthenticate(t)
+
+	app.who.set(memberLogin)
+	expectStatus(t, app.authenticate(t), http.StatusForbidden, "Only Tailor editors")
+}
+
+func TestViewerCannotApplySetupGrant(t *testing.T) {
+	fixture := &cloudPolicyFixture{policy: `{"grants":[]}`}
+	app := newSetupIntegrationApp(t, fixture)
+	app.mustAuthenticate(t)
+
+	app.who.set(memberLogin)
+	expectStatus(t, app.postSetupGrant(t), http.StatusForbidden, "editors")
+	if fixture.saveCalls != 0 {
+		t.Fatalf("viewer request wrote the policy (%d saves)", fixture.saveCalls)
+	}
+}
+
+func TestSetupGrantFailuresAreReportedWithoutGrantingAccess(t *testing.T) {
+	tests := []struct {
+		name           string
+		validateStatus int
+		saveStatus     int
+		wantStatus     int
+		wantMessage    string
+	}{
+		{name: "validation failure", validateStatus: http.StatusBadRequest, wantStatus: http.StatusBadRequest, wantMessage: "rejected the access grant"},
+		{name: "save failure", saveStatus: http.StatusInternalServerError, wantStatus: http.StatusBadGateway, wantMessage: "could not save the access grant"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fixture := &cloudPolicyFixture{policy: `{"grants":[]}`, validateStatus: tt.validateStatus, saveStatus: tt.saveStatus}
+			app := newSetupIntegrationApp(t, fixture)
+			app.mustAuthenticate(t)
+
+			expectStatus(t, app.postSetupGrant(t), tt.wantStatus, tt.wantMessage)
+
+			// Non-admins get nothing out of a failed grant.
+			app.who.set(memberLogin)
+			if status := app.cloudStatus(t); status.CanEditPolicy {
+				t.Fatalf("member gained edit access after a failed grant: %+v", status)
+			}
+		})
+	}
+}
+
+func TestSuccessfulSetupGrantIsSavedOnce(t *testing.T) {
+	fixture := &cloudPolicyFixture{policy: `{"grants":[]}`}
+	app := newSetupIntegrationApp(t, fixture)
+	app.mustAuthenticate(t)
+
+	response := app.postSetupGrant(t)
+	defer closeResponseBody(t, response)
+	var setup api.SetupGrantResponse
+	if err := json.NewDecoder(response.Body).Decode(&setup); err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusOK || !setup.HasAppCapabilityGrant || !setup.CanEditPolicy {
+		t.Fatalf("status=%d setup=%+v", response.StatusCode, setup)
+	}
+	if fixture.validateCalls != 1 || fixture.saveCalls != 1 {
+		t.Fatalf("validate calls=%d save calls=%d, want 1 each", fixture.validateCalls, fixture.saveCalls)
+	}
+	if !strings.Contains(fixture.policy, integrationCapability) {
+		t.Fatalf("saved policy is missing the grant: %s", fixture.policy)
+	}
+}
+
+func TestExistingSetupGrantIsNotWrittenAgain(t *testing.T) {
+	fixture := &cloudPolicyFixture{policy: `{"grants":[{"src":["autogroup:admin"],"dst":["tag:tailor-acl-service"],"ip":["tcp:443"],"app":{"tailor.example.ts.net/cap/admin":[{"actions":["admin"]}]}}]}`}
+	app := newSetupIntegrationApp(t, fixture)
+	app.mustAuthenticate(t)
+
+	expectStatus(t, app.postSetupGrant(t), http.StatusOK, "")
+	if fixture.validateCalls != 0 || fixture.saveCalls != 0 {
+		t.Fatalf("existing grant triggered validate=%d save=%d", fixture.validateCalls, fixture.saveCalls)
+	}
 }
 
 func postJSON(ctx context.Context, client *http.Client, url string, body []byte) (*http.Response, error) {
@@ -216,7 +343,7 @@ func closeResponseBody(t *testing.T, response *http.Response) {
 	}
 }
 
-func assertBootstrapPolicyRoutesAreAuthorized(t *testing.T, client *http.Client, appURL string) {
+func assertPolicyRoutesAreAuthorized(t *testing.T, client *http.Client, appURL string) {
 	t.Helper()
 	tests := []struct{ method, path string }{
 		{http.MethodGet, "/api/policy"},
@@ -243,7 +370,7 @@ func assertBootstrapPolicyRoutesAreAuthorized(t *testing.T, client *http.Client,
 		}
 		closeResponseBody(t, response)
 		if response.StatusCode == http.StatusForbidden {
-			t.Errorf("bootstrap request %s %s was forbidden", tt.method, tt.path)
+			t.Errorf("admin request %s %s was forbidden", tt.method, tt.path)
 		}
 	}
 }

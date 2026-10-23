@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/Waffleophagus/tailor/internal/api"
 	"github.com/Waffleophagus/tailor/internal/authz"
@@ -53,8 +52,6 @@ type Server struct {
 	deploy       deploy.Environment
 	auth         AuthOptions
 	tailnetPrefs TailnetPrefsClient
-	bootstrap    *BootstrapSessions
-	setup        *SetupSessions
 }
 
 func New(options ...Options) http.Handler {
@@ -83,9 +80,8 @@ func New(options ...Options) http.Handler {
 			WhoIsClient:   opts.WhoIsClient,
 			TailnetStatus: opts.TailnetStatus,
 			AppCapability: appCapability(opts.AppCapability),
+			PolicyAdmin:   core.IsTailnetPolicyAdmin,
 		},
-		bootstrap: NewBootstrapSessions(),
-		setup:     NewSetupSessions(),
 	}
 	if opts.LocalClient != nil {
 		server.tailnetPrefs = opts.LocalClient
@@ -127,7 +123,24 @@ func New(options ...Options) http.Handler {
 	spa := spaHandler(http.FileServer(frontend.FileSystem()))
 	mux.Handle("/", spa)
 
-	return AccessMiddleware(logger, IdentityMiddleware(logger, &server.auth, BootstrapMiddleware(server, mux)))
+	handler := crossOriginProtection().Handler(IdentityMiddleware(logger, &server.auth, mux))
+	if !opts.TailnetMode {
+		// Without tailnet identity, the Host check is what stops DNS rebinding.
+		handler = HostAllowlistMiddleware(logger, AllowedHostsFromEnv(), handler)
+	}
+	return AccessMiddleware(logger, handler)
+}
+
+// crossOriginProtection rejects cross-site browser requests to state-changing
+// endpoints (CSRF): otherwise any website could stage and save a policy through a
+// Tailor reachable from the victim's browser. Safe methods, same-origin requests and
+// non-browser clients (no Sec-Fetch-Site or Origin header, e.g. MCP) pass through.
+func crossOriginProtection() *http.CrossOriginProtection {
+	protection := http.NewCrossOriginProtection()
+	protection.SetDenyHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeError(w, http.StatusForbidden, "Cross-origin request blocked.")
+	}))
+	return protection
 }
 
 func (s *Server) writeLocalAPIUnavailable(w http.ResponseWriter, r *http.Request, status int, err error, message string) {
@@ -177,12 +190,8 @@ func (s *Server) requirePermission(w http.ResponseWriter, r *http.Request, permi
 
 func cloudAuthStatusResponse(r *http.Request, s *Server, status cloudapi.AuthStatus) api.CloudAuthStatusResponse {
 	role := "full"
-	loginName := ""
-	nodeName := ""
 	if identity, ok := authz.IdentityFromContext(r.Context()); ok {
 		role = string(identity.Role)
-		loginName = identity.LoginName
-		nodeName = identity.NodeName
 	}
 
 	appCapability := s.auth.resolveAppCapability(r.Context(), s.logger)
@@ -196,7 +205,6 @@ func cloudAuthStatusResponse(r *http.Request, s *Server, status cloudapi.AuthSta
 		}
 	}
 
-	bootstrapActive, bootstrapExpiresAt := s.bootstrapState(r, loginName, nodeName)
 	canEdit := authz.Allowed(r.Context(), authz.PermissionWritePolicy)
 	if status.DevMode {
 		// The built-in demo key switches the process to its in-memory tailnet and
@@ -205,7 +213,9 @@ func cloudAuthStatusResponse(r *http.Request, s *Server, status cloudapi.AuthSta
 		role = "full"
 		canEdit = true
 	}
-	needsSetup := status.Authenticated && appCapability != "" && !hasGrant && !bootstrapActive && (status.DevMode || s.auth.TailnetMode)
+	// The grant is optional for tailnet admins (they can always edit) but makes access
+	// explicit in policy and lets it be delegated, so editors are offered to add it.
+	needsSetup := status.Authenticated && appCapability != "" && !hasGrant && canEdit && (status.DevMode || s.auth.TailnetMode)
 
 	response := api.CloudAuthStatusResponse{
 		Authenticated:         status.Authenticated,
@@ -217,8 +227,6 @@ func cloudAuthStatusResponse(r *http.Request, s *Server, status cloudapi.AuthSta
 		HasAppCapabilityGrant: hasGrant,
 		AppCapability:         appCapability,
 		NeedsSetupGrant:       needsSetup,
-		BootstrapActive:       bootstrapActive,
-		BootstrapExpiresAt:    bootstrapExpiresAt,
 	}
 
 	if needsSetup {
@@ -232,10 +240,8 @@ func cloudAuthStatusResponse(r *http.Request, s *Server, status cloudapi.AuthSta
 
 func cloudStatusMessage(status api.CloudAuthStatusResponse) string {
 	switch {
-	case status.BootstrapActive:
-		return "Tailor could not apply the app capability grant automatically. ACL editing is temporarily available in this browser session. Add the grant below to your tailnet policy and restart Tailor to use grant-based access without a time limit."
 	case status.NeedsSetupGrant:
-		return "Tailor should add an app capability grant so ACL editing access is controlled by your tailnet policy."
+		return "As a tailnet admin you can already edit. Optionally add an app capability grant to make Tailor access explicit in your tailnet policy and delegate it to other users or tagged devices."
 	case status.Authenticated && status.CallerRole == "viewer" && status.HasAppCapabilityGrant:
 		return "API key accepted, but your current device or user is view-only."
 	case status.Authenticated && status.CallerRole == "viewer":
@@ -243,21 +249,6 @@ func cloudStatusMessage(status api.CloudAuthStatusResponse) string {
 	default:
 		return ""
 	}
-}
-
-func (s *Server) bootstrapState(r *http.Request, loginName, nodeName string) (active bool, expiresAt string) {
-	if s.bootstrap == nil {
-		return false, ""
-	}
-	token := bootstrapTokenFromRequest(r)
-	if token == "" {
-		return false, ""
-	}
-	valid, expiry := s.bootstrap.Valid(token, loginName, nodeName)
-	if !valid {
-		return false, ""
-	}
-	return true, expiry.Format(time.RFC3339)
 }
 
 func appCapability(configured string) string {

@@ -27,6 +27,7 @@ type Service struct {
 	logger      *slog.Logger
 	localAPI    *localapi.Client
 	cloudAPI    *cloudapi.Client
+	cloudMeta   *cachedCloudMetadata
 	policyCache policy.Cache
 	warmups     atomic.Int32
 
@@ -86,6 +87,9 @@ func New(options Options) *Service {
 		cleanupDone:  make(chan struct{}),
 		cleanupStop:  make(chan struct{}),
 	}
+	service.cloudMeta = newCachedCloudMetadata(service.cloudAPI, func() string {
+		return service.cloudAPI.Status().Tailnet
+	})
 	go service.cleanupStagedDrafts()
 	return service
 }
@@ -133,6 +137,7 @@ func (s *Service) AuthenticateCloud(ctx context.Context, request cloudapi.AuthRe
 	status, err := s.cloudAPI.Authenticate(ctx, request)
 	if err == nil {
 		s.policyCache.Invalidate()
+		s.cloudMeta.Invalidate()
 		s.warmups.Add(1)
 		go s.warmPolicyCache()
 	}
@@ -355,14 +360,20 @@ func (s *Service) SaveStagedPolicy(ctx context.Context, request api.PolicySaveRe
 	if err := policy.ValidateTailscaleConstraints(draft.HuJSON); err != nil {
 		return api.PolicySaveResponse{}, err
 	}
-	current, err := s.cloudAPI.Policy(ctx)
+	// Compare against the live policy, not the session cache: edits made in the admin
+	// console or via GitOps since the draft was staged must not be overwritten. The
+	// ETag makes Tailscale reject the write if the policy changes after this read.
+	current, err := s.cloudAPI.RefreshPolicyVersion(ctx)
 	if err != nil {
 		return api.PolicySaveResponse{}, PolicyFetchError{Err: err}
 	}
-	if policyHash(current) != draft.BaseHash {
+	if policyHash(current.HuJSON) != draft.BaseHash {
 		return api.PolicySaveResponse{}, ErrStagedDraftBaseMismatch
 	}
-	saved, err := s.cloudAPI.SavePolicy(ctx, draft.HuJSON)
+	saved, err := s.cloudAPI.SavePolicyIfMatch(ctx, draft.HuJSON, current.ETag)
+	if errors.Is(err, cloudapi.ErrPolicyChanged) {
+		return api.PolicySaveResponse{}, ErrStagedDraftBaseMismatch
+	}
 	if err != nil {
 		return api.PolicySaveResponse{}, err
 	}
@@ -464,20 +475,20 @@ func (s *Service) enrichTopologyFromCloud(ctx context.Context, devices []api.Dev
 	if status := s.cloudAPI.Status(); !status.Authenticated || status.DevMode {
 		return s.enrichTopologyFromLocalServices(ctx, devices)
 	}
-	cloudDevices, err := s.cloudAPI.Devices(ctx)
+	cloudDevices, err := s.cloudMeta.Devices(ctx)
 	if err != nil {
 		s.logger.Debug("cloud device metadata unavailable", "error", err.Error())
 	} else {
 		enrichDevicesFromCloud(devices, cloudDevices)
-		users, err := s.cloudAPI.Users(ctx)
+		users, err := s.cloudMeta.Users(ctx)
 		if err != nil {
 			s.logger.Debug("cloud user metadata unavailable", "error", err.Error())
 		} else {
 			enrichDeviceRolesFromCloudUsers(devices, users)
 		}
-		enrichDevicePostureAttributes(ctx, s.cloudAPI, devices, cloudDevices, s.logger)
+		enrichDevicePostureAttributes(ctx, s.cloudMeta, devices, cloudDevices, s.logger)
 	}
-	services, err := s.cloudAPI.VIPServices(ctx)
+	services, err := s.cloudMeta.VIPServices(ctx)
 	if err != nil {
 		s.logger.Debug("vip services unavailable", "error", err.Error())
 		return s.enrichTopologyFromLocalServices(ctx, devices)

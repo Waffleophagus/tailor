@@ -23,6 +23,11 @@ type Cache struct {
 	edges      map[[sha256.Size]byte]edgeCacheEntry
 }
 
+// maxEdgeCacheEntries bounds the edge memo. Its key covers full device state
+// (online, last seen, posture), so without a bound it grows for as long as the
+// policy text stays unchanged.
+const maxEdgeCacheEntries = 32
+
 type edgeCacheEntry struct {
 	value []api.Edge
 	err   error
@@ -66,6 +71,9 @@ func (c *Cache) EffectiveAccessEdges(raw string, devices []api.Device, options E
 		return cloneEdges(cached.value), cached.err
 	}
 	value := ResolveEffectiveAccess(c.parsed, devices, options)
+	if len(c.edges) >= maxEdgeCacheEntries {
+		clear(c.edges)
+	}
 	c.edges[key] = edgeCacheEntry{value: cloneEdges(value)}
 	return cloneEdges(value), nil
 }

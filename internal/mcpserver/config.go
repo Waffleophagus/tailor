@@ -36,10 +36,7 @@ func ConfigFromEnv() Config {
 }
 
 func (c Config) Enabled() bool {
-	if c.Exposure == ExposureOff {
-		return false
-	}
-	return true
+	return c.Exposure != ExposureOff
 }
 
 func Handler(core *tailorcore.Service, cfg Config, logger *slog.Logger) http.Handler {
@@ -56,14 +53,15 @@ func Handler(core *tailorcore.Service, cfg Config, logger *slog.Logger) http.Han
 	})
 	registerTools(server, core, cfg)
 
+	const sessionTimeout = 10 * time.Minute
 	handler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server {
 		return server
 	}, &mcp.StreamableHTTPOptions{
 		JSONResponse:   false,
 		Logger:         logger,
-		SessionTimeout: 10 * time.Minute,
+		SessionTimeout: sessionTimeout,
 	})
-	return authMiddleware(cfg, logger, handler)
+	return authMiddleware(cfg, logger, bindSessions(newSessionOwners(sessionTimeout), logger, handler))
 }
 
 func authMiddleware(cfg Config, logger *slog.Logger, next http.Handler) http.Handler {

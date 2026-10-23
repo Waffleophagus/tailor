@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Waffleophagus/tailor/internal/api"
+	"github.com/Waffleophagus/tailor/internal/authz"
 	"github.com/Waffleophagus/tailor/internal/devtailnet"
 	"github.com/Waffleophagus/tailor/internal/localapi"
 	"github.com/coder/websocket"
@@ -73,9 +74,7 @@ func (s *Server) handleTopology(w http.ResponseWriter, r *http.Request) {
 	)
 	snapshot := s.core.TopologySnapshot(r.Context(), devices)
 	s.attachTopologySetup(&snapshot, true)
-	if s.core.CloudStatus().Authenticated {
-		snapshot.StagedDrafts = s.core.StagedDrafts().Drafts
-	}
+	s.attachStagedDrafts(r.Context(), &snapshot)
 	writeJSON(w, http.StatusOK, snapshot)
 }
 
@@ -165,11 +164,18 @@ func (s *Server) topologySocketMessage(ctx context.Context) api.SocketMessage {
 
 	snapshot := s.core.TopologySnapshot(ctx, devices)
 	s.attachTopologySetup(&snapshot, true)
-	if s.core.CloudStatus().Authenticated {
-		snapshot.StagedDrafts = s.core.StagedDrafts().Drafts
-	}
+	s.attachStagedDrafts(ctx, &snapshot)
 	return api.SocketMessage{
 		Type:    api.SocketMessageTopologySnapshot,
 		Payload: snapshot,
 	}
+}
+
+// attachStagedDrafts includes staged drafts only for callers allowed to read them
+// through /api/policy/staged; viewers must not see pending policy changes.
+func (s *Server) attachStagedDrafts(ctx context.Context, snapshot *api.TopologyResponse) {
+	if !s.core.CloudStatus().Authenticated || !authz.Allowed(ctx, authz.PermissionReadPolicy) {
+		return
+	}
+	snapshot.StagedDrafts = s.core.StagedDrafts().Drafts
 }

@@ -3,13 +3,14 @@ package server
 import (
 	"net"
 	"net/http"
-	"net/url"
 	"strings"
 )
 
 // topologyWebSocketOriginPatterns authorizes browser WebSocket handshakes.
-// Reverse proxies can forward to loopback while the browser Origin still names
-// the public host, so static localhost patterns alone reject those connections.
+// Reverse proxies (including Tailscale Serve) can forward to loopback while the
+// browser Origin still names the public host, so the proxy's X-Forwarded-Host is
+// trusted as well. The request's own Origin header must never be trusted here:
+// any website could then open a socket to a Tailor listening on localhost.
 func topologyWebSocketOriginPatterns(r *http.Request) []string {
 	patterns := []string{"localhost:*", "127.0.0.1:*", "[::1]:*"}
 
@@ -17,9 +18,6 @@ func topologyWebSocketOriginPatterns(r *http.Request) []string {
 		return patterns
 	}
 
-	if originHost := originHostname(r.Header.Get("Origin")); originHost != "" {
-		patterns = append(patterns, originHost, originHost+":*")
-	}
 	if host := hostWithoutPort(forwardedRequestHost(r)); host != "" {
 		patterns = append(patterns, host, host+":*")
 	}
@@ -44,18 +42,6 @@ func forwardedRequestHost(r *http.Request) string {
 		return strings.TrimSpace(strings.Split(forwarded, ",")[0])
 	}
 	return r.Host
-}
-
-func originHostname(raw string) string {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return ""
-	}
-	parsed, err := url.Parse(raw)
-	if err != nil || parsed.Host == "" {
-		return ""
-	}
-	return hostWithoutPort(parsed.Host)
 }
 
 func hostWithoutPort(host string) string {

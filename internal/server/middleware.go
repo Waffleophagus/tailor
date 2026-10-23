@@ -40,6 +40,10 @@ type AuthOptions struct {
 	TailnetStatus TailnetStatusClient
 	AppCapability string
 	MCPPath       string
+	// PolicyAdmin reports whether a login holds a Tailscale role that may edit the
+	// tailnet policy (Owner, Admin, Network admin). Such users get full access
+	// without the app capability grant.
+	PolicyAdmin func(ctx context.Context, login string) bool
 
 	mu                 sync.Mutex
 	resolvedCapability string
@@ -161,6 +165,11 @@ func IdentityMiddleware(logger *slog.Logger, opts *AuthOptions, next http.Handle
 
 		appCapability := opts.resolveAppCapability(r.Context(), logger)
 		identity := identityFromWhoIs(who, appCapability)
+		// Tagged devices act for no person, so only the app capability can grant them access.
+		if identity.Role != authz.RoleFull && len(identity.NodeTags) == 0 && opts.PolicyAdmin != nil &&
+			opts.PolicyAdmin(r.Context(), identity.LoginName) {
+			identity.Role = authz.RoleFull
+		}
 		logger.Debug("tailnet identity attached",
 			"path", r.URL.Path,
 			"login", identity.LoginName,

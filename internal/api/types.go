@@ -107,8 +107,6 @@ type CloudAuthStatusResponse struct {
 	HasAppCapabilityGrant bool   `json:"hasAppCapabilityGrant,omitempty"`
 	AppCapability         string `json:"appCapability,omitempty"`
 	NeedsSetupGrant       bool   `json:"needsSetupGrant,omitempty"`
-	BootstrapActive       bool   `json:"bootstrapActive,omitempty"`
-	BootstrapExpiresAt    string `json:"bootstrapExpiresAt,omitempty"`
 	StatusMessage         string `json:"statusMessage,omitempty"`
 	SetupGrantSnippet     string `json:"setupGrantSnippet,omitempty"`
 }
@@ -123,8 +121,6 @@ type SetupGrantResponse struct {
 	HasAppCapabilityGrant bool   `json:"hasAppCapabilityGrant"`
 	CallerRole            string `json:"callerRole,omitempty"`
 	CanEditPolicy         bool   `json:"canEditPolicy"`
-	BootstrapActive       bool   `json:"bootstrapActive,omitempty"`
-	BootstrapExpiresAt    string `json:"bootstrapExpiresAt,omitempty"`
 	StatusMessage         string `json:"statusMessage,omitempty"`
 	SetupGrantSnippet     string `json:"setupGrantSnippet,omitempty"`
 }

@@ -1,5 +1,7 @@
 # tsnet Access Control Plan
 
+> **Superseded in part by [ADR 007](adr/007-identity-based-editing-access.md):** tailnet admins now edit without the app capability grant, the grant is optional, and the browser bootstrap session and setup-session cookie described below were removed.
+
 ## Goal
 
 Use tsnet connection identity to make Tailor view-only by default, while allowing trusted tailnet principals to use ACL policy features and MCP write features.
