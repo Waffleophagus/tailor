@@ -50,18 +50,15 @@ func newSessionOwners(ttl time.Duration) *sessionOwners {
 	return &sessionOwners{owners: map[string]sessionOwner{}, ttl: ttl}
 }
 
-// check reports whether user may use sessionID, refreshing its lifetime.
+// check reports whether user owns sessionID, refreshing its lifetime. Every
+// session is claimed when it is created, so an unknown ID is never allowed.
 func (s *sessionOwners) check(sessionID, user string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := time.Now()
 	s.purgeLocked(now)
 	owner, ok := s.owners[sessionID]
-	if !ok {
-		// Unknown sessions are rejected by the SDK itself ("session not found").
-		return true
-	}
-	if owner.user != user {
+	if !ok || owner.user != user {
 		return false
 	}
 	owner.lastSeen = now
@@ -72,6 +69,8 @@ func (s *sessionOwners) check(sessionID, user string) bool {
 func (s *sessionOwners) claim(sessionID, user string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// Clients may initialize sessions and never use them again; purge here too.
+	s.purgeLocked(time.Now())
 	if _, exists := s.owners[sessionID]; !exists {
 		s.owners[sessionID] = sessionOwner{user: user, lastSeen: time.Now()}
 	}
@@ -113,14 +112,16 @@ func bindSessions(owners *sessionOwners, logger *slog.Logger, next http.Handler)
 		user := callerKey(r.Context())
 		sessionID := r.Header.Get(sessionIDHeader)
 		if sessionID != "" && !owners.check(sessionID, user) {
-			logger.Warn("mcp request rejected: session belongs to another identity")
-			http.Error(w, "This MCP session belongs to another user or device.", http.StatusForbidden)
+			logger.Warn("mcp request rejected: unknown session or session of another identity")
+			http.Error(w, "This MCP session does not exist or belongs to another user or device.", http.StatusNotFound)
 			return
 		}
 
-		next.ServeHTTP(&sessionClaimWriter{ResponseWriter: w, owners: owners, user: user}, r)
+		writer := &sessionClaimWriter{ResponseWriter: w, owners: owners, user: user}
+		next.ServeHTTP(writer, r)
 
-		if r.Method == http.MethodDelete && sessionID != "" {
+		// Only forget the owner once the SDK actually ended the session.
+		if r.Method == http.MethodDelete && sessionID != "" && writer.status >= 200 && writer.status < 300 {
 			owners.release(sessionID)
 		}
 	})
@@ -133,6 +134,7 @@ type sessionClaimWriter struct {
 	owners  *sessionOwners
 	user    string
 	claimed bool
+	status  int
 }
 
 func (w *sessionClaimWriter) claim() {
@@ -147,11 +149,17 @@ func (w *sessionClaimWriter) claim() {
 
 func (w *sessionClaimWriter) WriteHeader(status int) {
 	w.claim()
+	if w.status == 0 {
+		w.status = status
+	}
 	w.ResponseWriter.WriteHeader(status)
 }
 
 func (w *sessionClaimWriter) Write(b []byte) (int, error) {
 	w.claim()
+	if w.status == 0 {
+		w.status = http.StatusOK
+	}
 	return w.ResponseWriter.Write(b)
 }
 

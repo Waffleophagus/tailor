@@ -253,13 +253,13 @@
 				} else {
 					cloudError = topology.error.message;
 				}
+				if (value.canEditPolicy) {
+					await session.loadPolicy();
+				}
+				// The grant is optional delegation; offer it without blocking editing.
 				if (value.needsSetupGrant) {
 					setupGrantError = '';
 					setupGrantOpen = true;
-					return;
-				}
-				if (value.canEditPolicy) {
-					await session.loadPolicy();
 				}
 			},
 			err: async (error) => {

@@ -37,16 +37,24 @@ func TestIsPolicyAdminMirrorsTailscalePolicyEditingRoles(t *testing.T) {
 	}
 }
 
-func TestContainsNodeMatchesStableIDOrAddress(t *testing.T) {
-	devices := []cloudapi.Device{{NodeID: "nA", Addresses: []string{"100.64.0.1", "fd7a::1"}}}
-	if !containsNode(devices, "nA", nil) {
-		t.Error("stable node ID should match")
+func TestContainsNodeRequiresOwnedStableNodeID(t *testing.T) {
+	devices := []cloudapi.Device{
+		{NodeID: "nA", Addresses: []string{"100.64.0.1"}},
+		// Another tailnet's device reusing Tailor's address, and Tailor shared in.
+		{NodeID: "nOther", Addresses: []string{"100.64.0.9"}},
+		{NodeID: "nShared", Addresses: []string{"100.64.0.7"}, IsExternal: true},
 	}
-	if !containsNode(devices, "", []string{"fd7a::1"}) {
-		t.Error("tailnet address should match")
+	if !containsNode(devices, "nA") {
+		t.Error("owned device with matching stable node ID should match")
 	}
-	if containsNode(devices, "nB", []string{"100.64.0.2"}) {
-		t.Error("unrelated node matched")
+	if containsNode(devices, "nB") {
+		t.Error("an address match must not count: tailnet owners can reuse any 100.x address")
+	}
+	if containsNode(devices, "nShared") {
+		t.Error("a shared-in (external) device is not a member of the tailnet")
+	}
+	if containsNode(devices, "") {
+		t.Error("an empty node ID must never match")
 	}
 }
 

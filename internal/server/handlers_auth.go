@@ -100,7 +100,7 @@ func (s *Server) vetCloudCredentials(r *http.Request, credentials cloudapi.AuthR
 		logAPIError(s.logger, r, http.StatusServiceUnavailable, err, "tailor node identity unavailable")
 		return http.StatusServiceUnavailable, "Tailor cannot determine its own tailnet node yet. Try again shortly.", false
 	}
-	check.SelfNodeID, check.SelfIPs = self.nodeID, self.ips
+	check.SelfNodeID = self.nodeID
 
 	err = s.core.VerifyCloudCredentials(ctx, credentials, check)
 	switch {
@@ -126,7 +126,6 @@ func (s *Server) vetCloudCredentials(r *http.Request, credentials cloudapi.AuthR
 
 type selfNode struct {
 	nodeID string
-	ips    []string
 }
 
 func (s *Server) selfNode(ctx context.Context) (selfNode, error) {
@@ -140,11 +139,10 @@ func (s *Server) selfNode(ctx context.Context) (selfNode, error) {
 	if status == nil || status.Self == nil {
 		return selfNode{}, errors.New("tailnet status has no self node")
 	}
-	node := selfNode{nodeID: string(status.Self.ID)}
-	for _, ip := range status.Self.TailscaleIPs {
-		node.ips = append(node.ips, ip.String())
+	if status.Self.ID == "" {
+		return selfNode{}, errors.New("tailnet status has no stable node ID")
 	}
-	return node, nil
+	return selfNode{nodeID: string(status.Self.ID)}, nil
 }
 
 func capitalize(message string) string {

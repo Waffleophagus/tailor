@@ -3,7 +3,6 @@ package tailorcore
 import (
 	"context"
 	"errors"
-	"slices"
 	"strings"
 
 	"github.com/Waffleophagus/tailor/internal/cloudapi"
@@ -31,7 +30,6 @@ var (
 // tailnet role must be verified before Cloud API credentials are accepted.
 type CredentialCheck struct {
 	SelfNodeID string
-	SelfIPs    []string
 	// AdminLogin, when set, must be an Owner, Admin or Network admin according to
 	// the submitted key's user list.
 	AdminLogin string
@@ -45,7 +43,7 @@ func (s *Service) VerifyCloudCredentials(ctx context.Context, request cloudapi.A
 	if err != nil {
 		return err
 	}
-	if !containsNode(info.Devices, check.SelfNodeID, check.SelfIPs) {
+	if !containsNode(info.Devices, check.SelfNodeID) {
 		return ErrCredentialsOtherTailnet
 	}
 	if check.AdminLogin != "" && !isPolicyAdmin(info.Users, check.AdminLogin) {
@@ -88,15 +86,16 @@ func isPolicyAdmin(users []cloudapi.User, login string) bool {
 	return false
 }
 
-func containsNode(devices []cloudapi.Device, nodeID string, ips []string) bool {
+// containsNode reports whether the tailnet owns a device with this stable node ID.
+// Addresses are not proof: tailnet owners can assign any 100.x address, so another
+// tailnet can reuse Tailor's IP. Shared-in (external) devices are not members.
+func containsNode(devices []cloudapi.Device, nodeID string) bool {
+	if nodeID == "" {
+		return false
+	}
 	for _, device := range devices {
-		if nodeID != "" && device.NodeID == nodeID {
+		if device.NodeID == nodeID && !device.IsExternal {
 			return true
-		}
-		for _, address := range device.Addresses {
-			if address != "" && slices.Contains(ips, address) {
-				return true
-			}
 		}
 	}
 	return false

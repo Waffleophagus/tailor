@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/Waffleophagus/tailor/internal/authz"
 	"github.com/Waffleophagus/tailor/internal/tailorcore"
@@ -81,8 +82,85 @@ func TestMCPSessionCannotBeUsedByAnotherIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = response.Body.Close()
-	if response.StatusCode != http.StatusForbidden {
-		t.Fatalf("hijacked session status = %d, want %d", response.StatusCode, http.StatusForbidden)
+	// 404, like an unknown session, so probes cannot tell whether an ID exists.
+	if response.StatusCode != http.StatusNotFound {
+		t.Fatalf("hijacked session status = %d, want %d", response.StatusCode, http.StatusNotFound)
+	}
+}
+
+func postRaw(t *testing.T, method, endpoint, sessionID string, header http.Header) int {
+	t.Helper()
+	request, err := http.NewRequestWithContext(context.Background(), method, endpoint,
+		bytes.NewBufferString(`{"jsonrpc":"2.0","id":7,"method":"tools/list"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Accept", "application/json, text/event-stream")
+	request.Header.Set(sessionIDHeader, sessionID)
+	for key, values := range header {
+		request.Header[key] = values
+	}
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	return response.StatusCode
+}
+
+func TestMCPRejectedDeleteKeepsSessionOwner(t *testing.T) {
+	who := &identitySwitch{identity: aliceAdmin}
+	endpoint := newHTTPMCP(t, who)
+	session := connectHTTP(t, endpoint, http.DefaultClient)
+
+	// The SDK rejects this DELETE (bad protocol version) and keeps the session.
+	status := postRaw(t, http.MethodDelete, endpoint, session.ID(), http.Header{"Mcp-Protocol-Version": {"1999-01-01"}})
+	if status >= 200 && status < 300 {
+		t.Fatalf("expected the SDK to reject the DELETE, got %d", status)
+	}
+
+	// Alice still owns her session...
+	if status := postRaw(t, http.MethodPost, endpoint, session.ID(), nil); status == http.StatusNotFound {
+		t.Fatal("a rejected DELETE dropped the owner of a live session")
+	}
+	// ...and nobody else can use it.
+	who.set(bobViewer)
+	if status := postRaw(t, http.MethodPost, endpoint, session.ID(), nil); status != http.StatusNotFound {
+		t.Fatalf("after a rejected DELETE, another identity got status %d, want %d", status, http.StatusNotFound)
+	}
+}
+
+func TestMCPUnknownSessionIsRejected(t *testing.T) {
+	who := &identitySwitch{identity: aliceAdmin}
+	endpoint := newHTTPMCP(t, who)
+	if status := postRaw(t, http.MethodPost, endpoint, "not-a-real-session", nil); status != http.StatusNotFound {
+		t.Fatalf("unknown session status = %d, want %d", status, http.StatusNotFound)
+	}
+}
+
+func TestSessionOwnersRejectUnclaimedSessions(t *testing.T) {
+	// A live SDK session whose owner record is missing must not become usable by
+	// anyone; the SDK alone would accept it.
+	owners := newSessionOwners(time.Hour)
+	if owners.check("live-but-unclaimed", "bob|desktop") {
+		t.Fatal("an unclaimed session ID was allowed")
+	}
+	owners.claim("s1", "alice|laptop")
+	if !owners.check("s1", "alice|laptop") || owners.check("s1", "bob|desktop") {
+		t.Fatal("ownership check is wrong for a claimed session")
+	}
+}
+
+func TestSessionOwnersPurgeOnClaim(t *testing.T) {
+	owners := newSessionOwners(-2 * time.Minute) // every entry is already past its lifetime
+	owners.claim("abandoned", "alice|laptop")
+	owners.lastPurge = time.Time{} // allow the next purge immediately
+	owners.claim("fresh", "bob|desktop")
+	owners.mu.Lock()
+	defer owners.mu.Unlock()
+	if _, ok := owners.owners["abandoned"]; ok {
+		t.Fatal("initialize-only sessions are never purged")
 	}
 }
 

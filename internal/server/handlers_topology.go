@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -104,7 +105,7 @@ func (s *Server) handleTopologySocket(w http.ResponseWriter, r *http.Request) {
 	conn.SetReadLimit(64 << 10)
 
 	var lastMessage []byte
-	if err := s.writeTopologySocketMessage(ctx, conn, &lastMessage); err != nil {
+	if err := s.writeTopologySocketMessage(ctx, conn, r.RemoteAddr, &lastMessage); err != nil {
 		s.logger.Warn("topology websocket write failed",
 			"error", err.Error(),
 			"request_id", RequestIDFromContext(r.Context()),
@@ -120,7 +121,7 @@ func (s *Server) handleTopologySocket(w http.ResponseWriter, r *http.Request) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if err := s.writeTopologySocketMessage(ctx, conn, &lastMessage); err != nil {
+			if err := s.writeTopologySocketMessage(ctx, conn, r.RemoteAddr, &lastMessage); err != nil {
 				s.logger.Warn("topology websocket write failed",
 					"error", err.Error(),
 					"request_id", RequestIDFromContext(r.Context()),
@@ -131,7 +132,14 @@ func (s *Server) handleTopologySocket(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Server) writeTopologySocketMessage(ctx context.Context, conn *websocket.Conn, lastMessage *[]byte) error {
+func (s *Server) writeTopologySocketMessage(ctx context.Context, conn *websocket.Conn, remoteAddr string, lastMessage *[]byte) error {
+	// The socket outlives the request that opened it; re-resolve the caller's role
+	// so revoked (or newly granted) access applies to what it receives next.
+	identity, err := s.auth.resolveIdentity(ctx, remoteAddr, s.logger)
+	if err != nil {
+		return fmt.Errorf("tailnet identity: %w", err)
+	}
+	ctx = authz.WithIdentity(ctx, identity)
 	message := s.topologySocketMessage(ctx)
 	encoded, err := json.Marshal(message)
 	if err != nil {

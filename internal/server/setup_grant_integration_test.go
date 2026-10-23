@@ -7,15 +7,20 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/Waffleophagus/tailor/internal/api"
 	"github.com/Waffleophagus/tailor/internal/cloudapi"
+	"github.com/coder/websocket"
+	"github.com/coder/websocket/wsjson"
+	"tailscale.com/client/local"
 	"tailscale.com/client/tailscale/apitype"
 	"tailscale.com/ipn/ipnstate"
 	"tailscale.com/tailcfg"
@@ -131,11 +136,13 @@ func newSetupIntegrationApp(t *testing.T, fixture *cloudPolicyFixture) setupApp 
 	t.Cleanup(cloud.Close)
 	who := &switchableWhoIs{login: adminLogin}
 	app := httptest.NewServer(New(Options{
-		TailnetMode:     true,
-		WhoIsClient:     who,
-		TailnetStatus:   selfStatus{},
-		AppCapability:   integrationCapability,
-		CloudAPIOptions: []cloudapi.Option{cloudapi.WithBaseURL(cloud.URL)},
+		TailnetMode:      true,
+		WhoIsClient:      who,
+		TailnetStatus:    selfStatus{},
+		LocalClient:      fakeTailscaled(t),
+		LocalAPIEndpoint: "fake tailscaled",
+		AppCapability:    integrationCapability,
+		CloudAPIOptions:  []cloudapi.Option{cloudapi.WithBaseURL(cloud.URL)},
 	}))
 	t.Cleanup(app.Close)
 	return setupApp{url: app.URL, who: who, client: &http.Client{}}
@@ -373,4 +380,71 @@ func assertPolicyRoutesAreAuthorized(t *testing.T, client *http.Client, appURL s
 			t.Errorf("admin request %s %s was forbidden", tt.method, tt.path)
 		}
 	}
+}
+
+// fakeTailscaled serves the LocalAPI status Tailor reads for topology, so tests
+// never touch a real tailscaled.
+func fakeTailscaled(t *testing.T) *local.Client {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/localapi/v0/status" {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = io.WriteString(w, `{"BackendState":"Running","Self":{"ID":"`+selfNodeID+`","HostName":"tailor","DNSName":"tailor.example.ts.net.","TailscaleIPs":["`+selfNodeIP+`"]},"Peer":{}}`)
+	}))
+	t.Cleanup(server.Close)
+	return &local.Client{Dial: func(ctx context.Context, _, _ string) (net.Conn, error) {
+		var dialer net.Dialer
+		return dialer.DialContext(ctx, "tcp", server.Listener.Addr().String())
+	}}
+}
+
+type socketSnapshot struct {
+	Type    string `json:"type"`
+	Payload struct {
+		StagedDrafts []json.RawMessage `json:"stagedDrafts"`
+	} `json:"payload"`
+}
+
+func TestTopologySocketDropsStagedDraftsWhenAccessIsRevoked(t *testing.T) {
+	app := newSetupIntegrationApp(t, &cloudPolicyFixture{policy: `{"acls":[{"action":"accept","src":["*"],"dst":["*:*"]}]}`})
+	app.mustAuthenticate(t)
+	body, _ := json.Marshal(api.PolicyStageRequest{HuJSON: `{"acls":[{"action":"accept","src":["autogroup:admin"],"dst":["*:*"]}]}`, Source: "ui"})
+	expectStatus(t, mustPost(t, app, "/api/policy/stage", body), http.StatusOK, "")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	conn, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(app.url, "http")+"/api/topology/socket", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close(websocket.StatusNormalClosure, "")
+
+	var first socketSnapshot
+	if err := wsjson.Read(ctx, conn, &first); err != nil {
+		t.Fatal(err)
+	}
+	if len(first.Payload.StagedDrafts) == 0 {
+		t.Fatalf("admin socket should carry staged drafts: %+v", first)
+	}
+
+	// The admin is demoted while the socket stays open.
+	app.who.set(memberLogin)
+	var next socketSnapshot
+	if err := wsjson.Read(ctx, conn, &next); err != nil {
+		t.Fatalf("expected a fresh snapshot after the role change: %v", err)
+	}
+	if len(next.Payload.StagedDrafts) != 0 {
+		t.Fatalf("revoked socket still receives staged drafts: %+v", next)
+	}
+}
+
+func mustPost(t *testing.T, app setupApp, path string, body []byte) *http.Response {
+	t.Helper()
+	response, err := postJSON(context.Background(), app.client, app.url+path, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return response
 }

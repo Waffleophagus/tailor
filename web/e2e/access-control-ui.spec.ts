@@ -115,6 +115,42 @@ test('setup recommendation supports cancel, recommended, and edited grants', asy
 	expect(setupBody).toEqual({ grant: JSON.parse(edited) });
 });
 
+test('editor who declines the optional grant still gets their policy loaded', async ({ page }) => {
+	await mockCommonAPI(page, { authenticated: false, canEditPolicy: false, callerRole: 'full' });
+	await page.route('**/api/cloud/auth', (route) =>
+		route.fulfill({
+			json: {
+				authenticated: true,
+				tailnet: 'example.ts.net',
+				hasPolicy: true,
+				callerRole: 'full',
+				canEditPolicy: true,
+				needsSetupGrant: true,
+				appCapability: capability,
+				setupGrantSnippet: snippet,
+				statusMessage: 'As a tailnet admin you can already edit.'
+			}
+		})
+	);
+	let policyFetches = 0;
+	await page.route('**/api/policy', (route) => {
+		policyFetches++;
+		return route.fulfill({ json: { tailnet: 'example.ts.net', hujson: '{"grants":[]}' } });
+	});
+	await page.route('**/api/policy/**', (route) => route.fulfill({ json: { drafts: [] } }));
+
+	await page.goto('/');
+	await page.getByRole('button', { name: 'Enable ACL Editing' }).click();
+	await page.getByLabel('Tailscale API Key').fill('tskey-api-test');
+	await page.getByRole('button', { name: 'Fetch Policy' }).click();
+	const dialog = page.getByRole('dialog', { name: 'Configure Tailor Access' });
+	await dialog.getByRole('button', { name: 'Not now' }).click();
+	await expect(dialog).toBeHidden();
+
+	await expect.poll(() => policyFetches).toBeGreaterThan(0);
+	await expect(page.getByRole('button', { name: 'Edit policy' })).toBeVisible();
+});
+
 test('non-admin API key submission is refused with the reason', async ({ page }) => {
 	await mockCommonAPI(page, { authenticated: false, canEditPolicy: false, callerRole: 'viewer' });
 	await page.route('**/api/cloud/auth', (route) =>
