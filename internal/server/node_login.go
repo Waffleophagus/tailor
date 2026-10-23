@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"crypto/subtle"
 	"html/template"
 	"net"
 	"net/http"
@@ -30,9 +31,13 @@ type nodeState struct {
 func (s nodeState) running() bool { return s.backendState == "Running" }
 
 // tailorURL is where Tailor is served on the tailnet once the node is running.
-func (s nodeState) tailorURL() string {
+// httpsPort is the tailnet HTTPS port; empty or "443" is omitted from the URL.
+func (s nodeState) tailorURL(httpsPort string) string {
 	if s.dnsName == "" {
 		return ""
+	}
+	if httpsPort != "" && httpsPort != "443" {
+		return "https://" + net.JoinHostPort(s.dnsName, httpsPort) + "/"
 	}
 	return "https://" + s.dnsName + "/"
 }
@@ -75,8 +80,8 @@ func nodeStateFromStatus(status *ipnstate.Status) nodeState {
 }
 
 // fromPrivateNetwork reports whether the client is on this machine, a private LAN
-// or container network, or a tailnet. Only they are shown the node login link, so
-// an internet client cannot enroll Tailor into a tailnet of its choosing.
+// or container network, or a tailnet. This alone is not enough to show the login
+// link (a reverse proxy makes every visitor look local); see setupAuthorized.
 func fromPrivateNetwork(remoteAddr string) bool {
 	host, _, err := net.SplitHostPort(remoteAddr)
 	if err != nil {
@@ -131,7 +136,11 @@ var nodeLoginPage = template.Must(template.New("login").Parse(`<!doctype html>
     {{else if .Hidden}}
     <div class="status">Not connected</div>
     <h1>Connect Tailor to your tailnet</h1>
-    <p>Tailor is waiting to be logged in to a tailnet. For safety the login link is only shown on this machine or your local network. It is also printed in Tailor's logs.</p>
+    <p>Tailor is waiting to be logged in to a tailnet. To keep the login link private, open the <strong>setup link printed in Tailor's logs</strong> (it looks like <code>http://localhost:8080/?setup=…</code>). The Tailscale login link is also printed there.</p>
+    {{else if eq .State "NeedsLogin"}}
+    <div class="status">Not connected</div>
+    <h1>Requesting a login link…</h1>
+    <p>Tailor needs to be logged in to your tailnet again (for example after its key expired) and is asking Tailscale for a new login link. This page refreshes on its own.</p>
     {{else}}
     <div class="status">Starting</div>
     <h1>Connecting to your tailnet…</h1>
@@ -141,13 +150,31 @@ var nodeLoginPage = template.Must(template.New("login").Parse(`<!doctype html>
 </body>
 </html>`))
 
+// setupAuthorized reports whether a request may see the node login link: it must
+// carry the setup token printed in Tailor's logs and come from a local or private
+// client. The token is what actually protects the link: anyone with it can already
+// read the logs, which contain the Tailscale login URL too. The address check alone
+// would let a reverse proxy expose the link to the internet.
+func setupAuthorized(r *http.Request, setupToken string) bool {
+	if setupToken == "" || !fromPrivateNetwork(r.RemoteAddr) {
+		return false
+	}
+	given := r.URL.Query().Get("setup")
+	return subtle.ConstantTimeCompare([]byte(given), []byte(setupToken)) == 1
+}
+
 // writeNodeLogin answers requests while Tailor's own node is not on a tailnet yet:
 // an HTML login page for browsers, JSON for API clients.
-func writeNodeLogin(w http.ResponseWriter, r *http.Request, state nodeState, hostname string) {
+func writeNodeLogin(w http.ResponseWriter, r *http.Request, state nodeState, setupToken string, allowedHosts []string) {
+	// Unauthenticated responses must not be readable through DNS rebinding.
+	if !hostAllowed(r.Host, allowedHosts) {
+		http.Error(w, "Host not allowed. Set TAILOR_ALLOWED_HOSTS to serve Tailor under this name.", http.StatusMisdirectedRequest)
+		return
+	}
 	authURL := ""
 	hidden := false
 	if state.authURL != "" {
-		if fromPrivateNetwork(r.RemoteAddr) {
+		if setupAuthorized(r, setupToken) {
 			authURL = state.authURL
 		} else {
 			hidden = true
@@ -169,5 +196,5 @@ func writeNodeLogin(w http.ResponseWriter, r *http.Request, state nodeState, hos
 	_ = nodeLoginPage.Execute(w, struct {
 		State, AuthURL, Hostname string
 		Hidden                   bool
-	}{state.backendState, authURL, hostname, hidden})
+	}{state.backendState, authURL, state.hostname, hidden})
 }

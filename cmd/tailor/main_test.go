@@ -1,13 +1,17 @@
 package main
 
 import (
+	"context"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"reflect"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/Waffleophagus/tailor/internal/deploy"
+	"tailscale.com/ipn/ipnstate"
 )
 
 func TestShouldUseTsnet(t *testing.T) {
@@ -53,6 +57,76 @@ func TestTSNetStateDir(t *testing.T) {
 	t.Setenv("TAILSCALE_STATE_DIR", "/srv/tailor")
 	if got := tsnetStateDir(deploy.Environment{InContainer: true}); got != "/srv/tailor" {
 		t.Fatalf("explicit state dir ignored: %q", got)
+	}
+}
+
+type fakeLoginClient struct {
+	mu         sync.Mutex
+	states     []*ipnstate.Status
+	calls      int
+	loginStart int
+}
+
+func (f *fakeLoginClient) StatusWithoutPeers(context.Context) (*ipnstate.Status, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	status := f.states[min(f.calls, len(f.states)-1)]
+	f.calls++
+	return status, nil
+}
+
+func (f *fakeLoginClient) StartLoginInteractive(context.Context) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.loginStart++
+	return nil
+}
+
+func TestReportNodeLoginRecoversFromKeyExpiry(t *testing.T) {
+	defer func(poll, wait, retry time.Duration) {
+		nodeLoginPollInterval, nodeLoginURLWait, nodeLoginRetryWait = poll, wait, retry
+	}(nodeLoginPollInterval, nodeLoginURLWait, nodeLoginRetryWait)
+	nodeLoginPollInterval, nodeLoginURLWait, nodeLoginRetryWait = time.Millisecond, 5*time.Millisecond, time.Hour
+
+	// Running, then the key expires: NeedsLogin with no login URL.
+	client := &fakeLoginClient{states: []*ipnstate.Status{
+		{BackendState: "Running"},
+		{BackendState: "NeedsLogin"},
+	}}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		reportNodeLogin(ctx, client, "http://localhost:8080/?setup=x", slog.New(slog.DiscardHandler))
+		close(done)
+	}()
+	deadline := time.After(2 * time.Second)
+	for {
+		client.mu.Lock()
+		started := client.loginStart
+		client.mu.Unlock()
+		if started > 0 {
+			break
+		}
+		select {
+		case <-deadline:
+			cancel()
+			t.Fatal("reportNodeLogin never started a new login after the node lost its login")
+		case <-time.After(time.Millisecond):
+		}
+	}
+	cancel()
+	<-done
+
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	if client.loginStart != 1 {
+		t.Fatalf("StartLoginInteractive called %d times, want 1 (retries are rate limited)", client.loginStart)
+	}
+}
+
+func TestSetupPageURL(t *testing.T) {
+	if got := setupPageURL(":8080", "tok"); got != "http://localhost:8080/?setup=tok" {
+		t.Fatalf("setupPageURL = %q", got)
 	}
 }
 

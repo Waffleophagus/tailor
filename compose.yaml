@@ -1,9 +1,10 @@
 services:
   tailor:
     build: .
-    # Tailor joins your tailnet as its own machine. On first start, open
-    # http://<host>:8080 and click "Log in to Tailscale" (the link is also in the
-    # logs). Node state is persisted in ./tailor-state for later restarts.
+    # Tailor joins your tailnet as its own machine. On first start, open the setup
+    # link from the logs (http://localhost:8080/?setup=..., swap in this host's
+    # address if needed) and click "Log in to Tailscale". Node state is persisted
+    # in ./tailor-state for later restarts.
     ports:
       - "8080:8080"
     environment:

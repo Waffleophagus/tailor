@@ -49,7 +49,7 @@ services:
       # Choose one of the two modes below:
 ```
 
-**Embedded mode** (recommended and the default — the container joins your tailnet as its own machine). No auth key is needed: on first start, open `http://<host>:8080` and click **Log in to Tailscale** to add Tailor with your normal Tailscale login (the link is also printed in the logs).
+**Embedded mode** (recommended and the default — the container joins your tailnet as its own machine). No auth key is needed: on first start, Tailor prints a setup link in its logs (`docker compose logs tailor`), like `http://localhost:8080/?setup=…`. Open it (swap in your host's address if needed) and click **Log in to Tailscale** to add Tailor with your normal Tailscale login.
 
 ```yaml
       TAILSCALE_HOSTNAME: "tailor"
@@ -59,7 +59,7 @@ services:
       # TS_ADVERTISE_TAGS: "tag:tailor-acl-service"
 ```
 
-Once the node joins your tailnet, Tailor serves HTTPS directly, so you can open **`https://tailor.<your-tailnet>.ts.net/`** — no `:8080` required. After that, port `8080` only shows a link to that address. The login link on the setup page is only shown to this machine and private networks.
+Once the node joins your tailnet, Tailor serves HTTPS directly, so you can open **`https://tailor.<your-tailnet>.ts.net/`** — no `:8080` required. After that, port `8080` only shows a link to that address. The setup link's token keeps the Tailscale login link private: without it, the page only says to check the logs, so a reverse proxy or a malicious site can't use the page to enroll Tailor into another tailnet.
 
 > **Key expiry:** a machine added by logging in belongs to you and inherits your key expiry (180 days by default). Tag it (for example `tag:tailor-acl-service`, which Tailor applies when it adds its access grant) or disable key expiry for it in the admin console. Tailor logs a warning when this applies.
 
@@ -102,7 +102,7 @@ chmod +x tailor
 ./tailor
 ```
 
-The binary is fully self-contained. By default it listens on `:8080` and joins your tailnet as its own machine: open [http://localhost:8080](http://localhost:8080) and click **Log in to Tailscale** on first run. Its node state is kept in your user config directory (for example `~/.config/tailor/tsnet`).
+The binary is fully self-contained. By default it listens on `:8080` and joins your tailnet as its own machine: on first run it prints a setup link (`http://localhost:8080/?setup=…`) in the terminal; open it and click **Log in to Tailscale**. Its node state is kept in your user config directory (for example `~/.config/tailor/tsnet`).
 
 To use this computer's existing Tailscale connection instead of adding a machine, run with `TAILOR_TAILSCALE_MODE=external` (the LocalAPI socket is auto-detected; set `TAILOR_LOCALAPI_SOCKET` or, on Windows, `TAILOR_LOCALAPI_ENDPOINT` if needed). This mode is still supported, but embedded mode is the focus going forward.
 

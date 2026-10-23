@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/tls"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -75,7 +77,9 @@ func main() {
 	}
 
 	var tsnetLocalClient *local.Client
+	setupToken := ""
 	if shouldUseTsnet(deployEnv) {
+		setupToken = newSetupToken()
 		stateDir := tsnetStateDir(deployEnv)
 		hardenTSNetLogging(logger)
 		configureTSNetForceLogin(deployEnv, stateDir, logger)
@@ -86,7 +90,7 @@ func main() {
 			logger.Error("tsnet startup failed", "error", err, "state_dir", stateDir)
 			exit(1)
 		}
-		go reportNodeLogin(context.Background(), tsnetLocalClient, addr, logger)
+		go reportNodeLogin(context.Background(), tsnetLocalClient, setupPageURL(addr, setupToken), logger)
 		localAPIEndpoint = "tsnet embedded"
 	}
 
@@ -97,6 +101,8 @@ func main() {
 		TailnetStatus:    tsnetLocalClient,
 		TailnetMode:      tsnetServer != nil,
 		AppCapability:    os.Getenv("TAILOR_APP_CAPABILITY"),
+		SetupToken:       setupToken,
+		TailnetHTTPSPort: strings.TrimPrefix(listenPort(tsnetListenAddr()), ":"),
 		Logger:           logger,
 	})
 
@@ -286,32 +292,69 @@ func hardenTSNetLogging(logger *slog.Logger) {
 	}
 }
 
-// reportNodeLogin logs where to log the embedded node in while it needs login, and
-// warns once it is running if its key will expire.
-func reportNodeLogin(ctx context.Context, client *local.Client, addr string, logger *slog.Logger) {
-	setupURL := "http://localhost" + listenPort(addr) + "/"
-	lastURL := ""
-	ticker := time.NewTicker(3 * time.Second)
+// nodeLoginClient is the part of the tsnet LocalAPI client reportNodeLogin uses.
+type nodeLoginClient interface {
+	StatusWithoutPeers(context.Context) (*ipnstate.Status, error)
+	StartLoginInteractive(context.Context) error
+}
+
+// Recovery timing for reportNodeLogin; tests shorten these.
+var (
+	nodeLoginPollInterval = 3 * time.Second
+	// A node that needs login but has no login URL for this long (e.g. after its
+	// key expired) gets a fresh interactive login started.
+	nodeLoginURLWait   = 10 * time.Second
+	nodeLoginRetryWait = time.Minute
+)
+
+// reportNodeLogin runs for the life of the process: it logs the setup page (with
+// its token) and Tailscale login URL whenever the node needs login, starts a new
+// interactive login when the node needs one but has no URL (key expiry), and
+// warns about key expiry each time the node comes up.
+func reportNodeLogin(ctx context.Context, client nodeLoginClient, setupURL string, logger *slog.Logger) {
+	lastState, lastURL := "", ""
+	var needsURLSince, lastLoginStart time.Time
+	ticker := time.NewTicker(nodeLoginPollInterval)
 	defer ticker.Stop()
 	for {
-		status, err := client.StatusWithoutPeers(ctx)
-		if err == nil && status != nil {
+		if status, err := client.StatusWithoutPeers(ctx); err == nil && status != nil {
+			state := status.BackendState
 			switch {
-			case status.BackendState == "Running":
-				warnIfNodeKeyExpires(status, logger)
-				return
-			case status.BackendState == "NeedsMachineAuth":
-				if lastURL != "approval" {
-					logger.Warn("tailor is logged in but waiting for device approval in the Tailscale admin console")
-					lastURL = "approval"
+			case state == "Running":
+				if lastState != "Running" {
+					warnIfNodeKeyExpires(status, logger)
 				}
-			case status.AuthURL != "" && status.AuthURL != lastURL:
-				logger.Warn("tailor is not connected to a tailnet yet; log it in with your Tailscale account",
-					"login_url", status.AuthURL,
-					"setup_page", setupURL,
-				)
-				lastURL = status.AuthURL
+				lastURL = ""
+			case state == "NeedsMachineAuth":
+				if lastState != state {
+					logger.Warn("tailor is logged in but waiting for device approval in the Tailscale admin console")
+				}
+			case status.AuthURL != "":
+				if status.AuthURL != lastURL {
+					logger.Warn("tailor is not connected to a tailnet yet; open the setup page to log it in with your Tailscale account",
+						"setup_page", setupURL,
+						"login_url", status.AuthURL,
+					)
+					lastURL = status.AuthURL
+				}
+				needsURLSince = time.Time{}
+			case state == "NeedsLogin":
+				now := time.Now()
+				if needsURLSince.IsZero() {
+					needsURLSince = now
+				}
+				if now.Sub(needsURLSince) >= nodeLoginURLWait && now.Sub(lastLoginStart) >= nodeLoginRetryWait {
+					lastLoginStart = now
+					logger.Warn("tailor needs to log in to its tailnet again; requesting a new login link")
+					if err := client.StartLoginInteractive(ctx); err != nil {
+						logger.Warn("could not start tailnet login", "error", err)
+					}
+				}
 			}
+			if state != "NeedsLogin" {
+				needsURLSince = time.Time{}
+			}
+			lastState = state
 		}
 		select {
 		case <-ctx.Done():
@@ -319,6 +362,20 @@ func reportNodeLogin(ctx context.Context, client *local.Client, addr string, log
 		case <-ticker.C:
 		}
 	}
+}
+
+// newSetupToken returns the random token that unlocks the node login link on the
+// setup page. It is only ever printed to Tailor's own logs.
+func newSetupToken() string {
+	var buf [16]byte
+	if _, err := rand.Read(buf[:]); err != nil {
+		panic("setup token generation failed: " + err.Error())
+	}
+	return hex.EncodeToString(buf[:])
+}
+
+func setupPageURL(addr, token string) string {
+	return "http://localhost" + listenPort(addr) + "/?setup=" + token
 }
 
 func warnIfNodeKeyExpires(status *ipnstate.Status, logger *slog.Logger) {

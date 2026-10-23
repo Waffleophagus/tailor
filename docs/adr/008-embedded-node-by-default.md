@@ -11,7 +11,9 @@ Tailor could join the tailnet as its own machine (embedded tsnet) only when give
 ## Decision
 
 - `auto` (the default) always runs the embedded node. The host daemon is used only with `TAILOR_TAILSCALE_MODE=external` or an explicit `TAILOR_LOCALAPI_SOCKET`/`TAILOR_LOCALAPI_ENDPOINT`. It stays supported but is not the focus.
-- Without an auth key, the node is logged in interactively. Until it is running, the local listener serves a setup page with the login link (and the link is logged). The link is shown only to loopback, private, link-local and tailnet (100.64.0.0/10) clients, so an internet client cannot enroll Tailor into a tailnet of its choosing; ADR 007's key check would also reject keys from another tailnet.
+- Without an auth key, the node is logged in interactively. Until it is running, the local listener serves a setup page.
+- The Tailscale login link is shown only to requests carrying a random setup token, which Tailor prints in its logs as `http://localhost:<port>/?setup=<token>`. The request must also come from a loopback, private, link-local or tailnet client, and its `Host` must pass the DNS-rebinding allow-list. Client addresses alone are not enough, because a reverse proxy or NAT makes every visitor look local. The token's trust boundary matches the logs, which contain the login URL anyway. ADR 007's key check would also reject API keys from another tailnet.
+- The node is watched for its whole lifetime. If it needs login again (e.g. key expiry) and has no login URL, Tailor starts a new interactive login and logs the fresh setup link.
 - Auth keys remain supported for unattended installs.
 - State lives in `/var/lib/tailor-tsnet` in containers (or where a node already exists) and in the user config directory for desktop binaries.
 - Like CLIProxyAPI, tsnet log upload is disabled and `TS_DEBUG_REGISTER` is ignored.
